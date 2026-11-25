@@ -7,7 +7,7 @@ import type { RenderHost } from './render-host.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
 // attributes are owned by the generator and cannot be supplied by source markup.
-const layoutAttribute = (name: string) => name === 'id' || ['dir', 'lang'].includes(name) || /^data-(?!sk-)[\w.:-]+$/.test(name);
+const layoutAttribute = (name: string) => name === 'id' || name === 'data-sk-anchor' || ['dir', 'lang'].includes(name) || /^data-(?!sk-)[\w.:-]+$/.test(name);
 
 export function renderAttributes(this: RenderHost, props: Record<string, Value>): string {
   let attrs = '';

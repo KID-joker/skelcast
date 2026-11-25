@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { ConfigEnv, Plugin, UserConfig, UserConfigExport, ViteDevServer } from 'vite';
 import { checkProject, loadProject, readArtifact, saveHints, syncProject, type Project } from './generator.js';
 import type { SkeletonArtifact, SkeletonTarget } from './types.js';
+import { withProjectLock } from './storage.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
@@ -52,11 +53,17 @@ export function skelcastPlugin(): Plugin {
   let dev = false;
   let server: ViteDevServer | undefined;
   let mutation = Promise.resolve();
+  const requests = new Set<Promise<void>>();
+  let closing = false;
   const refreshProject = async () => { project = await loadProject(project.root); };
   const sendUpdate = () => server?.ws.send({ type: 'custom', event: 'skelcast:update', data: {} });
   return {
     name: 'skelcast',
     enforce: 'pre',
+    async closeBundle() {
+      closing = true;
+      await Promise.allSettled([...requests]);
+    },
     async configResolved(config) {
       project = await loadProject(config.root);
       dev = config.command === 'serve';
@@ -91,49 +98,57 @@ export function skelcastPlugin(): Plugin {
       server = viteServer;
       const dist = path.dirname(fileURLToPath(import.meta.url));
       if (!server.config.server.fs.allow.includes(dist)) server.config.server.fs.allow.push(dist);
-      server.middlewares.use(async (req, res, next) => {
+      server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost');
         if (!url.pathname.startsWith('/__skelcast/')) return next();
-        try {
-          if (req.method === 'GET' && url.pathname === '/__skelcast/state') {
-            await refreshProject();
-            const statuses = await checkProject(project);
-            const artifacts = await Promise.all(project.config.targets.map(t => readArtifact(project, t.id)));
-            res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
-            res.end(JSON.stringify({ artifacts, statuses, targets: project.config.targets })); return;
+        if (closing) { res.statusCode = 503; res.end('SkelCast server closing'); return; }
+        const operation = (async () => {
+          try {
+            if (req.method === 'GET' && url.pathname === '/__skelcast/state') {
+              await refreshProject();
+              const { statuses, artifacts } = await withProjectLock(project.outDir, async () => ({
+                statuses: await checkProject(project),
+                artifacts: await Promise.all(project.config.targets.map(t => readArtifact(project, t.id))),
+              }));
+              res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
+              res.end(JSON.stringify({ artifacts, statuses, targets: project.config.targets })); return;
+            }
+            if (req.method !== 'POST' || !['/__skelcast/sync', '/__skelcast/hints', '/__skelcast/open'].includes(url.pathname)) { res.statusCode = 404; res.end(); return; }
+            const origin = req.headers.origin;
+            if (req.headers['x-skelcast-dev'] !== '1' || origin && new URL(origin).host !== req.headers.host) { res.statusCode = 403; res.end('Development requests only'); return; }
+            let body = '';
+            for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Request too large'); }
+            const data = body ? JSON.parse(body) : {};
+            // Serialize local mutations so hints and manifest cannot race.
+            const operation = mutation.then(async () => {
+              await refreshProject();
+              if (url.pathname === '/__skelcast/open') {
+                const artifact = await readArtifact(project, data.id);
+                const source = data.node ? artifact.sources[data.node] : { file: artifact.source, line: 1 };
+                if (!source) throw new Error('Unknown source location');
+                return { url: `/__open-in-editor?file=${encodeURIComponent(`${path.resolve(project.root, source.file)}:${source.line}`)}` };
+              }
+              if (url.pathname === '/__skelcast/hints') {
+                await saveHints(project, data.id, data.hints); await refreshProject();
+              }
+              const result = await syncProject(project);
+              sendUpdate();
+              return result;
+            });
+            mutation = operation.then(() => {}, () => {});
+            const result = await operation;
+            res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(result));
+          } catch (error) {
+            res.statusCode = 400; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
           }
-          if (req.method !== 'POST' || !['/__skelcast/sync', '/__skelcast/hints', '/__skelcast/open'].includes(url.pathname)) { res.statusCode = 404; res.end(); return; }
-          const origin = req.headers.origin;
-          if (req.headers['x-skelcast-dev'] !== '1' || origin && new URL(origin).host !== req.headers.host) { res.statusCode = 403; res.end('Development requests only'); return; }
-          let body = '';
-          for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Request too large'); }
-          const data = body ? JSON.parse(body) : {};
-          // Serialize local mutations so hints and manifest cannot race.
-          const operation = mutation.then(async () => {
-            await refreshProject();
-            if (url.pathname === '/__skelcast/open') {
-              const artifact = await readArtifact(project, data.id);
-              const source = data.node ? artifact.sources[data.node] : { file: artifact.source, line: 1 };
-              if (!source) throw new Error('Unknown source location');
-              return { url: `/__open-in-editor?file=${encodeURIComponent(`${path.resolve(project.root, source.file)}:${source.line}`)}` };
-            }
-            if (url.pathname === '/__skelcast/hints') {
-              await saveHints(project, data.id, data.hints); await refreshProject();
-            }
-            const result = await syncProject(project);
-            sendUpdate();
-            return result;
-          });
-          mutation = operation.then(() => {}, () => {});
-          const result = await operation;
-          res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(result));
-        } catch (error) {
-          res.statusCode = 400; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-        }
+        })();
+        requests.add(operation);
+        void operation.finally(() => requests.delete(operation));
       });
       let timer: ReturnType<typeof setTimeout>;
       server.watcher.on('all', (_event, file) => {
         if (!file.startsWith(project.root) || file.includes(`${path.sep}node_modules${path.sep}`)) return;
+        if (file.split(path.sep).some(part => part.startsWith('.skelcast-')) || file.endsWith('.tmp')) return;
         clearTimeout(timer); timer = setTimeout(sendUpdate, 100);
       });
       server.httpServer?.once('close', () => clearTimeout(timer));

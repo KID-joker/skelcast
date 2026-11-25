@@ -1,4 +1,4 @@
-import { defineComponent, h, onMounted, onBeforeUnmount, ref, watch, type PropType } from 'vue';
+import { defineComponent, h, onMounted, onUpdated, onBeforeUnmount, ref, watch, type PropType } from 'vue';
 import type { SkeletonArtifact } from '../types.js';
 import { createSkeletonMount, currentArtifact, forced, registerBoundary, subscribeBoundary } from '../runtime/core.js';
 
@@ -18,7 +18,10 @@ export const LoadingBoundary = defineComponent({
     let registration: ReturnType<typeof registerBoundary> | undefined;
     const updateSkeleton = () => {
       const artifact = currentArtifact(props.artifact);
-      if (skeleton.value) mount.update(skeleton.value, props.pending || forced(artifact.id, artifact.kind), artifact, props.variant);
+      const show = props.pending || forced(artifact.id, artifact.kind);
+      skeleton.value?.style.setProperty('display', show ? 'block' : 'none', 'important');
+      skeleton.value?.nextElementSibling?.setAttribute('style', `display:${show ? 'none' : 'block'}!important`);
+      if (skeleton.value) mount.update(skeleton.value, show, artifact, props.variant);
     };
     const connect = () => {
       unsubscribe?.();
@@ -29,6 +32,7 @@ export const LoadingBoundary = defineComponent({
       registration = registerBoundary({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact, element: root.value });
       updateSkeleton();
     });
+    onUpdated(updateSkeleton);
     watch(() => [props.artifact.id, props.artifact.kind], () => { if (registration) connect(); });
     watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact }); updateSkeleton(); });
     onBeforeUnmount(() => { unsubscribe?.(); registration?.dispose(); mount.dispose(); });
@@ -37,8 +41,8 @@ export const LoadingBoundary = defineComponent({
       const artifact = currentArtifact(props.artifact);
       const show = props.pending || forced(artifact.id, artifact.kind);
       return h('div', { ref: root, style: { minWidth: 0 }, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
-        h('div', { ref: skeleton, hidden: !show, 'aria-hidden': 'true' }),
-        h('div', { hidden: show, inert: show || undefined, 'data-sk-content': '' }, slots.default?.()),
+        h('div', { ref: skeleton, hidden: !show, style: { display: show ? 'block' : 'none' }, 'aria-hidden': 'true' }),
+        h('div', { hidden: show, style: { display: show ? 'none' : 'block' }, inert: show || undefined, 'data-sk-content': '' }, slots.default?.()),
       ]);
     };
   },

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { evaluate, UNKNOWN } from '../compiler/expression.js';
 import { digest } from '../compiler/styles.js';
 import { projectFromConfig, syncProject } from '../generator.js';
+import { withProjectLock } from '../storage.js';
 import type { SkeletonConfig } from '../types.js';
 import { applyEdits, startOf, endOf, nodeName, objectConfig, parseCode, type Ast } from './ast.js';
 import { analyzeReact } from './react.js';
@@ -118,47 +119,49 @@ export async function initProject(directory = process.cwd(), options: InitOption
   const env = await optionalRead(path.join(root, envFile));
   if (!env?.includes('skelcast/virtual')) report.changes.push({ file: envFile, before: env, after: `/// <reference types="skelcast/virtual" />\n${env ?? ''}`, reason: 'Declare generated virtual module types' });
   if (report.dryRun) return report;
-  // Verify every planned edit before writing; a concurrent user edit is never overwritten.
-  for (const change of report.changes) if (await optionalRead(path.join(root, change.file)) !== change.before) throw new Error(`${change.file} changed during init; run init again`);
-  const outDir = path.resolve(configRoot, existing.outDir ?? '.skelcast');
-  const backup = relativePath(root, path.join(outDir, 'init-backups', `${Date.now()}-${digest(report.changes.map(c => c.after).join()).slice(0, 8)}`));
-  const generatedBefore = new Map<string, string | null>();
-  for (const id of [...new Set([...existing.targets, ...report.targets].map(t => t.id))]) if (/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) {
-    const file = path.join(outDir, `${id}.mjs`); generatedBefore.set(file, await optionalRead(file));
-  }
-  generatedBefore.set(path.join(outDir, 'manifest.json'), await optionalRead(path.join(outDir, 'manifest.json')));
-  const applied: InitChange[] = [];
-  if (report.changes.length) {
-    report.backup = backup;
-    for (const change of report.changes) if (change.before != null) {
-      const file = path.join(root, backup, change.file);
-      await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, change.before);
+  return withProjectLock(path.resolve(configRoot, existing.outDir ?? '.skelcast'), async () => {
+    // Verify every planned edit before writing; a concurrent user edit is never overwritten.
+    for (const change of report.changes) if (await optionalRead(path.join(root, change.file)) !== change.before) throw new Error(`${change.file} changed during init; run init again`);
+    const outDir = path.resolve(configRoot, existing.outDir ?? '.skelcast');
+    const backup = relativePath(root, path.join(outDir, 'init-backups', `${Date.now()}-${digest(report.changes.map(c => c.after).join()).slice(0, 8)}`));
+    const generatedBefore = new Map<string, string | null>();
+    for (const id of [...new Set([...existing.targets, ...report.targets].map(t => t.id))]) if (/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) {
+      const file = path.join(outDir, `${id}.mjs`); generatedBefore.set(file, await optionalRead(file));
     }
-  }
-  try {
-    for (const change of report.changes) {
-      if (await optionalRead(path.join(root, change.file)) !== change.before) throw new Error(`${change.file} changed during init; run init again`);
-      const file = path.join(root, change.file); await mkdir(path.dirname(file), { recursive: true });
-      const temporary = `${file}.skelcast-init-${process.pid}.tmp`;
-      await writeFile(temporary, change.after); await rename(temporary, file); applied.push(change);
+    generatedBefore.set(path.join(outDir, 'manifest.json'), await optionalRead(path.join(outDir, 'manifest.json')));
+    const applied: InitChange[] = [];
+    if (report.changes.length) {
+      report.backup = backup;
+      for (const change of report.changes) if (change.before != null) {
+        const file = path.join(root, backup, change.file);
+        await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, change.before);
+      }
     }
-    const finalConfig = report.changes.find(c => c.file === configFile)?.after ?? existingText!;
-    report.generated = await syncProject(await projectFromConfig(configRoot, literalConfig(finalConfig).config));
-    const reportFile = path.join(outDir, 'init-report.json');
-    await writeFile(reportFile, JSON.stringify({ scanned: report.scanned, targets: report.targets, changes: report.changes.map(({ file, reason }) => ({ file, reason })), diagnostics: report.diagnostics, backup: report.backup }, null, 2) + '\n');
-  } catch (error) {
-    // Generated modules are owned outputs; restore even a partially completed sync.
-    for (const [file, content] of generatedBefore) {
-      if (content == null) await unlink(file).catch(() => {});
-      else { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, content); }
+    try {
+      for (const change of report.changes) {
+        if (await optionalRead(path.join(root, change.file)) !== change.before) throw new Error(`${change.file} changed during init; run init again`);
+        const file = path.join(root, change.file); await mkdir(path.dirname(file), { recursive: true });
+        const temporary = `${file}.skelcast-init-${process.pid}.tmp`;
+        await writeFile(temporary, change.after); await rename(temporary, file); applied.push(change);
+      }
+      const finalConfig = report.changes.find(c => c.file === configFile)?.after ?? existingText!;
+      report.generated = await syncProject(await projectFromConfig(configRoot, literalConfig(finalConfig).config));
+      const reportFile = path.join(outDir, 'init-report.json');
+      await writeFile(reportFile, JSON.stringify({ scanned: report.scanned, targets: report.targets, changes: report.changes.map(({ file, reason }) => ({ file, reason })), diagnostics: report.diagnostics, backup: report.backup }, null, 2) + '\n');
+    } catch (error) {
+      // Generated modules are owned outputs; restore even a partially completed sync.
+      for (const [file, content] of generatedBefore) {
+        if (content == null) await unlink(file).catch(() => {});
+        else { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, content); }
+      }
+      for (const change of applied.reverse()) {
+        const file = path.join(root, change.file);
+        // Roll back only bytes written by this run, preserving subsequent user edits.
+        if (await optionalRead(file) !== change.after) continue;
+        if (change.before == null) await unlink(file); else await writeFile(file, change.before);
+      }
+      throw error;
     }
-    for (const change of applied.reverse()) {
-      const file = path.join(root, change.file);
-      // Roll back only bytes written by this run, preserving subsequent user edits.
-      if (await optionalRead(file) !== change.after) continue;
-      if (change.before == null) await unlink(file); else await writeFile(file, change.before);
-    }
-    throw error;
-  }
-  return report;
+    return report;
+  });
 }

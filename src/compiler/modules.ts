@@ -5,7 +5,7 @@ import path from 'node:path';
 import { parse as parseJS } from '@babel/parser';
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import type { Diagnostic, SkeletonConfig, SkeletonHints } from '../types.js';
-import { UNKNOWN, bindPattern, evaluate, type Ast } from './expression.js';
+import { UNKNOWN, CLASS_HELPER, bindPattern, evaluate, type Ast } from './expression.js';
 import { digest, loadStyle, bindStyleVariables } from './styles.js';
 import { componentName, declarationComponents } from './components.js';
 import type { ComponentReference } from './presets/types.js';
@@ -26,9 +26,15 @@ export class SourceModules {
   relative(file: string) { return path.relative(this.root, file).split(path.sep).join('/'); }
   async read(file: string): Promise<string> {
     file = await realpath(file);
-    const text = await readFile(file, 'utf8');
-    this.dependencies[this.relative(file)] = digest(text);
-    return text;
+    const bytes = await readFile(file);
+    this.dependencies[this.relative(file)] = digest(bytes);
+    return bytes.toString('utf8');
+  }
+  async readAsset(file: string): Promise<Uint8Array> {
+    file = await realpath(file);
+    const bytes = await readFile(file);
+    this.dependencies[this.relative(file)] = digest(bytes);
+    return bytes;
   }
   async resolve(from: string, request: string): Promise<string | undefined> {
     let base: string;
@@ -75,7 +81,7 @@ export class SourceModules {
     if (this.scanned.has(file)) return;
     this.scanned.add(file);
     const text = await this.read(file);
-    if (/\.(css|less)$/.test(file)) { this.css.set(file, (await loadStyle(file, f => this.read(f), undefined, undefined, this.options.styles)).css); return; }
+    if (/\.(css|less)$/.test(file)) { this.css.set(file, (await loadStyle(file, f => this.read(f), undefined, undefined, this.options.styles, undefined, f => this.readAsset(f))).css); return; }
     // Conservative import graph: include helpers even when not expanded in the render tree.
     let code = text;
     if (file.endsWith('.vue')) {
@@ -107,6 +113,10 @@ export class SourceModules {
       code = [descriptor.script?.content, descriptor.scriptSetup?.content].filter(Boolean).join('\n');
     }
     const ast = parseJS(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
+    const classHelpers = new Set<string>();
+    for (const statement of ast.program.body) if (statement.type === 'ImportDeclaration' && ['clsx', 'classnames'].includes(statement.source.value) && statement.importKind !== 'type') {
+      for (const specifier of statement.specifiers) if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && ['clsx', 'default'].includes(nodeName(specifier.imported) ?? '')) classHelpers.add(specifier.local.name);
+    }
     const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), exports: new Map(), reexports: new Map(), exportAll: [], env: Object.create(null), scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
     const ec = { code, env: mod.env, bindings: this.hints.bindings ?? {} };
     for (const statement of ast.program.body) {
@@ -126,7 +136,7 @@ export class SourceModules {
         else mod.functions.set('default', d);
       }
       if (statement.type === 'ImportDeclaration') {
-        for (const spec of statement.specifiers) mod.env[spec.local.name] = UNKNOWN;
+        for (const spec of statement.specifiers) mod.env[spec.local.name] = classHelpers.has(spec.local.name) ? CLASS_HELPER : UNKNOWN;
         if (['skelcast/react', 'skelcast/vue'].includes(statement.source.value)) for (const spec of statement.specifiers) if (spec.type === 'ImportSpecifier' && nodeName(spec.imported) === 'LoadingBoundary') mod.boundaries.add(spec.local.name);
         const resolved = await this.resolve(file, statement.source.value);
         for (const spec of statement.specifiers) if ((spec.type !== 'ImportSpecifier' || spec.importKind !== 'type') && statement.importKind !== 'type') mod.imports.set(spec.local.name, {
@@ -134,7 +144,7 @@ export class SourceModules {
           exported: spec.type === 'ImportNamespaceSpecifier' ? '*' : spec.type === 'ImportDefaultSpecifier' ? 'default' : nodeName(spec.imported)!,
         });
         if (resolved && /\.(css|less)$/.test(resolved)) {
-          const { css, mapping } = await loadStyle(resolved, f => this.read(f), undefined, undefined, this.options.styles);
+          const { css, mapping } = await loadStyle(resolved, f => this.read(f), undefined, undefined, this.options.styles, undefined, f => this.readAsset(f));
           this.css.set(resolved, css);
           for (const spec of statement.specifiers) mod.env[spec.local.name] = mapping;
         }
@@ -205,7 +215,7 @@ export class SourceModules {
         if (style.scoped && !mod.scopes.includes(scopeId)) mod.scopes.push(scopeId);
         const bound = bindStyleVariables(style.src ? await this.read(styleFile) : style.content, this.relative(file));
         mod.cssBindings.push(...bound.bindings.map(binding => ({ ...binding, line: binding.line + (style.src ? 0 : style.loc.start.line - 1) })));
-        const { css, mapping } = await loadStyle(style.module ? `${styleFile}.module.css` : styleFile, f => this.read(f), style.scoped ? scopeId : undefined, bound.css, this.options.styles, style.lang);
+        const { css, mapping } = await loadStyle(style.module ? `${styleFile}.module.css` : styleFile, f => this.read(f), style.scoped ? scopeId : undefined, bound.css, this.options.styles, style.lang, f => this.readAsset(f));
         this.css.set(`${file}:${i}`, css);
         if (style.module) mod.env[typeof style.module === 'string' ? style.module : '$style'] = mapping;
       }

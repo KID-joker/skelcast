@@ -8,7 +8,7 @@ import { parse as parseDOM, type TemplateChildNode as VueNode, type ElementNode,
 import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation } from '../types.js';
 import { diagnosticDetails } from './diagnostics.js';
 import { UNKNOWN, bindPattern, evaluate, evaluateString, expressionText, type Ast, type Value } from './expression.js';
-import { baseCSS, digest, loadStyle, scopeCSS, utilityCSS } from './styles.js';
+import { baseCSS, digest, loadStyle, scopeArtifactStyles, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
 import type { ComponentReference } from './presets/types.js';
@@ -18,12 +18,15 @@ import { escapeHTML, styleString, visit } from './html.js';
 import { renderAttributes, renderElement, renderStaticHTML } from './output.js';
 import { renderJSX } from './react.js';
 import { renderVueNodes, renderVueNode } from './vue.js';
+import postcss from 'postcss';
+import { embedStyleAssets } from './css-resources.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
   sources: Record<string, SourceLocation> = {};
   private renderedNodes = 0;
   private budgetReported = false;
+  private inlineStyles = new Map<string, { value: string; file: string }>();
   constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}) { super(root, hints, aliases, options); }
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string) {
     const line = this.sourceLine(ctx, node);
@@ -206,7 +209,15 @@ export class SourceCompiler extends SourceModules {
     return html;
   }
   attributes(props: Record<string, Value>): string { return renderAttributes.call(this, props); }
-  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string { return renderElement.call(this, tag, props, children, ctx, node); }
+  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string {
+    const value = styleString(props.style);
+    if (/url\s*\(/i.test(value)) {
+      const key = digest(`${ctx.module.file}:${value}`).slice(0, 16);
+      this.inlineStyles.set(key, { value, file: ctx.module.file });
+      props = { ...props, style: `--sk-inline-${key}:0` };
+    }
+    return renderElement.call(this, tag, props, children, ctx, node);
+  }
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string> { return renderVueNodes.call(this, nodes, ctx); }
   vueNode(node: VueNode, ctx: RenderContext, skipFor = false): Promise<string> { return renderVueNode.call(this, node, ctx, skipFor); }
   staticHTML(source: string, ctx: RenderContext, origin: Ast): string { return renderStaticHTML.call(this, source, ctx, origin); }
@@ -215,14 +226,19 @@ export class SourceCompiler extends SourceModules {
     await this.scan(source);
     for (const file of this.target.styles ?? []) {
       const resolved = path.resolve(this.root, file);
-      this.css.set(resolved, (await loadStyle(resolved, f => this.read(f), undefined, undefined, this.options.styles)).css);
+      this.css.set(resolved, (await loadStyle(resolved, f => this.read(f), undefined, undefined, this.options.styles, undefined, f => this.readAsset(f))).css);
     }
     const content = await this.component(source, this.target.export ?? 'default');
-    const html = `<div data-sk-artifact="${this.target.id}" aria-hidden="true" style="--skeleton-min-height:${this.hints.minHeight ?? 96}px">${content}</div>`;
+    let html = `<div data-sk-artifact="${this.target.id}" aria-hidden="true" style="--skeleton-min-height:${this.hints.minHeight ?? 96}px">${content}</div>`;
+    for (const [key, style] of this.inlineStyles) {
+      const root = postcss.parse(`a{${style.value}}`, { from: style.file });
+      await embedStyleAssets(root, style.file, file => this.readAsset(file));
+      html = html.replaceAll(`--sk-inline-${key}:0`, escapeHTML(root.first!.toString().slice(2, -1)));
+    }
     let css = '';
-    try { css = scopeCSS([...this.css.values(), await utilityCSS(html, this.options.styles)].join('\n'), this.target.id); }
+    try { ({ html, css } = scopeArtifactStyles([...this.css.values(), await utilityCSS(html, this.options.styles)].join('\n'), html, this.target.id)); }
     catch (error) { this.diagnostics.push({ code: 'STYLE_PARSE', message: String(error), file: this.target.source, line: 1 }); }
-    return { view: { html, css: `${css}\n${baseCSS}` }, dependencies: this.dependencies };
+    return { view: { html, css: `${css}\n${baseCSS.replace(/sk-pulse/g, `sk-${digest(this.target.id).slice(0, 12)}-pulse`)}` }, dependencies: this.dependencies };
   }
 }
 export async function compileTarget(root: string, target: SkeletonTarget, aliases: Record<string, string> = {}, options: CompilerOptions = {}): Promise<{ artifact: SkeletonArtifact; dependencies: Record<string, string> }> {

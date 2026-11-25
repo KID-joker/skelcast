@@ -6,8 +6,10 @@ import postcssImport from 'postcss-import';
 import selectorParser from 'postcss-selector-parser';
 import { compileStyleAsync } from '@vue/compiler-sfc';
 import type { StyleOptions } from '../types.js';
+import { embedStyleAssets, namespaceGlobals } from './css-resources.js';
+import { escapeHTML } from './html.js';
 
-export const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
+export const digest = (text: string | Uint8Array): string => createHash('sha256').update(text).digest('hex');
 export const sourceIdAttribute = 'data-sk-source-id';
 export interface CSSBinding { variable: string; expression: string; line: number }
 /** Rewrite bindings before preprocessing so variable names are stable per source component. */
@@ -37,7 +39,7 @@ export function bindStyleVariables(source: string, file: string): { css: string;
   }
   return { css: css + source.slice(previous), bindings };
 }
-export async function loadStyle(file: string, read: (file: string) => Promise<string>, scopedId?: string, inline?: string, options?: StyleOptions, lang?: string) {
+export async function loadStyle(file: string, read: (file: string) => Promise<string>, scopedId?: string, inline?: string, options?: StyleOptions, lang?: string, readAsset?: (file: string) => Promise<Uint8Array>) {
   let mapping: Record<string, string> = {};
   let source = inline ?? await read(file);
   if (lang === 'less' || file.endsWith('.less')) {
@@ -58,7 +60,7 @@ export async function loadStyle(file: string, read: (file: string) => Promise<st
       }
     }
     const output = await less.render(source, {
-      filename: file, javascriptEnabled: false,
+      filename: file, javascriptEnabled: false, rewriteUrls: 'all',
       // Less @plugin can execute JS independently of javascriptEnabled.
       disablePluginRule: true,
       plugins: [{ install: (_less: unknown, manager: any) => manager.addFileManager(new TrackedFileManager()) }],
@@ -72,7 +74,8 @@ export async function loadStyle(file: string, read: (file: string) => Promise<st
       getJSON: (_: string, json: Record<string, string>) => { mapping = json; },
     })] : []),
   ]).process(source, { from: file });
-  let css = processed.css;
+  await embedStyleAssets(processed.root, file, readAsset);
+  let css = processed.root.toString();
   if (scopedId) {
     const result = await compileStyleAsync({ source: css, filename: file, id: scopedId, scoped: true });
     if (result.errors.length) throw new Error(String(result.errors[0]));
@@ -102,8 +105,20 @@ export async function utilityCSS(html: string, options?: StyleOptions): Promise<
 }
 
 export function scopeCSS(css: string, id: string): string {
+  return scopeArtifactStyles(css, '', id).css;
+}
+export function scopeArtifactStyles(css: string, html: string, id: string): { css: string; html: string } {
   const scope = `[data-sk-artifact="${id}"]`;
   const root = postcss.parse(css);
+  const inline: postcss.Root[] = [];
+  for (const match of html.matchAll(/ style="([^"]*)"/g)) {
+    const value = match[1];
+    const decoded = value.replace(/&(quot|apos|lt|gt|amp|#39);/g, (_match, name: string) => ({ quot: '"', apos: "'", lt: '<', gt: '>', amp: '&', '#39': "'" })[name]!);
+    inline.push(postcss.parse(`a{${decoded}}`));
+  }
+  namespaceGlobals(root, `sk-${digest(id + css).slice(0, 12)}`, inline);
+  let index = 0;
+  html = html.replace(/ style="([^"]*)"/g, () => ` style="${escapeHTML(inline[index++].first!.toString().slice(2, -1))}"`);
   root.walkRules(rule => {
     let parent: any = rule.parent;
     while (parent) {
@@ -135,7 +150,7 @@ export function scopeCSS(css: string, id: string): string {
       return theme ? [`${scope} ${s}`, `${theme[1]} ${scope} ${theme[2]}`, `${scope}${theme[1]} ${theme[2]}`] : [`${scope} ${s}`];
     });
   });
-  return root.toString();
+  return { css: root.toString(), html };
 }
 
 export const baseCSS = `

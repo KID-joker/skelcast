@@ -25,7 +25,7 @@ for (const framework of ['react', 'vue'] as const) for (const fallback of [false
     for (const name of ['react', 'react-dom', 'vue']) await symlink(path.join(repo, 'node_modules', name), path.join(root, 'node_modules', name), 'dir');
     await symlink(repo, path.join(root, 'node_modules/skelcast'), 'dir');
     await writeFile(path.join(root, 'package.json'), '{"type":"module"}');
-    await writeFile(path.join(root, 'index.html'), `<html><head><style>[hidden]{display:none!important}</style></head><body><div id="root"></div><script type="module" src="/main.${framework === 'react' ? 'jsx' : 'js'}"></script></body></html>`);
+    await writeFile(path.join(root, 'index.html'), `<html><head><style>div{display:block!important}</style></head><body><div id="root"></div><script type="module" src="/main.${framework === 'react' ? 'jsx' : 'js'}"></script></body></html>`);
     if (framework === 'react') {
       await writeFile(path.join(root, 'main.jsx'), `import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{LoadingBoundary}from'skelcast/react';${fixtures}
         function App(){const[pending,setPending]=useState(false);const[variant,setVariant]=useState('default');const[count,setCount]=useState(4);return <><button onClick={()=>setPending(v=>!v)}>Toggle</button><button onClick={()=>setVariant('alternate')}>Variant</button><button onClick={()=>setCount(v=>v-1)}>Remove</button>{artifacts.slice(0,count).map((artifact,index)=><LoadingBoundary key={index} artifact={artifact} pending={pending} variant={variant}><input aria-label={'Draft '+index}/></LoadingBoundary>)}</>}
@@ -48,6 +48,7 @@ for (const framework of ['react', 'vue'] as const) for (const fallback of [false
     await page.getByRole('textbox', { name: 'Draft 0', exact: true }).fill('Keep this draft');
     await page.getByRole('button', { name: 'Toggle', exact: true }).click();
     await expect(page.locator('[data-sk-artifact]')).toHaveCount(4);
+    for (const content of await page.locator('[data-sk-content]').all()) await expect(content).toBeHidden();
     const article = page.locator('[data-sk-artifact] article');
     await expect(article.first()).toHaveCSS('height', '73px');
     await expect(article.last()).toHaveCSS('height', '73px');
@@ -60,6 +61,7 @@ for (const framework of ['react', 'vue'] as const) for (const fallback of [false
     })).toBe(true);
     await page.getByRole('button', { name: 'Toggle', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Draft 0', exact: true })).toHaveValue('Keep this draft');
+    for (const skeleton of await page.locator('[data-sk-artifact]').all()) await expect(skeleton).toBeHidden();
     await page.getByRole('button', { name: 'Toggle', exact: true }).click();
     expect(await original!.evaluate(element => element.isConnected)).toBe(true);
     await page.getByRole('button', { name: 'Toggle', exact: true }).click();

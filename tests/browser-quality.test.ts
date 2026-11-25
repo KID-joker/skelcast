@@ -16,3 +16,13 @@ test('visual tolerances allow small geometry differences and control-only skelet
   assert.throws(() => compareLayouts(content, content, { tolerancePx: NaN }), /finite nonnegative/);
   assert.throws(() => compareLayouts(content, content, { toleranceRatio: -1 }), /finite nonnegative/);
 });
+
+test('equal outer boxes cannot hide internal column drift or missing repeated anchors', () => {
+  const real = { ...content, anchors: { 'anchor:column': [{ x: 0, y: 0, width: 100, height: 100 }, { x: 120, y: 0, width: 280, height: 100 }], 'id:footer': [{ x: 0, y: 150, width: 400, height: 50 }] } };
+  const generated = { ...content, anchors: { 'anchor:column': [{ x: 0, y: 0, width: 200, height: 100 }, { x: 220, y: 0, width: 180, height: 100 }] } };
+  const result = compareLayouts(real, generated);
+  assert.equal(result.delta.width, 0);
+  assert.equal(result.delta.height, 0);
+  assert.deepEqual(result.anchors, { compared: 2, mismatched: 2, missing: 1 });
+  assert.deepEqual(result.issues.map(issue => issue.code), ['ANCHOR_MISMATCH', 'ANCHOR_MISMATCH', 'ANCHOR_MISSING']);
+});

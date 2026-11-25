@@ -31,6 +31,7 @@ function updateInitial() {
   const managed = [...boundaries.values()].some(b => b.kind === 'page');
   if (managed) initialHandedOff = true;
   root.hidden = initialHandedOff || initialReleased && (!initialPreviewAllowed || !(preview.target === 'page' || preview.target === id));
+  root.style.setProperty('display', root.hidden ? 'none' : 'block', 'important');
 }
 function emit() { revision++; updateInitial(); listeners.forEach(fn => fn()); }
 export function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }

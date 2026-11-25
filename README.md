@@ -223,6 +223,8 @@ finite empty/result variants for ordinary application state when needed. Stored-
 defaults supplied as explicit bindings describe a source-default snapshot, not a
 user's persisted content.
 
+CSS keyframes and locally declared font families receive artifact/content-specific names, including references in inline styles and finite CSS variable chains/fallbacks. Local relative CSS `url(...)` resources are embedded as data URLs and their binary bytes are fingerprinted, including resources in CSS/Less imports and resolved inline styles. This keeps resource paths valid on nested routes and in production without copying assets. Public-root, fragment, remote and existing data URLs retain their original semantics. Embedding resources increases artifact size; use public-root resources when embedding large assets is undesirable. CSS custom properties carrying opaque animation/font names still require an explicit static presentation value.
+
 Less is compiled before scoped CSS and CSS Modules processing. Imported Less files
 are fingerprinted. JavaScript, `@plugin` and remote Less imports are disabled.
 CSS `v-bind()` expressions are resolved from each component instance's props,
@@ -247,10 +249,12 @@ class on the document root to affect its skeletons without leaking artifact CSS.
 
 Use `bindings` to resolve expressions that affect branches, classes, or dimensions, such as `{ 'data.mode': 'grid' }`. The analyzer supports bounded expressions, aliases, destructuring, component props, React children, and Vue default/named slots. It never invokes arbitrary business functions or requests. Runtime slot parameters, render props, and complex helper functions need explicit hints or adapters.
 
+Finite `clsx` and `classnames` calls imported from those exact packages are interpreted from static arguments (including aliases, arrays and object conditions). Their implementations are never imported or called. Shadowed helpers, unknown conditions and lookalike packages stay unresolved and diagnostic. This reduces hints for common class composition without evaluating business helpers.
+
 Static `data-*`, `dir` and `lang` layout attributes are retained. Source IDs become
 `data-sk-source-id`; generated CSS rewrites ID selectors (including `[id]` selectors)
 to match without introducing duplicate DOM IDs, and preserves ID selector specificity.
-The `data-sk-*` namespace is reserved for generated metadata and supported hints.
+The `data-sk-*` namespace is reserved for generated metadata and supported hints, including `data-sk-anchor`.
 Unresolved layout attribute values produce `LAYOUT_ATTRIBUTE_UNKNOWN` diagnostics.
 
 Ordinary `sync` commands load the trusted development configuration as executable code; application source is parsed only. Do not import the application entry point from the configuration.
@@ -263,7 +267,7 @@ pnpm exec skelcast inspect --id products.list --json
 pnpm exec skelcast check
 ```
 
-Commit `.skelcast/*.mjs`, its manifest, and `skelcast.hints.json` alongside your source. The manifest records dependency fingerprints and artifact paths, not a second layout tree. Unchanged inputs reuse existing outputs. `check` exits with a nonzero status for stale, missing, or modified artifacts and can run in CI.
+Commit `.skelcast/*.mjs`, its manifest, and `skelcast.hints.json` alongside your source. The manifest records dependency fingerprints and artifact paths, not a second layout tree. Unchanged inputs reuse existing outputs. Generation stages all changed artifacts before replacing any output; a failed target leaves the previous generation intact. CLI, init, development-server mutations and artifact readers share an output-directory lock. Interrupted output commits are recovered from a local journal on the next operation. `check` exits with a nonzero status for stale, missing, or modified artifacts and can run in CI.
 
 Opaque components and unknown render calls produce local fallback blocks with source diagnostics. Feed `inspect` output to your coding agent to refine hints or adapters before regenerating.
 
@@ -277,7 +281,18 @@ pnpm exec skelcast quality --id products.list --strict
 `quality` reports placeholder counts, fallback counts, unresolved component tags and
 generation diagnostics for every variant. `--strict` exits nonzero for targets
 needing review, including stale or missing artifacts. `check` retains its existing
-freshness/integrity behavior. Structural quality cannot establish CSS visibility or
+freshness/integrity behavior. Each variant also reports `fallbackRatio`, and `review.locations` counts unique source locations with diagnostics across variants. These are review-work estimates, not measured human edits or visual similarity scores. Capture the first generated result before adding hints/adapters, then compare it after refinement:
+
+```bash
+pnpm exec skelcast quality --save-baseline skelcast.quality-baseline.json
+# Refine source, hints or adapters, then sync.
+pnpm exec skelcast sync
+pnpm exec skelcast quality --baseline skelcast.quality-baseline.json --json
+```
+
+The comparison reports `before`, `remaining`, `resolved` and `added` review locations per current target. Locations use source node identity (or line number for file-level diagnostics); moving/reformatting source can change those identities. Use the same source revision when measuring hint/adapter repair work. Baselines require current artifacts. Keep initial reports from representative real project pages to measure adoption cost; the included fixtures do not establish a production first-pass success rate.
+
+Structural quality cannot establish CSS visibility or
 visual similarity: verify representative pages at desktop and mobile widths in a
 browser, then compare them with the real application.
 
@@ -319,6 +334,23 @@ This is a geometry snapshot, not pixel similarity or the browser's CLS metric.
 Equal outer dimensions do not prove matching internal layout, colors or content.
 Use screenshots/overlays for those checks. `skelcast quality` remains a separate,
 source-only structural check and never launches or signs into the application.
+Source IDs are paired automatically with generated `data-sk-source-id` nodes. Add `data-sk-anchor="summary"` to a native presentation container for an explicit internal layout checkpoint (React and Vue). Repeated anchors are matched in DOM order; open Shadow DOM is traversed. Reports include compared/missing/mismatched anchors and detect column-width or position differences even when the region has identical outer dimensions. Unmarked internal content still needs visual review.
+
+### Batch viewport checks and screenshot overlays
+
+Run a browser audit against an existing SkelCast Vite development server:
+
+```bash
+pnpm add -D @playwright/test
+pnpm exec playwright install chromium
+pnpm exec skelcast audit --url http://localhost:5173/products \
+  --id products.list --viewports 1440x900,390x844 --out .skelcast-audit
+```
+
+The command reloads the URL at each viewport, waits for mounted boundaries, loading state, fonts and non-lazy images, and checks every variant of the selected region. Omit `--id` to check all regions mounted on that route. It writes `report.json`, real/skeleton PNGs and an `index.html` report with opacity sliders for screenshot overlays; a geometry mismatch or measurement error exits nonzero. It does not calculate a pixel-similarity score. Inspect screenshots when anchors do not cover the important layout. The browser-only API accepts an optional asynchronous `capture(phase)` callback (`content` or `skeleton`) for custom screenshot workflows and restores preview even if capture fails.
+
+For an authenticated project, supply an existing Playwright state file with `--storage-state path/to/state.json`. The audit does not perform login. Storage state includes cookies/local storage, not session storage; applications using session-only sign-in need their own authenticated acceptance fixture. Keep reports and authentication state in your project's intended local/test output directories.
+
 Import `skelcast/browser` only in development/test code when automated measurements
 are needed; the production Vite integration does not inject the inspector.
 

@@ -4,7 +4,8 @@ import { boundarySnapshot, registerBoundary, replaceArtifacts, selectedView, set
 import type { SkeletonArtifact } from '../src/types.js';
 
 test('initial shell retires for a different SPA entry route and stays retired across navigation', () => {
-  const initial = { dataset: { skInitial: 'static-shell' }, hidden: false };
+  const declarations: unknown[][] = [];
+  const initial = { dataset: { skInitial: 'static-shell' }, hidden: false, style: { setProperty: (...args: unknown[]) => declarations.push(args) } };
   const previous = globalThis.document;
   Object.assign(globalThis, { document: { querySelector: () => initial } });
   const artifact = (id: string): SkeletonArtifact => ({ id, kind: 'page', render: 'light', source: 'Page.vue', defaultVariant: 'default', variants: { default: { html: '<div/>', css: '' } }, diagnostics: [], evidence: [], sources: {} });
@@ -12,6 +13,7 @@ test('initial shell retires for a different SPA entry route and stays retired ac
   try {
     const first = registerBoundary({ id: 'first', kind: 'page', pending: false, artifact: artifact('first') });
     assert.equal(initial.hidden, true);
+    assert.deepEqual(declarations.at(-1), ['display', 'none', 'important']);
     first.dispose();
     assert.equal(initial.hidden, true);
     setPreview({ target: 'page' });

@@ -28,11 +28,13 @@ export function LoadingBoundary({ artifact: initial, pending, variant, children,
   useEffect(() => { registration.current?.update({ pending, variant, kind: artifact.kind, artifact }); }, [pending, artifact, variant]);
   const preview = getPreview();
   useLayoutEffect(() => {
+    skeleton.current?.style.setProperty('display', show ? 'block' : 'none', 'important');
+    skeleton.current?.nextElementSibling?.setAttribute('style', `display:${show ? 'none' : 'block'}!important`);
     if (skeleton.current) mount.update(skeleton.current, show, artifact, variant);
   }, [mount, show, artifact, variant, preview.target, preview.variant, preview.highlight]);
   useLayoutEffect(() => () => mount.dispose(), [mount]);
   return createElement('div', { ref: root, className, style: { minWidth: 0 }, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': pending },
-    createElement('div', { ref: skeleton, hidden: !show, 'aria-hidden': true }),
-    createElement('div', { hidden: show, inert: show || undefined, 'data-sk-content': '' }, children),
+    createElement('div', { ref: skeleton, hidden: !show, style: { display: show ? 'block' : 'none' }, 'aria-hidden': true }),
+    createElement('div', { hidden: show, style: { display: show ? 'none' : 'block' }, inert: show || undefined, 'data-sk-content': '' }, children),
   );
 }

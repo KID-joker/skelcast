@@ -3,6 +3,7 @@ import type * as t from '@babel/types';
 import { nodeName } from './ast.js';
 
 export const UNKNOWN = Symbol('unknown');
+export const CLASS_HELPER = Symbol('static-class-helper');
 export type Value = unknown;
 export type { Ast } from './ast.js';
 export interface ExpressionContext {
@@ -142,6 +143,23 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
     }
     case 'CallExpression': {
       const name = nodeName(node.callee);
+      if (node.callee.type === 'Identifier' && ctx.env[node.callee.name] === CLASS_HELPER) {
+        const flatten = (value: Value, level: number): string | typeof UNKNOWN => {
+          if (--ctx.budget!.remaining < 0 || level > 40 || value === UNKNOWN) return UNKNOWN;
+          if (!value) return '';
+          if (typeof value === 'string' || typeof value === 'number') return String(value);
+          if (Array.isArray(value)) {
+            const values = value.map(item => flatten(item, level + 1));
+            return values.includes(UNKNOWN) ? UNKNOWN : values.filter(Boolean).join(' ');
+          }
+          if (typeof value === 'object') {
+            if (Object.values(value).includes(UNKNOWN)) return UNKNOWN;
+            return Object.keys(value).filter(key => (value as Record<string, unknown>)[key]).join(' ');
+          }
+          return '';
+        };
+        return flatten(node.arguments.map(argument => argument.type === 'SpreadElement' ? UNKNOWN : ev(argument)), depth);
+      }
       const member = node.callee.type === 'MemberExpression' && !node.callee.computed ? nodeName(node.callee.property) : undefined;
       if (node.callee.type === 'MemberExpression' && !node.callee.computed && nodeName(node.callee.property) === 'trim' && !node.arguments.length) {
         const value = ev(node.callee.object);

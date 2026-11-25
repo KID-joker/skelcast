@@ -1,8 +1,37 @@
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type { BoundaryLayoutReport } from '../../src/browser.js';
 
 const browserModule = `/@fs/${path.join(process.cwd(), 'dist/browser.js')}`;
+test('layout audit tolerates metadata-only artifact refresh while rejecting changed layout', async ({ page }) => {
+  const entry = path.join(process.cwd(), 'dist/runtime/index.js');
+  const core = (await readFile(entry, 'utf8')).match(/from "([^"]+)"/)![1];
+  const coreModule = `/@fs${path.resolve(path.dirname(entry), core)}`;
+  await page.goto('http://127.0.0.1:5173/');
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click();
+  await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('aria-busy', 'false');
+  await page.waitForFunction(async moduleURL => (await import(moduleURL)).listBoundaries().some((item: { id: string }) => item.id === 'products.list'), coreModule);
+  const results = await page.evaluate(async ({ browserModule, coreModule }) => {
+    const { auditBoundaryLayout } = await import(browserModule);
+    const { listBoundaries, currentArtifact, replaceArtifacts } = await import(coreModule);
+    const boundary = listBoundaries().find((item: { id: string }) => item.id === 'products.list');
+    const artifact = currentArtifact(boundary.artifact);
+    const running = auditBoundaryLayout(boundary.element);
+    replaceArtifacts([{ ...artifact, diagnostics: [{ code: 'METADATA_ONLY', message: 'Metadata refreshed', file: artifact.source, line: 1 }] }]);
+    let same = '';
+    try { await running; same = 'completed'; } catch (error) { same = String(error); }
+    const changed = auditBoundaryLayout(boundary.element);
+    const next = structuredClone(artifact);
+    next.variants[next.defaultVariant].css += '\n[data-sk-artifact]{height:999px}';
+    replaceArtifacts([next]);
+    let different = '';
+    try { await changed; } catch (error) { different = String(error); }
+    return { same, different };
+  }, { browserModule, coreModule });
+  expect(results.same).toBe('completed');
+  expect(results.different).toContain('Loading region changed');
+});
 test('browser layout check catches bad geometry and hidden placeholders and restores real/forced state', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173/?__sk=products.list&__sk_variant=list');
   await page.getByRole('button', { name: 'Enter demo workspace' }).click();
