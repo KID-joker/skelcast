@@ -4,6 +4,8 @@ import type { TargetStatus } from './generator.js';
 import { auditBoundaryLayout, type BoundaryLayoutReport } from './browser.js';
 import { patchChildren } from './devtools/dom.js';
 import { buildRepairGuide, type RepairGuide } from './devtools/repairs.js';
+import { devtoolsCSS } from './devtools/styles.js';
+import { icon } from './devtools/icons.js';
 
 interface DevState { artifacts: SkeletonArtifact[]; statuses: TargetStatus[]; targets: SkeletonTarget[] }
 let data: DevState = { artifacts: [], statuses: [], targets: [] };
@@ -66,9 +68,6 @@ async function refresh() {
   } catch (error) { note = String(error); render(); }
 }
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-const css = `
-:host{font:12px/1.5 ui-sans-serif,system-ui,sans-serif;color:#dce7f5;color-scheme:dark}*{box-sizing:border-box}button,select,input,textarea{font:inherit;color:inherit}button,select{border:1px solid #354458;border-radius:7px;background:#1b293c;padding:7px 9px}button{cursor:pointer}button:hover{background:#2a3d55}button:disabled{opacity:.5;cursor:wait}.bar{display:flex;gap:7px;align-items:center;background:#111c2b;padding:9px;border:1px solid #354458;border-radius:12px;box-shadow:0 8px 30px #0003}.badge{width:7px;height:7px;border-radius:50%;background:#79d8bd;display:inline-block;margin-right:5px}.panel{width:min(400px,calc(100vw - 36px));max-height:70vh;overflow:auto;background:#111c2b;border:1px solid #354458;border-radius:12px;margin-bottom:8px;padding:16px;box-shadow:0 8px 30px #0003}h3{font-size:14px;margin:0 0 12px}p{margin:7px 0;color:#9bacc2}label{display:flex;justify-content:space-between;align-items:center;margin:8px 0;gap:12px}input,textarea{background:#0a1422;border:1px solid #354458;border-radius:5px;padding:6px}input{width:95px}textarea{width:100%;height:76px;resize:vertical}.actions{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.diagnostic{background:#1b293c;border-left:2px solid #dca45d;padding:8px;margin:8px 0;overflow-wrap:anywhere}.notice{color:#e9c883;max-width:365px;overflow-wrap:anywhere}small{color:#9bacc2}summary{cursor:pointer}select{max-width:150px}.title{white-space:nowrap}.active{border-color:#79d8bd}a{color:#91c9ff}
-`;
 function repairPanel(artifact: SkeletonArtifact, variant: string, guide: RepairGuide): string {
   const template = document.createElement('template');
   template.innerHTML = artifact.variants[variant].html;
@@ -114,10 +113,11 @@ function render() {
   const diagnostics = artifact?.diagnostics.filter(d => !d.variants || d.variants.includes(variant)) ?? [];
   const guide = artifact && inspected?.id === selected ? buildRepairGuide(artifact, inspected.node, variant, target) : undefined;
   const template = document.createElement('template');
-  template.innerHTML = `<style>${css}.bar{flex-wrap:wrap}button{white-space:nowrap}.panel{margin-left:auto}.repair{border:1px solid #dca45d;border-radius:8px;padding:10px;margin:12px 0}.repair h4{margin:6px 0}.repair pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;background:#0a1422;padding:8px;border-radius:5px}.repair-example{border-top:1px solid #354458;margin-top:12px;padding-top:6px}@media(max-width:600px){.bar{max-width:calc(100vw - 36px)}.title{display:none}select{min-width:0;max-width:130px}.bar button{padding:6px 9px}}</style>
-    ${open ? `<section class="panel" data-ui-key="panel"><h3>Skeleton inspector · ${esc(selected)}</h3>
-      <p>Showing: <strong>${esc(reason)}</strong> · Actual state: ${pending ? 'Loading' : mounted.length ? 'Ready' : 'Not mounted'}</p>
-      <p>Artifact: ${status ? stateNames[status.state] : 'Reading'}${status?.reason ? ` · ${esc(status.reason)}` : ''}</p>
+  template.innerHTML = `<style>${devtoolsCSS}</style>
+    ${open ? `<section id="inspector" class="panel" data-ui-key="panel" aria-label="Skeleton inspector"><div class="panel-heading"><h3>Skeleton inspector</h3><span class="eyebrow">Devtools</span></div>
+      <p class="region-name">${esc(selected)}</p>
+      <div class="state-card"><p>Showing: <strong>${esc(reason)}</strong> · Actual state: ${pending ? 'Loading' : mounted.length ? 'Ready' : 'Not mounted'}</p>
+      <p><span class="badge${status && status.state !== 'ready' ? ' warning' : ''}" aria-hidden="true"></span>Artifact: ${status ? stateNames[status.state] : 'Reading'}${status?.reason ? ` · ${esc(status.reason)}` : ''}</p></div>
       ${guide && artifact ? repairPanel(artifact, variant, guide) : ''}
       <div class="actions"><button id="pick" class="${picking ? 'active' : ''}">${picking ? 'Click a region' : 'Pick region'}</button><button id="copy">Copy link</button><button id="source">Open source</button><button id="layout" ${busy || pending || !mounted.length ? 'disabled' : ''}>Check layout</button><button id="sync" ${busy ? 'disabled' : ''}>${busy ? 'Updating…' : 'Sync artifacts'}</button></div>
       <label>Highlight fallbacks<input id="highlight" type="checkbox" ${preview.highlight ? 'checked' : ''}></label>
@@ -133,10 +133,11 @@ function render() {
       ${layout ? `<details data-ui-key="layout"><summary>Layout check · ${layout.needsReview ? 'Needs review' : 'Within tolerance'}</summary><p>${esc(layout.variant)} · ${layout.viewport.width} × ${layout.viewport.height}<br>Width Δ ${layout.delta.width.toFixed(1)}px · Height Δ ${layout.delta.height.toFixed(1)}px<br>Following content shift ${layout.delta.followingContentShift.toFixed(1)}px · Overflow ${layout.skeleton.overflowX.toFixed(1)}px<br>Visible placeholders ${layout.skeleton.visiblePlaceholders}/${layout.skeleton.placeholders}</p>${layout.issues.map(issue => `<p>${esc(issue.code)}: ${esc(issue.message)}</p>`).join('')}<small>Geometry snapshot; excludes pixel similarity and CLS.</small></details>` : ''}
       ${note ? `<p class="notice" role="status">${esc(note)}</p>` : ''}
     </section>` : ''}
-    <div class="bar" data-ui-key="bar"><span class="title"><span class="badge"></span>SkelCast</span><select id="mode" aria-label="Preview mode">${modes}</select>
-    <select id="target" aria-label="Loading region">${data.artifacts.map(a => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${esc(a.id)}</option>`).join('')}</select>
-    ${artifact && Object.keys(artifact.variants).length > 1 ? `<select id="variant" aria-label="Layout variant">${Object.keys(artifact.variants).map(v => `<option value="${esc(v)}" ${v === variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>` : ''}
-    <button id="play">${playing ? 'Release' : 'Play'}</button><button id="more" aria-expanded="${open}">${open ? 'Collapse' : 'More'}</button>${preview.target ? '<button id="exit">Exit</button>' : ''}</div>`;
+    <div class="bar" data-ui-key="bar" role="group" aria-label="SkelCast preview controls"><span class="title"><span class="brand-mark">${icon('layers')}</span>SkelCast</span>
+    <div class="controls" data-ui-key="controls"><div class="select-control${mode !== 'auto' ? ' is-active' : ''}" title="Preview mode">${icon('mode')}<select id="mode" aria-label="Preview mode">${modes}</select></div>
+    <div class="select-control region-control" title="Loading region">${icon('region')}<select id="target" aria-label="Loading region">${data.artifacts.map(a => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${esc(a.id)}</option>`).join('')}</select></div>
+    ${artifact && Object.keys(artifact.variants).length > 1 ? `<div class="select-control variant-control" title="Layout variant"><select id="variant" aria-label="Layout variant">${Object.keys(artifact.variants).map(v => `<option value="${esc(v)}" ${v === variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}</div>
+    <div class="bar-actions" data-ui-key="bar-actions"><button id="play" class="icon-button" aria-label="${playing ? 'Release' : 'Play'}" title="${playing ? 'Release preview' : 'Play loading preview'}" aria-pressed="${playing}">${icon(playing ? 'stop' : 'play')}</button><button id="more" class="icon-button" aria-label="${open ? 'Collapse' : 'More'}" title="${open ? 'Collapse inspector' : 'Open inspector'}" aria-expanded="${open}"${open ? ' aria-controls="inspector"' : ''}>${icon('settings')}</button>${preview.target ? `<button id="exit" class="icon-button" aria-label="Exit" title="Exit forced preview">${icon('close')}</button>` : ''}</div></div>`;
   patchChildren(shadow, template.content);
   for (const details of shadow.querySelectorAll<HTMLDetailsElement>('details[data-ui-key]')) {
     details.open = disclosures.get(details.dataset.uiKey!) ?? false;
