@@ -9,13 +9,21 @@ export interface BoundaryInfo {
   artifact: SkeletonArtifact;
   element?: HTMLElement;
 }
-export interface PreviewState { target: string | null; variant?: string; highlight: boolean }
+export type ComparisonMode = 'off' | 'side-by-side' | 'overlay' | 'switch';
+export interface PreviewState {
+  target: string | null;
+  variant?: string;
+  highlight: boolean;
+  comparison: ComparisonMode;
+  opacity: number;
+  comparisonView: 'content' | 'skeleton';
+}
 const boundaries = new Map<symbol, BoundaryInfo>();
 const listeners = new Set<() => void>();
 const boundaryListeners = new Set<{ id: string; kind: BoundaryInfo['kind']; listener: () => void }>();
 const artifactRevisions = new Map<string, number>();
 let revision = 0;
-let preview: PreviewState = { target: null, highlight: false };
+let preview: PreviewState = { target: null, highlight: false, comparison: 'off', opacity: 0.5, comparisonView: 'content' };
 let initialReleased = false;
 let initialHandedOff = false;
 let initialPreviewAllowed = true;
@@ -42,7 +50,9 @@ export function getPreview(): PreviewState { return preview; }
  * preview and artifact changes that affect that boundary's rendered output. */
 export function boundarySnapshot(id: string, kind: BoundaryInfo['kind']): string {
   const held = forced(id, kind);
-  return JSON.stringify([held, held ? preview.variant : null, preview.highlight, artifactRevisions.get(id) ?? 0]);
+  return JSON.stringify([held, held ? preview.variant : null, preview.highlight, artifactRevisions.get(id) ?? 0,
+    held ? preview.comparison : null, held && preview.comparison === 'overlay' ? preview.opacity : null,
+    held && preview.comparison === 'switch' ? preview.comparisonView : null]);
 }
 export function subscribeBoundary(id: string, kind: BoundaryInfo['kind'], listener: () => void) {
   const entry = { id, kind, listener };
@@ -52,6 +62,7 @@ export function subscribeBoundary(id: string, kind: BoundaryInfo['kind'], listen
 export function setPreview(value: Partial<PreviewState>) {
   const before = new Map([...boundaryListeners].map(entry => [entry, boundarySnapshot(entry.id, entry.kind)]));
   preview = { ...preview, ...value };
+  preview.opacity = Number.isFinite(preview.opacity) ? Math.max(0, Math.min(1, preview.opacity)) : 0.5;
   for (const [entry, previous] of before) if (previous !== boundarySnapshot(entry.id, entry.kind)) entry.listener();
   emit();
 }

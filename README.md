@@ -450,6 +450,22 @@ Open your normal local application, sign in if needed, and use its real routes. 
 
 The toolbar provides **Follow loading**, **Hold page**, **Hold region**, variant selection, playback, region picking, link copying, source navigation, diagnostics, fallback highlighting, and hint editing. Use DevTools device emulation for viewport testing.
 
+Choose a **Loading region**, then use **Comparison mode** to compare its real content with the generated skeleton in React or Vue:
+
+- **Side by side** shows real content on the left and the skeleton on the right in equal-width panes. Each pane contains its own horizontal overflow; its available width is half the region, so use overlay or switching to check full-width geometry.
+- **Overlay** aligns both at the same origin and blends the skeleton over the real content. Adjust **Opacity** from 0–100% (default 50%); pointer input passes through to the real content.
+- **One-click switch** keeps the original width and lets **Show skeleton** / **Show real content** toggle between the two.
+
+Comparison retains mounted content and form state without triggering requests. Regions that are still loading show their real loading skeleton, then resume comparison when ready. **Compare: off**, **Follow loading**, or **Exit** returns to normal loading behavior. Comparison mode, variant, opacity, and the selected switch view are included in **Copy link** and survive reloads:
+
+```text
+/products?__sk=products.list&__sk_compare=side-by-side
+/products?__sk=products.list&__sk_compare=overlay&__sk_opacity=0.5
+/products?__sk=products.list&__sk_compare=switch&__sk_view=skeleton
+```
+
+**Check layout** temporarily measures content and skeleton separately at the original width, then restores the comparison settings.
+
 Enable **Highlight fallbacks**, then click a highlighted region (including inside
 Shadow DOM), or choose **Inspect fallback** in the diagnostics list. The inspector
 shows the source expression, file and line, related evidence, and repair examples

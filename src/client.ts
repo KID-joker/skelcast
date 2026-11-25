@@ -1,4 +1,4 @@
-import { forced, getPreview, listBoundaries, replaceArtifacts, setPreview, subscribe } from './runtime/core.js';
+import { forced, getPreview, listBoundaries, replaceArtifacts, setPreview, subscribe, type ComparisonMode, type PreviewState } from './runtime/core.js';
 import type { SkeletonArtifact, SkeletonTarget } from './types.js';
 import type { TargetStatus } from './generator.js';
 import { auditBoundaryLayout, type BoundaryLayoutReport } from './browser.js';
@@ -43,14 +43,27 @@ function readURL() {
   const target = query.get('__sk');
   selectedByUser = !!target && target !== 'page' && target !== 'auto';
   if (selectedByUser) selected = target!;
-  setPreview({ target: target && target !== 'auto' ? target : null, variant: query.get('__sk_variant') ?? undefined });
+  const comparison = query.get('__sk_compare');
+  const opacity = query.get('__sk_opacity');
+  setPreview({ target: target && target !== 'auto' ? target : null, variant: query.get('__sk_variant') ?? undefined,
+    comparison: target && target !== 'auto' && ['side-by-side', 'overlay', 'switch'].includes(comparison ?? '') ? comparison as ComparisonMode : 'off',
+    opacity: opacity !== null && opacity.trim() ? Number(opacity) : 0.5,
+    comparisonView: query.get('__sk_view') === 'skeleton' ? 'skeleton' : 'content' });
 }
-function writeURL(target: string | null, variant?: string) {
+function writeURL(target: string | null, variant?: string, comparison: Partial<Pick<PreviewState, 'comparison' | 'opacity' | 'comparisonView'>> = {}) {
+  const next = { ...getPreview(), ...comparison };
+  if (!target) next.comparison = 'off';
   const url = new URL(location.href);
   if (target) url.searchParams.set('__sk', target); else url.searchParams.delete('__sk');
   if (variant) url.searchParams.set('__sk_variant', variant); else url.searchParams.delete('__sk_variant');
+  for (const key of ['__sk_compare', '__sk_opacity', '__sk_view']) url.searchParams.delete(key);
+  if (next.comparison !== 'off') {
+    url.searchParams.set('__sk_compare', next.comparison);
+    if (next.comparison === 'overlay') url.searchParams.set('__sk_opacity', String(next.opacity));
+    if (next.comparison === 'switch') url.searchParams.set('__sk_view', next.comparisonView);
+  }
   history.replaceState(history.state, '', url);
-  setPreview({ target, variant });
+  setPreview({ target, variant, comparison: next.comparison, opacity: next.opacity, comparisonView: next.comparisonView });
 }
 async function request(endpoint: string, body: unknown) {
   const response = await fetch(`/__skelcast/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SkelCast-Dev': '1' }, body: JSON.stringify(body) });
@@ -102,7 +115,8 @@ function render() {
   const mounted = listBoundaries().filter(b => b.id === selected);
   const pending = mounted.some(b => b.pending);
   const status = data.statuses.find(s => s.id === selected);
-  const reason = artifact && forced(selected, artifact.kind) ? playing ? 'Playing' : 'Forced preview' : pending ? artifact?.kind === 'page' ? 'Page loading' : 'Request loading' : 'Content';
+  const comparing = preview.comparison !== 'off' && !!artifact && forced(selected, artifact.kind);
+  const reason = comparing && !pending ? 'Comparing' : artifact && forced(selected, artifact.kind) ? playing ? 'Playing' : 'Forced preview' : pending ? artifact?.kind === 'page' ? 'Page loading' : 'Request loading' : 'Content';
   const stateNames = { ready: 'Up to date', stale: 'Out of date', missing: 'Missing', corrupt: 'Modified' };
   const modes = `<option value="auto">Follow loading</option><option value="page">Hold page</option><option value="selected">Hold region</option>`;
   const mode = preview.target === 'page' ? 'page' : preview.target ? 'selected' : 'auto';
@@ -136,8 +150,14 @@ function render() {
     <div class="bar" data-ui-key="bar" role="group" aria-label="SkelCast preview controls"><span class="title"><span class="brand-mark">${icon('layers')}</span>SkelCast</span>
     <div class="controls" data-ui-key="controls"><div class="select-control${mode !== 'auto' ? ' is-active' : ''}" title="Preview mode">${icon('mode')}<select id="mode" aria-label="Preview mode">${modes}</select></div>
     <div class="select-control region-control" title="Loading region">${icon('region')}<select id="target" aria-label="Loading region">${data.artifacts.map(a => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${esc(a.id)}</option>`).join('')}</select></div>
+    <div class="select-control comparison-control${comparing ? ' is-active' : ''}" title="Compare real content and skeleton">${icon('compare')}<select id="comparison" aria-label="Comparison mode"><option value="off">Compare: off</option><option value="side-by-side">Side by side</option><option value="overlay">Overlay</option><option value="switch">One-click switch</option></select></div>
     ${artifact && Object.keys(artifact.variants).length > 1 ? `<div class="select-control variant-control" title="Layout variant"><select id="variant" aria-label="Layout variant">${Object.keys(artifact.variants).map(v => `<option value="${esc(v)}" ${v === variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}</div>
-    <div class="bar-actions" data-ui-key="bar-actions"><button id="play" class="icon-button" aria-label="${playing ? 'Release' : 'Play'}" title="${playing ? 'Release preview' : 'Play loading preview'}" aria-pressed="${playing}">${icon(playing ? 'stop' : 'play')}</button><button id="more" class="icon-button" aria-label="${open ? 'Collapse' : 'More'}" title="${open ? 'Collapse inspector' : 'Open inspector'}" aria-expanded="${open}"${open ? ' aria-controls="inspector"' : ''}>${icon('settings')}</button>${preview.target ? `<button id="exit" class="icon-button" aria-label="Exit" title="Exit forced preview">${icon('close')}</button>` : ''}</div></div>`;
+    <div class="bar-actions" data-ui-key="bar-actions"><button id="play" class="icon-button" aria-label="${playing ? 'Release' : 'Play'}" title="${playing ? 'Release preview' : 'Play loading preview'}" aria-pressed="${playing}">${icon(playing ? 'stop' : 'play')}</button><button id="more" class="icon-button" aria-label="${open ? 'Collapse' : 'More'}" title="${open ? 'Collapse inspector' : 'Open inspector'}" aria-expanded="${open}"${open ? ' aria-controls="inspector"' : ''}>${icon('settings')}</button>${preview.target ? `<button id="exit" class="icon-button" aria-label="Exit" title="Exit forced preview">${icon('close')}</button>` : ''}</div></div>
+    ${comparing ? `<div class="comparison-bar" data-ui-key="comparison-bar" role="group" aria-label="Comparison controls">
+      <span role="status">${pending ? 'Waiting for real content…' : !mounted.length ? 'Region is not mounted' : preview.comparison === 'side-by-side' ? 'Real content (left) · Skeleton (right)' : preview.comparison === 'overlay' ? 'Skeleton over real content' : `Showing: ${preview.comparisonView === 'content' ? 'Real content' : 'Skeleton'}`}</span>
+      ${preview.comparison === 'overlay' ? `<label for="opacity">Opacity <input id="opacity" type="range" min="0" max="100" step="5" value="${Math.round(preview.opacity * 100)}"><output for="opacity">${Math.round(preview.opacity * 100)}%</output></label>` : ''}
+      ${preview.comparison === 'switch' ? `<button id="switch-view" ${pending || !mounted.length ? 'disabled' : ''}>Show ${preview.comparisonView === 'content' ? 'skeleton' : 'real content'}</button>` : ''}
+    </div>` : ''}`;
   patchChildren(shadow, template.content);
   for (const details of shadow.querySelectorAll<HTMLDetailsElement>('details[data-ui-key]')) {
     details.open = disclosures.get(details.dataset.uiKey!) ?? false;
@@ -145,6 +165,7 @@ function render() {
   const panel = shadow.querySelector<HTMLElement>('.panel');
   if (panel) panel.scrollTop = panelScroll;
   (shadow.querySelector('#mode') as HTMLSelectElement).value = mode;
+  (shadow.querySelector('#comparison') as HTMLSelectElement).value = comparing ? preview.comparison : 'off';
   const bind = (id: string, event: string, fn: (event: Event) => void) => {
     const element = shadow.querySelector(`#${id}`);
     if (element) Reflect.set(element, `on${event}`, fn);
@@ -155,13 +176,20 @@ function render() {
     });
   }
   bind('more', 'click', () => { open = !open; render(); });
-  bind('mode', 'change', event => { stopReplay(); const value = (event.target as HTMLSelectElement).value; writeURL(value === 'auto' ? null : value === 'page' ? 'page' : selected, preview.variant); });
-  bind('target', 'change', event => { selected = (event.target as HTMLSelectElement).value; selectedByUser = true; if (getPreview().target && getPreview().target !== 'page') writeURL(selected); render(); });
+  bind('mode', 'change', event => { stopReplay(); const value = (event.target as HTMLSelectElement).value; writeURL(value === 'auto' ? null : value === 'page' ? 'page' : selected, preview.variant, { comparison: 'off' }); });
+  bind('comparison', 'change', event => {
+    stopReplay(); selectedByUser = true;
+    const comparison = (event.target as HTMLSelectElement).value as ComparisonMode;
+    writeURL(comparison === 'off' ? null : selected, preview.variant, { comparison });
+  });
+  bind('opacity', 'input', event => writeURL(preview.target, preview.variant, { opacity: Number((event.target as HTMLInputElement).value) / 100 }));
+  bind('switch-view', 'click', () => writeURL(preview.target, preview.variant, { comparisonView: preview.comparisonView === 'content' ? 'skeleton' : 'content' }));
+  bind('target', 'change', event => { selected = (event.target as HTMLSelectElement).value; selectedByUser = true; if (getPreview().target && (getPreview().target !== 'page' || comparing)) writeURL(selected); render(); });
   bind('variant', 'change', event => writeURL(getPreview().target, (event.target as HTMLSelectElement).value));
   bind('exit', 'click', () => { stopReplay(); writeURL(null); });
   bind('play', 'click', () => {
     if (playing) { stopReplay(); writeURL(null); return; }
-    playing = true; writeURL(selected || 'page', preview.variant);
+    playing = true; writeURL(selected || 'page', preview.variant, { comparison: 'off' });
     replayTimer = setTimeout(() => { playing = false; writeURL(null); }, 1500);
   });
   bind('highlight', 'change', event => setPreview({ highlight: (event.target as HTMLInputElement).checked }));

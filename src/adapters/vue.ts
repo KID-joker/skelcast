@@ -1,6 +1,7 @@
 import { defineComponent, h, onMounted, onUpdated, onBeforeUnmount, ref, watch, type PropType } from 'vue';
+import { applyPresentationDisplay, boundaryPresentation } from '../runtime/presentation.js';
 import type { SkeletonArtifact } from '../types.js';
-import { createSkeletonMount, currentArtifact, forced, registerBoundary, subscribeBoundary } from '../runtime/core.js';
+import { createSkeletonMount, currentArtifact, registerBoundary, subscribeBoundary } from '../runtime/core.js';
 
 export const LoadingBoundary = defineComponent({
   name: 'SkeletonLoadingBoundary',
@@ -18,9 +19,9 @@ export const LoadingBoundary = defineComponent({
     let registration: ReturnType<typeof registerBoundary> | undefined;
     const updateSkeleton = () => {
       const artifact = currentArtifact(props.artifact);
-      const show = props.pending || forced(artifact.id, artifact.kind);
-      skeleton.value?.style.setProperty('display', show ? 'block' : 'none', 'important');
-      skeleton.value?.nextElementSibling?.setAttribute('style', `display:${show ? 'none' : 'block'}!important`);
+      const presentation = boundaryPresentation(artifact.id, artifact.kind, props.pending);
+      const show = presentation.skeletonVisible;
+      if (root.value && skeleton.value) applyPresentationDisplay(root.value, skeleton.value, presentation);
       if (skeleton.value) mount.update(skeleton.value, show, artifact, props.variant);
     };
     const connect = () => {
@@ -39,10 +40,11 @@ export const LoadingBoundary = defineComponent({
     return () => {
       void revision.value;
       const artifact = currentArtifact(props.artifact);
-      const show = props.pending || forced(artifact.id, artifact.kind);
-      return h('div', { ref: root, style: { minWidth: 0 }, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
-        h('div', { ref: skeleton, hidden: !show, style: { display: show ? 'block' : 'none' }, 'aria-hidden': 'true' }),
-        h('div', { hidden: show, style: { display: show ? 'none' : 'block' }, inert: show || undefined, 'data-sk-content': '' }, slots.default?.()),
+      const presentation = boundaryPresentation(artifact.id, artifact.kind, props.pending);
+      const show = presentation.skeletonVisible;
+      return h('div', { ref: root, style: presentation.rootStyle, 'data-sk-comparison': presentation.comparison, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
+        h('div', { ref: skeleton, hidden: !show, style: presentation.skeletonStyle, 'aria-hidden': 'true' }),
+        h('div', { hidden: !presentation.contentVisible, style: presentation.contentStyle, inert: !presentation.contentVisible || undefined, 'data-sk-content': '' }, slots.default?.()),
       ]);
     };
   },

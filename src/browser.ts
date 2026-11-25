@@ -182,7 +182,7 @@ export async function auditBoundaryLayout(element: HTMLElement, options: LayoutT
   const focused = element.ownerDocument.activeElement;
   let owned = original;
   const select = (target: string | null, variant?: string) => {
-    setPreview({ target, variant });
+    setPreview({ target, variant, comparison: 'off' });
     owned = getPreview();
   };
   const ensureStable = () => {

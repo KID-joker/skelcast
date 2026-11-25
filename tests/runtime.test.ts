@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boundarySnapshot, registerBoundary, replaceArtifacts, selectedView, setPreview, subscribe, subscribeBoundary } from '../src/runtime/core.js';
+import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedView, setPreview, subscribe, subscribeBoundary } from '../src/runtime/core.js';
 import type { SkeletonArtifact } from '../src/types.js';
 
 test('initial shell retires for a different SPA entry route and stays retired across navigation', () => {
@@ -60,4 +60,32 @@ test('preview and artifact updates notify only affected boundaries', () => {
     replaceArtifacts([artifact('second')]);
     assert.equal(calls.second, 1, 'identical refreshes retain cached trees');
   } finally { stops.forEach(stop => stop()); setPreview({ target: null, variant: undefined, highlight: false }); }
+});
+
+test('comparison updates notify only their target and clamp overlay opacity', () => {
+  const calls = { selected: 0, other: 0 };
+  const stops = Object.keys(calls).map(id => subscribeBoundary(id, 'request', () => calls[id as keyof typeof calls]++));
+  try {
+    setPreview({ target: 'selected', comparison: 'side-by-side' });
+    assert.deepEqual(calls, { selected: 1, other: 0 });
+    setPreview({ comparison: 'overlay', opacity: 2 });
+    assert.equal(getPreview().opacity, 1);
+    assert.deepEqual(calls, { selected: 2, other: 0 });
+    setPreview({ opacity: -1 });
+    assert.equal(getPreview().opacity, 0);
+    setPreview({ opacity: Number.NaN });
+    assert.equal(getPreview().opacity, 0.5);
+    setPreview({ comparison: 'switch', comparisonView: 'content' });
+    const before = calls.selected;
+    setPreview({ comparisonView: 'skeleton' });
+    assert.equal(calls.selected, before + 1);
+    assert.equal(calls.other, 0);
+    setPreview({ target: null });
+    const released = calls.selected;
+    setPreview({ comparisonView: 'content', opacity: 0.75 });
+    assert.equal(calls.selected, released, 'inactive comparisons do not update boundaries');
+  } finally {
+    stops.forEach(stop => stop());
+    setPreview({ target: null, comparison: 'off', opacity: 0.5, comparisonView: 'content' });
+  }
 });

@@ -1,6 +1,7 @@
-import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
+import { applyPresentationDisplay, boundaryPresentation } from '../runtime/presentation.js';
 import type { SkeletonArtifact } from '../types.js';
-import { boundarySnapshot, createSkeletonMount, currentArtifact, forced, getPreview, registerBoundary, serverSnapshot, subscribeBoundary } from '../runtime/core.js';
+import { boundarySnapshot, createSkeletonMount, currentArtifact, getPreview, registerBoundary, serverSnapshot, subscribeBoundary } from '../runtime/core.js';
 
 export interface LoadingBoundaryProps {
   artifact: SkeletonArtifact;
@@ -9,14 +10,15 @@ export interface LoadingBoundaryProps {
   children?: ReactNode;
   className?: string;
 }
-export function LoadingBoundary({ artifact: initial, pending, variant, children, className }: LoadingBoundaryProps) {
+export function LoadingBoundary({ artifact: initial, pending, variant, children, className }: LoadingBoundaryProps): ReactElement {
   const subscription = useMemo(() => ({
     subscribe: (listener: () => void) => subscribeBoundary(initial.id, initial.kind, listener),
     snapshot: () => boundarySnapshot(initial.id, initial.kind),
   }), [initial.id, initial.kind]);
   useSyncExternalStore(subscription.subscribe, subscription.snapshot, serverSnapshot);
   const artifact = currentArtifact(initial);
-  const show = pending || forced(artifact.id, artifact.kind);
+  const presentation = boundaryPresentation(artifact.id, artifact.kind, pending);
+  const show = presentation.skeletonVisible;
   const root = useRef<HTMLDivElement>(null);
   const skeleton = useRef<HTMLDivElement>(null);
   const mount = useMemo(createSkeletonMount, []);
@@ -28,13 +30,12 @@ export function LoadingBoundary({ artifact: initial, pending, variant, children,
   useEffect(() => { registration.current?.update({ pending, variant, kind: artifact.kind, artifact }); }, [pending, artifact, variant]);
   const preview = getPreview();
   useLayoutEffect(() => {
-    skeleton.current?.style.setProperty('display', show ? 'block' : 'none', 'important');
-    skeleton.current?.nextElementSibling?.setAttribute('style', `display:${show ? 'none' : 'block'}!important`);
+    if (root.current && skeleton.current) applyPresentationDisplay(root.current, skeleton.current, presentation);
     if (skeleton.current) mount.update(skeleton.current, show, artifact, variant);
-  }, [mount, show, artifact, variant, preview.target, preview.variant, preview.highlight]);
+  }, [mount, show, pending, artifact, variant, preview.target, preview.variant, preview.highlight, preview.comparison, preview.opacity, preview.comparisonView]);
   useLayoutEffect(() => () => mount.dispose(), [mount]);
-  return createElement('div', { ref: root, className, style: { minWidth: 0 }, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': pending },
-    createElement('div', { ref: skeleton, hidden: !show, style: { display: show ? 'block' : 'none' }, 'aria-hidden': true }),
-    createElement('div', { hidden: show, style: { display: show ? 'none' : 'block' }, inert: show || undefined, 'data-sk-content': '' }, children),
+  return createElement('div', { ref: root, className, style: presentation.rootStyle, 'data-sk-comparison': presentation.comparison, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': pending },
+    createElement('div', { ref: skeleton, hidden: !show, style: presentation.skeletonStyle, 'aria-hidden': true }),
+    createElement('div', { hidden: !presentation.contentVisible, style: presentation.contentStyle, inert: !presentation.contentVisible || undefined, 'data-sk-content': '' }, children),
   );
 }

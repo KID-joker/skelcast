@@ -42,6 +42,10 @@ svg { display: block; width: 15px; height: 15px; flex: none; pointer-events: non
 .select-control.is-active > svg { color: #6ee7b7; }
 .select-control.is-active select { color: #a7f3d0; }
 .bar-actions { display: flex; gap: 3px; align-items: center; border-left: 1px solid var(--border); padding-left: 8px; }
+.comparison-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 6px; padding: 8px 12px; border: 1px solid #38383d; border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 11px; }
+.comparison-bar label { margin: 0; gap: 8px; }
+.comparison-bar input[type="range"] { width: 100px; padding: 0; accent-color: #a7f3d0; cursor: pointer; }
+.comparison-bar output { min-width: 30px; font-family: var(--mono); text-align: right; }
 .icon-button { width: 30px; padding: 0; background: transparent; border-color: transparent; color: var(--muted); }
 .icon-button[aria-pressed="true"], .icon-button[aria-expanded="true"] { background: #303034; color: #fafafa; border-color: #3f3f46; }
 #play:not([aria-pressed="true"]) { color: #e4e4e7; }
@@ -91,17 +95,19 @@ a { color: #a7f3d0; }
 .repair h4 { margin: 6px 0; font-size: 12px; font-weight: 600; }
 .repair pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; background: #111113; padding: 10px; border: 1px solid var(--border); border-radius: 5px; font: 11px/1.6 var(--mono); }
 .repair-example { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 8px; }
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 8px; width: min(392px, calc(100vw - 36px)); }
   .title { padding-left: 4px; }
   .bar-actions { grid-column: 2; grid-row: 1; border: 0; padding: 0; }
   .controls { grid-column: 1 / -1; grid-row: 2; padding: 6px 0 0; border-left: 0; border-top: 1px solid var(--border); }
+  .controls { flex-wrap: wrap; }
   .select-control { flex: 1; }
   .select-control select { min-width: 0; max-width: none; font-size: 11px; padding-left: 25px; padding-right: 18px; }
   .select-control > svg { left: 6px; width: 12px; height: 12px; }
   .select-control::after { right: 6px; }
   .variant-control { flex: 0 1 72px; }
   .variant-control select { padding-left: 7px; }
+  .comparison-control { flex: 1 0 100%; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
   .panel { max-height: calc(100dvh - 156px); padding: 16px; }
 }
 @media (prefers-reduced-motion: no-preference) {
