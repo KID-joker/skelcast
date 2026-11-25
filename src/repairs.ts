@@ -1,4 +1,4 @@
-import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonTarget, SourceLocation } from '../types.js';
+import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonTarget, SourceLocation } from './types.js';
 
 export interface RepairExample {
   kind: 'binding' | 'adapter' | 'source';
@@ -27,7 +27,7 @@ export function buildRepairGuide(artifact: SkeletonArtifact, node: string, varia
   if (Object.keys(bindings).length) {
     const overridden = Object.keys(bindings).some(key => Object.hasOwn(target?.variants?.[variant]?.bindings ?? {}, key));
     examples.push({ kind: 'binding', title: 'Provide explicit bindings',
-      description: `Illustrative values: replace them with the layout you expect.${overridden ? ' This variant overrides these bindings; edit its configuration instead of shared hints.' : ' Add to the hint draft, review, then Save and generate.'}`,
+      description: `Illustrative values: replace them with the layout you expect.${overridden ? ' This variant overrides these bindings; edit its configuration instead of shared hints.' : ' Review values and merge them into the target hints with skelcast hints, then run skelcast sync.'}`,
       files: [{ name: overridden ? 'skelcast.config.mjs · variant bindings' : 'skelcast.hints.json', code: JSON.stringify(overridden
         ? { targets: [{ id: artifact.id, variants: { [variant]: { bindings } } }] }
         : { [artifact.id]: { bindings } }, null, 2) }],

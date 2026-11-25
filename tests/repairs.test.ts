@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
-import { buildRepairGuide } from '../src/devtools/repairs.js';
+import { buildRepairGuide } from '../src/repairs.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-repairs-'));

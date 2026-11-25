@@ -1,44 +1,54 @@
 import { test, expect } from '@playwright/test';
 
-test('inspector keeps per-target drafts, caret, disclosure and focus through status updates and failed saves', async ({ page }) => {
-  await page.goto('http://127.0.0.1:5174/?__sk=products.list');
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click();
-  await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('aria-busy', 'false');
-  const toolbar = page.locator('#skelcast-devtools');
-  await toolbar.getByRole('button', { name: 'More', exact: true }).click();
-  const hints = toolbar.locator('details[data-ui-key="hints"]');
-  await hints.locator('summary').click();
-  await toolbar.getByLabel('Repeat count').fill('17');
-  const bindings = toolbar.locator('#bindings');
-  await bindings.fill('{"unfinished": ');
-  const original = await bindings.elementHandle();
-  await bindings.evaluate(element => {
-    const input = element as HTMLTextAreaElement;
-    input.setSelectionRange(3, 8);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
+  test(`${framework}: compact toolbar picks regions and keeps inspection tools out of the preview flow`, async ({ page }) => {
+    await page.goto(`http://127.0.0.1:${port}/?q=keep`);
+    await page.getByRole('button', { name: 'Enter demo workspace' }).click();
+    const boundary = page.locator('[data-sk-boundary="products.list"]');
+    await expect(boundary).toHaveAttribute('aria-busy', 'false');
+    const toolbar = page.locator('#skelcast-devtools');
+    const region = toolbar.getByRole('combobox', { name: 'Loading region' });
+    const preview = toolbar.getByRole('switch', { name: 'Show skeleton' });
+    const compare = toolbar.getByRole('button', { name: 'Compare', exact: true });
+    await expect(preview).not.toBeChecked();
+    await expect(toolbar.getByRole('button', { name: 'Update skeletons' })).toHaveCount(0);
+    await expect(toolbar.getByRole('button', { name: 'Play', exact: true })).toHaveCount(0);
+    await expect(toolbar.getByRole('combobox', { name: 'Preview mode' })).toHaveCount(0);
+    await region.selectOption({ label: 'Pick region…' });
+    await expect(region).toHaveValue('');
+    await region.selectOption({ label: 'Cancel picking' });
+    await expect(region).toHaveValue('products.page');
+    await region.selectOption({ label: 'Pick region…' });
+    await page.getByRole('heading', { name: 'Workspace design system' }).click();
+    await expect(region).toHaveValue('products.list');
+    await expect(preview).toBeChecked();
+    await expect(boundary).toHaveAttribute('data-sk-visible', 'true');
+    await preview.uncheck();
+    await expect(boundary).toHaveAttribute('data-sk-visible', 'false');
+    await compare.click();
+    await expect(boundary).toHaveAttribute('data-sk-comparison', 'overlay');
+    await compare.click();
+    await expect(boundary).toHaveAttribute('data-sk-visible', 'false');
+    await expect(page).toHaveURL(/\?q=keep$/);
+    await expect(toolbar.getByRole('status', { name: 'Skeleton status' })).toHaveText('Up to date');
+    await expect(toolbar.getByRole('button', { name: 'More', exact: true })).toHaveCount(0);
+    await expect(toolbar.getByRole('button', { name: 'Copy link', exact: true })).toHaveCount(0);
+    await expect(toolbar.getByRole('button', { name: 'Open source', exact: true })).toHaveCount(0);
+    await expect(toolbar.getByRole('button', { name: 'Check layout', exact: true })).toHaveCount(0);
+    await expect(toolbar.getByLabel('Repeat count')).toHaveCount(0);
+    await expect(toolbar.locator('details, textarea, .diagnostic, .repair')).toHaveCount(0);
+    const state = await (await page.request.get(`http://127.0.0.1:${port}/__skelcast/state`)).json();
+    expect(state.targets).toBeUndefined();
+    for (const artifact of state.artifacts) {
+      expect(artifact.diagnostics).toEqual([]);
+      expect(artifact.evidence).toEqual([]);
+      expect(artifact.sources).toEqual({});
+    }
+    for (const endpoint of ['hints', 'open']) {
+      const response = await page.request.post(`http://127.0.0.1:${port}/__skelcast/${endpoint}`, { headers: { 'X-SkelCast-Dev': '1' }, data: { id: 'products.list' } });
+      expect(response.status()).toBe(404);
+    }
+    const blocked = await page.request.post(`http://127.0.0.1:${port}/__skelcast/sync`, { data: {} });
+    expect(blocked.status()).toBe(403);
   });
-  await expect(bindings).toHaveValue('{"unfinished": ');
-  expect(await original!.evaluate(element => element === (element.getRootNode() as ShadowRoot).querySelector('#bindings'))).toBe(true);
-  expect(await bindings.evaluate(element => ({ focused: element.getRootNode() instanceof ShadowRoot && (element.getRootNode() as ShadowRoot).activeElement === element, start: (element as HTMLTextAreaElement).selectionStart, end: (element as HTMLTextAreaElement).selectionEnd }))).toEqual({ focused: true, start: 3, end: 8 });
-  await toolbar.getByLabel('Highlight fallbacks').check();
-  await expect(toolbar.getByLabel('Repeat count')).toHaveValue('17');
-  await expect(hints).toHaveAttribute('open', '');
-  await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption('products.page');
-  await toolbar.getByLabel('Repeat count').fill('9');
-  await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption('products.list');
-  await expect(toolbar.getByLabel('Repeat count')).toHaveValue('17');
-  await expect(bindings).toHaveValue('{"unfinished": ');
-  await toolbar.getByRole('button', { name: 'Collapse', exact: true }).click();
-  await toolbar.getByRole('button', { name: 'More', exact: true }).click();
-  await expect(hints).toHaveAttribute('open', '');
-  await expect(bindings).toHaveValue('{"unfinished": ');
-  await toolbar.getByRole('button', { name: 'Save and generate' }).click();
-  await expect(toolbar.getByRole('status')).toContainText('Invalid hints');
-  await expect(bindings).toHaveValue('{"unfinished": ');
-  await bindings.fill('{}');
-  await page.route('**/__skelcast/hints', route => route.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"Generation failed"}' }));
-  await toolbar.getByRole('button', { name: 'Save and generate' }).click();
-  await expect(toolbar.getByRole('status')).toContainText('Generation failed');
-  await expect(toolbar.getByLabel('Repeat count')).toHaveValue('17');
-  await expect(hints).toHaveAttribute('open', '');
-});
+}

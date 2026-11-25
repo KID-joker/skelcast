@@ -3,6 +3,8 @@ export { loadProject, syncProject, checkProject, readArtifact, saveHints } from 
 export { compileTarget } from './compiler/index.js';
 export { analyzeQuality, qualityProject, createQualityBaseline, compareQualityBaseline } from './quality.js';
 export type { ArtifactQuality, VariantQuality, ReviewLocation, QualityBaseline, ReviewProgress } from './quality.js';
+export { diagnoseProject } from './diagnose.js';
+export type { DiagnoseOptions } from './diagnose.js';
 export { initProject } from './init/index.js';
 export type { InitChange, InitDiagnostic, InitOptions, InitReport } from './init/index.js';
 export { auditProject, parseViewports } from './audit.js';

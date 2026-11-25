@@ -12,6 +12,9 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
     await expect(boundary).toHaveAttribute('aria-busy', 'false');
     const toolbar = page.locator('#skelcast-devtools');
     await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption('products.list');
+    await expect(toolbar.getByRole('combobox', { name: 'Comparison mode' })).toHaveCount(0);
+    await toolbar.getByRole('button', { name: 'Compare', exact: true }).click();
+    await expect(boundary).toHaveAttribute('data-sk-comparison', 'overlay');
     const comparison = toolbar.getByRole('combobox', { name: 'Comparison mode' });
     const content = boundary.locator(':scope > [data-sk-content]');
     const skeleton = boundary.locator(':scope > div').first();
@@ -48,14 +51,14 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
     await toolbar.getByRole('combobox', { name: 'Layout variant' }).selectOption('list');
     expect(await boundary.locator('[data-sk-artifact] > div').evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
 
-    // The layout audit must not measure half-width or blended comparison panes.
-    await toolbar.getByRole('button', { name: 'More', exact: true }).click();
-    await toolbar.getByRole('button', { name: 'Check layout', exact: true }).click();
-    await expect(toolbar.getByRole('button', { name: 'Check layout', exact: true })).toBeEnabled();
+    // Coding agents use the browser API; it restores the developer's comparison.
+    const report = await page.evaluate(async moduleURL => {
+      const { auditBoundaryLayout } = await import(moduleURL);
+      return auditBoundaryLayout(document.querySelector('[data-sk-boundary="products.list"]'));
+    }, `/@fs/${process.cwd()}/dist/browser.js`);
+    expect(report.variant).toBe('list');
     await expect(boundary).toHaveAttribute('data-sk-comparison', 'overlay');
     await expect(skeleton).toHaveCSS('opacity', '0.75');
-    await expect(toolbar.locator('[data-ui-key="layout"] summary')).toBeVisible();
-    await toolbar.getByRole('button', { name: 'Collapse', exact: true }).click();
 
     await comparison.selectOption('switch');
     await expect(content).toBeVisible();
@@ -91,7 +94,7 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
     await page.screenshot({ path: `test-results/${framework.toLowerCase()}-comparison-mobile.png`, fullPage: true });
     await comparison.selectOption('overlay');
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await toolbar.getByRole('button', { name: 'Exit', exact: true }).click();
+    await toolbar.getByRole('switch', { name: 'Show skeleton' }).uncheck();
     await expect(pageBoundary).toHaveAttribute('data-sk-comparison', 'off');
     await expect(pageBoundary).toHaveAttribute('data-sk-visible', 'false');
     await page.setViewportSize({ width: 1440, height: 1050 });
@@ -121,7 +124,9 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
       history.pushState({}, '', '?q=keep');
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
-    await expect(toolbar.getByRole('combobox', { name: 'Comparison mode' })).toHaveValue('off');
+    await expect(toolbar.getByRole('combobox', { name: 'Comparison mode' })).toHaveCount(0);
+    await expect(toolbar.getByRole('button', { name: 'Compare', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect(toolbar.getByRole('switch', { name: 'Show skeleton' })).not.toBeChecked();
     await expect(boundary).toHaveAttribute('data-sk-comparison', 'off');
     await expect(boundary).toHaveAttribute('data-sk-visible', 'false');
   });

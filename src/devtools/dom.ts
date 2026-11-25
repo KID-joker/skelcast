@@ -1,4 +1,4 @@
-/** Patch the inspector in place so background updates keep focus and native UI state. */
+/** Patch preview controls in place so background updates keep focus and native UI state. */
 export function patchChildren(parent: Node, next: Node): void {
   let cursor: Node | null = parent.firstChild;
   for (const desired of [...next.childNodes]) {
@@ -39,16 +39,10 @@ function patchNode(current: Node, desired: Node): void {
     return;
   }
   for (const attribute of [...current.attributes]) {
-    // The user owns disclosure state, including across status/preview updates.
-    if (current instanceof HTMLDetailsElement && attribute.name === 'open') continue;
     if (!desired.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
   }
   for (const attribute of [...desired.attributes]) {
     if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
-  }
-  if (current instanceof HTMLTextAreaElement && desired instanceof HTMLTextAreaElement) {
-    if (current.value !== desired.value) current.value = desired.value;
-    return;
   }
   patchChildren(current, desired);
   if (current instanceof HTMLInputElement && desired instanceof HTMLInputElement) {

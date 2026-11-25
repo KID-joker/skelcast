@@ -8,7 +8,7 @@ Your code, cast as a skeleton. SkelCast analyzes React and Vue source, generates
 - **React and Vue 3.** Share static artifacts through thin framework adapters, with light DOM and optional Shadow DOM rendering.
 - **Automatic onboarding.** Discover pages and explicit loading regions in existing Vite projects with `skelcast init`.
 - **Incremental generation.** Reuse unchanged artifacts and invalidate them when their source, styles, dependencies, hints, or generator changes.
-- **Inspectable results.** Preview real and forced loading states, inspect source locations, adjust hints, and review visible fallbacks.
+- **Preview and agent refinement.** Developers compare real content and skeletons; coding agents diagnose source locations, refine hints/adapters, and verify repairs through the CLI.
 
 The browser renders generated artifacts. Source analysis and layout decisions happen during development, not at runtime.
 
@@ -281,13 +281,36 @@ Ordinary `sync` commands load the trusted development configuration as executabl
 
 ```bash
 pnpm exec skelcast sync
-pnpm exec skelcast inspect --id products.list --json
+pnpm exec skelcast diagnose --id products.list --json
 pnpm exec skelcast check
 ```
 
 Commit `.skelcast/*.mjs`, its manifest, and `skelcast.hints.json` alongside your source. The manifest records dependency fingerprints and artifact paths, not a second layout tree. Unchanged inputs reuse existing outputs. Generation stages all changed artifacts before replacing any output; a failed target leaves the previous generation intact. CLI, init, development-server mutations and artifact readers share an output-directory lock. Interrupted output commits are recovered from a local journal on the next operation. `check` exits with a nonzero status for stale, missing, or modified artifacts and can run in CI.
 
-Opaque components and unknown render calls produce local fallback blocks with source diagnostics. Feed `inspect` output to your coding agent to refine hints or adapters before regenerating.
+Opaque components and unknown render calls produce local fallback blocks with source diagnostics. The toolbar is for preview and visual acceptance; coding agents own diagnosis, source/hint/adapter changes, and automated verification.
+
+`diagnose --id <target> --json` returns artifact freshness, effective target configuration, config/hints paths, and per-variant structural quality, diagnostics, source expressions, evidence, and repair examples grouped by source node. It reads generated metadata without executing business code or applying examples. It excludes the raw HTML/CSS; `inspect --id <target> --json` retains the original raw-artifact output when that detail is needed. Omit `--variant` to inspect every generated variant:
+
+```bash
+pnpm exec skelcast diagnose --id products.list --json
+pnpm exec skelcast diagnose --id products.list --variant grid --node <source-node> --json
+pnpm exec skelcast diagnose --id products.list --strict
+```
+
+Get node IDs from the first report. Unknown targets, variants, and nodes fail explicitly. `--strict` exits nonzero when the selected scope needs review; structural quality still describes the whole selected variant. Missing or modified artifacts return their freshness state with no repair context. Stale context is marked as such; sync before relying on source locations or examples after edits.
+
+Repair examples contain illustrative presentation values, not inferred business values. For unresolved dimensions or finite branches, merge reviewed bindings with existing target bindings. For opaque components, create the suggested presentation adapter and merge its mapping into the existing target. Variant-level bindings take precedence over shared hints; when a variant overrides a suggested scoped binding, the example points to that variant's configuration instead.
+
+To save small shared hints through the CLI, prepare a JSON object such as `{ "repeat": 4, "lines": 2 }` in `hint-patch.json` and run:
+
+```bash
+pnpm exec skelcast hints --id products.list --file hint-patch.json --json
+pnpm exec skelcast sync
+pnpm exec skelcast check
+pnpm exec skelcast diagnose --id products.list --json
+```
+
+`--file` is resolved relative to `--root` (the project directory by default). The file contains a hint patch for one target, not a target-ID map. `hints` validates values and saves them to the configured hints file, preserving unrelated targets and omitted fields; it does not regenerate artifacts. Supplied `bindings` replace the entire shared object, so merge existing keys before saving. To clear shared bindings, supply `{ "bindings": {} }`. The effective saved hints are returned with `--json`. Structural layout changes belong in source; component adapters and variant hints belong in configuration. Direct project-file edits remain available to the agent.
 
 Inspect structural quality separately from artifact freshness:
 
@@ -316,15 +339,15 @@ browser, then compare them with the real application.
 
 ### Check rendered layout in the browser
 
-After real data is ready, open the inspector and choose **Check layout**. The check
+Coding agents can run `skelcast audit` against an existing development server or use the browser-only API below in acceptance tests after real data is ready. Each check
 briefly shows real content and the selected skeleton variant, then restores the
-previous preview state. It reports width/height differences, the change in the
+previous preview state, including comparison mode and opacity. It reports width/height differences, the change in the
 region's bottom edge (potential displacement of following content), uncontained
 horizontal overflow, and whether data placeholders have visible painted boxes.
 Light DOM and open Shadow DOM are supported. Existing scroll containers are not
 reported as uncontained overflow.
 
-Use the same browser-only API in development or browser acceptance tests:
+Use the browser-only API in development or browser acceptance tests:
 
 ```ts
 import { auditBoundaryLayout } from 'skelcast/browser';
@@ -370,7 +393,7 @@ The command reloads the URL at each viewport, waits for mounted boundaries, load
 For an authenticated project, supply an existing Playwright state file with `--storage-state path/to/state.json`. The audit does not perform login. Storage state includes cookies/local storage, not session storage; applications using session-only sign-in need their own authenticated acceptance fixture. Keep reports and authentication state in your project's intended local/test output directories.
 
 Import `skelcast/browser` only in development/test code when automated measurements
-are needed; the production Vite integration does not inject the inspector.
+are needed; the production Vite integration does not inject the preview toolbar.
 
 ### Register the Vite plugin
 
@@ -389,7 +412,7 @@ Add the virtual module declaration to your project's `env.d.ts`:
 /// <reference types="skelcast/virtual" />
 ```
 
-The development plugin injects the preview toolbar and consumes existing artifacts. Source edits mark artifacts out of date. The CLI, your coding agent, or **Sync artifacts** performs deterministic regeneration. Production builds require current artifacts and exclude the toolbar, development endpoints, and URL preview controls.
+The development plugin injects the preview toolbar and consumes existing artifacts. Source edits mark artifacts out of date. The CLI, your coding agent, or **Update skeletons** performs deterministic regeneration. Production builds require current artifacts and exclude the toolbar, development endpoints, and URL preview controls.
 
 ### Connect real loading state
 
@@ -448,15 +471,17 @@ Open your normal local application, sign in if needed, and use its real routes. 
 /products?__sk=products.list&__sk_variant=list
 ```
 
-The toolbar provides **Follow loading**, **Hold page**, **Hold region**, variant selection, playback, region picking, link copying, source navigation, diagnostics, fallback highlighting, and hint editing. Use DevTools device emulation for viewport testing.
+The toolbar keeps **Loading region**, **Show skeleton**, **Compare**, and a brief generation status in view. Select a page or region and turn on **Show skeleton** to hold its skeleton; turn it off to resume real loading behavior. Multiple layout variants appear only when available. Choose **Pick region…** in the region selector to select a boundary directly on the page, or choose **Cancel picking** to stop. **Update skeletons** appears only when generation artifacts need updating. Use DevTools device emulation for viewport testing.
 
-Choose a **Loading region**, then use **Comparison mode** to compare its real content with the generated skeleton in React or Vue:
+The toolbar is a preview and acceptance surface. Diagnosis, source navigation, hint editing, repair examples, and automated layout checks belong to the coding agent through project files and the CLI. An update failure gives a short prompt to run `skelcast sync` with the agent. Development HTTP endpoints expose preview state and regeneration only; hint-writing and editor-opening endpoints are removed.
+
+Choose a **Loading region**, then turn on **Compare** to overlay its generated skeleton on real content in React or Vue. The comparison controls appear only while comparing; **Comparison mode** offers:
 
 - **Side by side** shows real content on the left and the skeleton on the right in equal-width panes. Each pane contains its own horizontal overflow; its available width is half the region, so use overlay or switching to check full-width geometry.
 - **Overlay** aligns both at the same origin and blends the skeleton over the real content. Adjust **Opacity** from 0–100% (default 50%); pointer input passes through to the real content.
 - **One-click switch** keeps the original width and lets **Show skeleton** / **Show real content** toggle between the two.
 
-Comparison retains mounted content and form state without triggering requests. Regions that are still loading show their real loading skeleton, then resume comparison when ready. **Compare: off**, **Follow loading**, or **Exit** returns to normal loading behavior. Comparison mode, variant, opacity, and the selected switch view are included in **Copy link** and survive reloads:
+Comparison retains mounted content and form state without triggering requests. Regions that are still loading show their real loading skeleton, then resume comparison when ready. Turn off **Compare** or **Show skeleton** to return to normal loading behavior. Comparison mode, variant, opacity, and the selected switch view are reflected in the address bar and survive reloads. Copy the browser address manually to share a preview:
 
 ```text
 /products?__sk=products.list&__sk_compare=side-by-side
@@ -464,23 +489,11 @@ Comparison retains mounted content and form state without triggering requests. R
 /products?__sk=products.list&__sk_compare=switch&__sk_view=skeleton
 ```
 
-**Check layout** temporarily measures content and skeleton separately at the original width, then restores the comparison settings.
+### Refine with a coding agent
 
-Enable **Highlight fallbacks**, then click a highlighted region (including inside
-Shadow DOM), or choose **Inspect fallback** in the diagnostics list. The inspector
-shows the source expression, file and line, related evidence, and repair examples
-for the selected region and variant. **Open source** jumps to that location.
+When a preview looks wrong, give the agent the target ID, variant, viewport, and a description of the mismatch. The current browser address includes the preview settings and can be copied manually. The agent uses `quality` to triage targets, `diagnose` for source-linked repair context, and source/config/hint edits to correct the result. After `sync` and `check`, run an appropriate browser `audit` when visual verification is needed, then return to the toolbar to accept the result. Generation and source diagnosis do not need a running application; browser audits use an existing application session and may exercise real application requests.
 
-For unresolved layout values, **Add to hint draft** merges illustrative bindings
-into the existing draft without replacing its values. Review and edit the example,
-then **Save and generate**; no hints are written by adding an example. If a variant
-explicitly overrides the same scoped binding, the inspector instead shows its
-configuration fragment. For opaque components, copy the presentation adapter and
-target mapping examples, merge them into your project, then **Sync artifacts**.
-The detail panel confirms when no fallback remains at that location. These are
-finite presentation examples, not inferred business values or automatic source edits.
-
-Saved hints go to `skelcast.hints.json`:
+Shared hints are stored as a target-ID map in the configured hints file (`skelcast.hints.json` by default), as shown below. The agent can edit this file directly. When using `skelcast hints --id <target> --file <patch.json>`, put only that target's hint object in the patch file, without the outer target-ID map:
 
 ```json
 {

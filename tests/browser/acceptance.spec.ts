@@ -63,12 +63,9 @@ for (const fixture of ['react-admin', 'vue-workspace'] as const) test(`project a
     }
     const toolbar = page.locator('#skelcast-devtools');
     await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption(region.id);
-    await toolbar.getByRole('combobox', { name: 'Preview mode' }).selectOption('selected');
-    await toolbar.getByRole('button', { name: 'More', exact: true }).click();
-    await toolbar.getByRole('button', { name: 'Check layout', exact: true }).click();
-    await expect(toolbar.locator('details[data-ui-key="layout"] summary')).toContainText('Within tolerance');
+    await toolbar.getByRole('switch', { name: 'Show skeleton' }).check();
     await expect(boundary).toHaveAttribute('data-sk-visible', 'true');
-    await toolbar.getByRole('button', { name: 'Exit', exact: true }).click();
+    await toolbar.getByRole('switch', { name: 'Show skeleton' }).uncheck();
     expect(errors).toEqual([]);
   } finally { await server?.close(); await rm(root, { recursive: true, force: true }); }
 });

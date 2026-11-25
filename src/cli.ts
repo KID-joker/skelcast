@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { loadProject, syncProject, checkProject, readArtifact } from './generator.js';
+import { loadProject, syncProject, checkProject, readArtifact, saveHints } from './generator.js';
+import { diagnoseProject } from './diagnose.js';
 import { initProject } from './init/index.js';
 import { qualityProject, createQualityBaseline, compareQualityBaseline } from './quality.js';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWrite } from './storage.js';
 
-const usage = 'Usage: skelcast <init|sync|check|inspect|quality|audit> [--root directory] [--dry-run] [--id target] [--json] [--strict]\nquality: [--save-baseline file] [--baseline file]\naudit: --url http://localhost:5173 [--id target] [--viewports 1440x900,390x844] [--out directory] [--storage-state file]';
+const usage = 'Usage: skelcast <init|sync|check|inspect|diagnose|hints|quality|audit> [--root directory] [--dry-run] [--id target] [--json] [--strict]\ndiagnose: --id target [--node source-node] [--variant name] [--strict]\nhints: --id target --file hints-patch.json (saves hints; run sync afterwards)\nquality: [--save-baseline file] [--baseline file]\naudit: --url http://localhost:5173 [--id target] [--viewports 1440x900,390x844] [--out directory] [--storage-state file]';
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) { console.log(usage); return; }
@@ -18,7 +19,7 @@ async function main() {
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${name}`);
     return value;
   };
-  if (!['init', 'sync', 'check', 'inspect', 'quality', 'audit'].includes(command)) throw new Error(usage);
+  if (!['init', 'sync', 'check', 'inspect', 'diagnose', 'hints', 'quality', 'audit'].includes(command)) throw new Error(usage);
   if (command === 'audit') {
     const { auditProject, parseViewports } = await import('./audit.js');
     const url = option('--url');
@@ -43,7 +44,33 @@ async function main() {
   }
   const project = await loadProject(option('--root') ?? process.cwd());
   const id = option('--id');
-  if (command === 'inspect' && !id) throw new Error('inspect requires --id <target>');
+  if (['inspect', 'diagnose', 'hints'].includes(command) && !id) throw new Error(`${command} requires --id <target>`);
+  if (command === 'diagnose') {
+    const report = await diagnoseProject(project, id!, { node: option('--node'), variant: option('--variant') });
+    if (args.includes('--json')) console.log(JSON.stringify(report, null, 2));
+    else {
+      console.log(`${report.id}: ${report.state} — ${report.needsReview ? 'needs review' : 'ready'}${report.reason ? ` (${report.reason})` : ''}`);
+      console.log(`Config: ${report.configFile}\nHints: ${report.hintsFile}`);
+      for (const [variant, view] of Object.entries(report.variants)) {
+        console.log(`${variant}: ${view.quality.fallbacks} fallbacks; ${view.diagnostics.length} diagnostics`);
+        for (const d of view.diagnostics) console.log(`  ${d.file}:${d.line} ${d.code}${d.node ? ` [${d.node}]` : ''} — ${d.message}`);
+        for (const location of view.locations) for (const example of location.examples) console.log(`  ${location.node}: ${example.title} — ${example.description}`);
+      }
+      console.log('Use --json for expressions, evidence and repair examples. Review examples before applying; then run skelcast sync and skelcast check.');
+    }
+    if (args.includes('--strict') && report.needsReview) process.exitCode = 1;
+    return;
+  }
+  if (command === 'hints') {
+    const file = option('--file');
+    if (!file) throw new Error('hints requires --file <JSON object with repeat, lines, minHeight or bindings>');
+    const patch = JSON.parse(await readFile(path.resolve(project.root, file), 'utf8'));
+    await saveHints(project, id!, patch);
+    const updated = await loadProject(project.root);
+    const output = { id: id!, hintsFile: updated.hintsFile, hints: updated.config.targets.find(target => target.id === id)!.hints };
+    console.log(args.includes('--json') ? JSON.stringify(output, null, 2) : `Saved hints for ${id}. Run skelcast sync to regenerate, then skelcast check.`);
+    return;
+  }
   if (command === 'quality') {
     const result = await qualityProject(project, id);
     const baselineFile = option('--baseline'), saveFile = option('--save-baseline');

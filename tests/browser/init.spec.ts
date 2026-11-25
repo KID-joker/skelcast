@@ -66,11 +66,11 @@ for (const framework of ['react', 'vue'] as const) test(`init integrates an unto
     await page.getByRole('textbox', { name: 'Draft' }).fill('Keep my draft');
     const toolbar = page.locator('#skelcast-devtools');
     await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption(request.id);
-    await toolbar.getByRole('combobox', { name: 'Preview mode' }).selectOption('selected');
+    await toolbar.getByRole('switch', { name: 'Show skeleton' }).check();
     await expect(region).toHaveAttribute('data-sk-visible', 'true');
     await expect(newRegion).toHaveAttribute('data-sk-visible', 'false');
     await expect(region.locator('article[data-sk-node]')).toHaveCount(2);
-    await toolbar.getByRole('button', { name: 'Exit', exact: true }).click();
+    await toolbar.getByRole('switch', { name: 'Show skeleton' }).uncheck();
     await expect(page.getByRole('textbox', { name: 'Draft' })).toHaveValue('Keep my draft');
     await page.getByRole('button', { name: 'Reload' }).click();
     await expect(region).toHaveAttribute('data-sk-visible', 'true');

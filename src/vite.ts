@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ConfigEnv, Plugin, UserConfig, UserConfigExport, ViteDevServer } from 'vite';
-import { checkProject, loadProject, readArtifact, saveHints, syncProject, type Project } from './generator.js';
+import { checkProject, loadProject, readArtifact, syncProject, type Project } from './generator.js';
 import type { SkeletonArtifact, SkeletonTarget } from './types.js';
 import { withProjectLock } from './storage.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
+const previewArtifact = (artifact: SkeletonArtifact): SkeletonArtifact => ({ ...artifact, diagnostics: [], evidence: [], sources: {}, source: '' });
 const escapeStyle = (s: string) => s.replace(/<\/style/gi, '<\\/style');
 const escapeAttribute = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const wildcard = (part: string) => part === '*' || /^:[\w]+\(\.\*\)[*+]?$/.test(part);
@@ -78,8 +79,7 @@ export function skelcastPlugin(): Plugin {
     },
     async load(id) {
       if (!id.startsWith(internalPrefix)) return;
-      const artifact = await readArtifact(project, id.slice(internalPrefix.length));
-      if (!dev) { artifact.diagnostics = []; artifact.evidence = []; artifact.sources = {}; artifact.source = ''; }
+      const artifact = previewArtifact(await readArtifact(project, id.slice(internalPrefix.length)));
       return `export default ${JSON.stringify(artifact)};`;
     },
     transformIndexHtml: {
@@ -106,31 +106,25 @@ export function skelcastPlugin(): Plugin {
           try {
             if (req.method === 'GET' && url.pathname === '/__skelcast/state') {
               await refreshProject();
-              const { statuses, artifacts } = await withProjectLock(project.outDir, async () => ({
-                statuses: await checkProject(project),
-                artifacts: await Promise.all(project.config.targets.map(t => readArtifact(project, t.id))),
-              }));
+              const { statuses, artifacts } = await withProjectLock(project.outDir, async () => {
+                const statuses = await checkProject(project);
+                const available = project.config.targets.filter(t => !statuses.some(status => status.id === t.id && ['missing', 'corrupt'].includes(status.state)));
+                return {
+                  statuses,
+                  artifacts: await Promise.all(available.map(async t => previewArtifact(await readArtifact(project, t.id)))),
+                };
+              });
               res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
-              res.end(JSON.stringify({ artifacts, statuses, targets: project.config.targets })); return;
+              res.end(JSON.stringify({ artifacts, statuses })); return;
             }
-            if (req.method !== 'POST' || !['/__skelcast/sync', '/__skelcast/hints', '/__skelcast/open'].includes(url.pathname)) { res.statusCode = 404; res.end(); return; }
+            if (req.method !== 'POST' || url.pathname !== '/__skelcast/sync') { res.statusCode = 404; res.end(); return; }
             const origin = req.headers.origin;
             if (req.headers['x-skelcast-dev'] !== '1' || origin && new URL(origin).host !== req.headers.host) { res.statusCode = 403; res.end('Development requests only'); return; }
             let body = '';
             for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Request too large'); }
-            const data = body ? JSON.parse(body) : {};
-            // Serialize local mutations so hints and manifest cannot race.
+            // Serialize preview regeneration requests.
             const operation = mutation.then(async () => {
               await refreshProject();
-              if (url.pathname === '/__skelcast/open') {
-                const artifact = await readArtifact(project, data.id);
-                const source = data.node ? artifact.sources[data.node] : { file: artifact.source, line: 1 };
-                if (!source) throw new Error('Unknown source location');
-                return { url: `/__open-in-editor?file=${encodeURIComponent(`${path.resolve(project.root, source.file)}:${source.line}`)}` };
-              }
-              if (url.pathname === '/__skelcast/hints') {
-                await saveHints(project, data.id, data.hints); await refreshProject();
-              }
               const result = await syncProject(project);
               sendUpdate();
               return result;

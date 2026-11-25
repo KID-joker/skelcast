@@ -59,7 +59,7 @@ test('browser layout check catches bad geometry and hidden placeholders and rest
   expect(result.delta.followingContentShift).not.toBe(0);
   await expect(boundary).toHaveAttribute('data-sk-visible', 'true');
   expect(page.url()).toBe(originalURL);
-  await page.locator('#skelcast-devtools').getByRole('button', { name: 'Exit', exact: true }).click();
+  await page.locator('#skelcast-devtools').getByRole('switch', { name: 'Show skeleton' }).uncheck();
   await audit();
   await expect(boundary).toHaveAttribute('data-sk-visible', 'false');
   await page.getByRole('button', { name: 'Refresh assets' }).click();
@@ -92,12 +92,15 @@ test('layout checks reject concurrent work and preserve a preview selected by th
   const interrupted = await page.evaluate(async url => {
     const { auditBoundaryLayout } = await import(url);
     const running = auditBoundaryLayout(document.querySelector('[data-sk-boundary="products.list"]'));
-    const selector = document.querySelector('#skelcast-devtools')!.shadowRoot!.querySelector<HTMLSelectElement>('#mode')!;
-    selector.value = 'page';
+    const selector = document.querySelector('#skelcast-devtools')!.shadowRoot!.querySelector<HTMLSelectElement>('#target')!;
+    selector.value = 'products.page';
     selector.dispatchEvent(new Event('change'));
+    const toggle = document.querySelector('#skelcast-devtools')!.shadowRoot!.querySelector<HTMLInputElement>('#preview')!;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
     try { await running; } catch (error) { return String(error); }
   }, browserModule);
   expect(interrupted).toContain('Preview changed');
   await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('data-sk-visible', 'true');
-  await expect(page).toHaveURL(/__sk=page/);
+  await expect(page).toHaveURL(/__sk=products\.page/);
 });
