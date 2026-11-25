@@ -1,6 +1,6 @@
 import { defineComponent, h, onMounted, onBeforeUnmount, ref, watch, type PropType } from 'vue';
 import type { SkeletonArtifact } from '../types.js';
-import { currentArtifact, forced, getPreview, mountSkeleton, registerBoundary, subscribe } from '../runtime/core.js';
+import { createSkeletonMount, currentArtifact, forced, registerBoundary, subscribeBoundary } from '../runtime/core.js';
 
 export const LoadingBoundary = defineComponent({
   name: 'SkeletonLoadingBoundary',
@@ -13,26 +13,25 @@ export const LoadingBoundary = defineComponent({
     const root = ref<HTMLElement>();
     const skeleton = ref<HTMLElement>();
     const revision = ref(0);
-    let cleanup: (() => void) | undefined;
+    const mount = createSkeletonMount();
     let unsubscribe: (() => void) | undefined;
     let registration: ReturnType<typeof registerBoundary> | undefined;
-    let lastArtifact: SkeletonArtifact | undefined, lastVariant: string | undefined, lastHighlight: boolean | undefined;
     const updateSkeleton = () => {
       const artifact = currentArtifact(props.artifact);
-      const variant = getPreview().variant ?? props.variant;
-      const highlight = getPreview().highlight;
-      if (skeleton.value && (artifact !== lastArtifact || variant !== lastVariant || highlight !== lastHighlight)) {
-        cleanup?.(); cleanup = mountSkeleton(skeleton.value, artifact, props.variant);
-        lastArtifact = artifact; lastVariant = variant; lastHighlight = highlight;
-      }
+      if (skeleton.value) mount.update(skeleton.value, props.pending || forced(artifact.id, artifact.kind), artifact, props.variant);
+    };
+    const connect = () => {
+      unsubscribe?.();
+      unsubscribe = subscribeBoundary(props.artifact.id, props.artifact.kind, () => { revision.value++; updateSkeleton(); });
     };
     onMounted(() => {
-      unsubscribe = subscribe(() => { revision.value++; updateSkeleton(); });
+      connect();
       registration = registerBoundary({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact, element: root.value });
       updateSkeleton();
     });
+    watch(() => [props.artifact.id, props.artifact.kind], () => { if (registration) connect(); });
     watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact }); updateSkeleton(); });
-    onBeforeUnmount(() => { unsubscribe?.(); registration?.dispose(); cleanup?.(); });
+    onBeforeUnmount(() => { unsubscribe?.(); registration?.dispose(); mount.dispose(); });
     return () => {
       void revision.value;
       const artifact = currentArtifact(props.artifact);

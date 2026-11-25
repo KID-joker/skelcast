@@ -144,3 +144,32 @@ test('initial skeleton is visible before JavaScript runs', async ({ browser }) =
     await expect(page.locator('#skelcast-devtools')).toHaveCount(0);
   } finally { await context.close(); }
 });
+
+for (const [framework, port] of [['react', 5173], ['vue', 5174]] as const) test(`${framework}: initial shell matches page boundary and source width without added padding`, async ({ browser, page }) => {
+  for (const width of [390, 1440]) {
+    const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width, height: 1050 } });
+    try {
+      const initialPage = await context.newPage();
+      await initialPage.goto(`http://127.0.0.1:${port}/`);
+      await expect(initialPage.locator('[data-sk-initial]')).toHaveCSS('padding', '0px');
+      const initial = await initialPage.locator('[data-sk-artifact="products.page"] > div').boundingBox();
+      await page.setViewportSize({ width, height: 1050 });
+      await page.goto(`http://127.0.0.1:${port}/?__sk=page`);
+      const login = page.getByRole('button', { name: 'Enter demo workspace' });
+      if (await login.count()) await login.click();
+      const boundary = page.locator('[data-sk-boundary="products.page"]');
+      await expect(boundary).toHaveAttribute('aria-busy', 'false');
+      const skeleton = await boundary.locator('[data-sk-artifact="products.page"] > div').boundingBox();
+      await page.locator('#skelcast-devtools').getByRole('button', { name: 'Exit', exact: true }).click();
+      await expect(boundary).toHaveAttribute('data-sk-visible', 'false');
+      const realContent = boundary.locator(':scope > [data-sk-content] > div');
+      await expect(realContent).toBeVisible();
+      const content = await realContent.boundingBox();
+      for (const box of [initial, skeleton]) {
+        expect(box!.x).toBeCloseTo(content!.x, 1);
+        expect(box!.y).toBeCloseTo(content!.y, 1);
+        expect(box!.width).toBeCloseTo(content!.width, 1);
+      }
+    } finally { await context.close(); }
+  }
+});

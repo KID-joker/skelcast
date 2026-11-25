@@ -1,0 +1,101 @@
+import path from 'node:path';
+import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } from './expression.js';
+import { nonVisual, unknownGeometry } from './html.js';
+import { slotValue, type RenderContext, type SourceSlot } from './context.js';
+import type { RenderHost } from './render-host.js';
+
+export async function renderJSX(this: RenderHost, node: Ast, ctx: RenderContext): Promise<string> {
+  if (!node) return '';
+  const exhausted = this.budget(ctx, node);
+  if (exhausted !== undefined) return exhausted;
+  if (['TSAsExpression', 'TSNonNullExpression', 'ParenthesizedExpression'].includes(node.type)) return this.jsx(node.expression, ctx);
+  if (node.type === 'JSXFragment') return this.jsxNodes(node.children, ctx);
+  if (node.type === 'JSXText') return node.value.trim() ? this.contentText(node.value, ctx, node) : '';
+  if (node.type === 'JSXExpressionContainer') return node.expression.type === 'JSXEmptyExpression' ? '' : this.jsx(node.expression, ctx);
+  if (node.type === 'ConditionalExpression') {
+    const test = evaluate(node.test, ctx);
+    this.record('branch', expressionText(node.test, ctx), test === UNKNOWN ? 'Default to consequent; override with bindings' : `Resolved to ${!!test}`, ctx, node);
+    if (test === UNKNOWN) this.diagnose('BRANCH_DEFAULT', 'Unknown condition: chose consequent; supply bindings to select a branch', ctx, node);
+    return this.jsx(test === UNKNOWN || test ? node.consequent : node.alternate, ctx);
+  }
+  if (node.type === 'LogicalExpression') {
+    const left = evaluate(node.left, ctx);
+    if (left === UNKNOWN) { this.record('branch', expressionText(node.left, ctx), 'Include optional content by default', ctx, node); return this.jsx(node.right, ctx); }
+    if (node.operator === '&&') return left ? this.jsx(node.right, ctx) : '';
+    return left != null && (node.operator === '??' || left) ? this.jsx(node.left, ctx) : this.jsx(node.right, ctx);
+  }
+  if (['CallExpression', 'OptionalCallExpression'].includes(node.type) && ['MemberExpression', 'OptionalMemberExpression'].includes(node.callee.type) && node.callee.property.name === 'map') {
+    const fn = node.arguments[0];
+    if (!['ArrowFunctionExpression', 'FunctionExpression'].includes(fn?.type)) return this.fallback(ctx, node, 'Unsupported map callback');
+    const list = evaluate(node.callee.object, ctx);
+    const count = this.hints.repeat ?? (Array.isArray(list) && list.length ? Math.min(list.length, 12) : 4);
+    this.record('repeat', expressionText(node.callee.object, ctx), `Generate ${count} placeholders`, ctx, node);
+    let html = '';
+    for (let i = 0; i < count; i++) {
+      const local = { ...ctx, env: { ...ctx.env } };
+      bindPattern(fn.params[0], Array.isArray(list) ? list[i] ?? UNKNOWN : UNKNOWN, local.env);
+      bindPattern(fn.params[1], i, local.env);
+      const body = fn.body.type === 'BlockStatement' ? fn.body.body.find((n: Ast) => n.type === 'ReturnStatement')?.argument : fn.body;
+      html += await this.jsx(body, local);
+    }
+    return html;
+  }
+  if (node.type === 'ArrayExpression') return this.jsxNodes(node.elements, ctx);
+  if (node.type !== 'JSXElement') {
+    if (['NullLiteral', 'BooleanLiteral'].includes(node.type)) return '';
+    if (node.type === 'CallExpression') return this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
+    const value = evaluate(node, ctx);
+    if (value && typeof value === 'object' && Object.hasOwn(value, slotValue)) return this.renderSlot((value as any)[slotValue], ctx);
+    this.record('text', expressionText(node, ctx), 'Replace content with text placeholder', ctx, node);
+    return this.contentText(value, ctx, node);
+  }
+  const opening = node.openingElement;
+  const jsxName = (n: Ast): string => n.type === 'JSXIdentifier' ? n.name : n.type === 'JSXMemberExpression' ? `${jsxName(n.object)}.${jsxName(n.property)}` : '';
+  const tag = jsxName(opening.name);
+  const props: Record<string, Value> = Object.create(null);
+  let unknownLayout = false;
+  for (const a of opening.attributes) {
+    if (a.type === 'JSXSpreadAttribute') {
+      const value = evaluate(a.argument, ctx);
+      if (value && value !== UNKNOWN && typeof value === 'object') Object.assign(props, value);
+      else this.diagnose('SPREAD_UNKNOWN', 'Unknown spread props may affect layout', ctx, a);
+      continue;
+    }
+    const name = a.name.name;
+    props[name] = !a.value ? true : a.value.type === 'StringLiteral' ? a.value.value : evaluate(a.value.expression, ctx);
+    if (props[name] === UNKNOWN && ['className', 'style', 'width', 'height'].includes(name)) {
+      const fallback = a.value?.expression ? evaluate(a.value.expression, { ...ctx, defaultBranches: true }) : UNKNOWN;
+      props[name] = fallback;
+      this.diagnose('LAYOUT_UNKNOWN', fallback === UNKNOWN ? `Cannot resolve ${name}; using a local fallback` : `Unknown ${name} condition: use the first static branch`, ctx, a);
+      if (fallback === UNKNOWN) unknownLayout = true;
+    }
+  }
+  ctx = this.contentContext(ctx, props, tag);
+  if (ctx.module.boundaries.has(tag)) return this.jsxNodes(node.children, ctx);
+  if (unknownGeometry(props.style)) unknownLayout = true;
+  if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
+  if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression') {
+    if (node.children.length) props.children = { [slotValue]: { nodes: node.children, context: ctx, framework: 'jsx' } satisfies SourceSlot };
+    this.record('component', tag, 'Expand source component', ctx, node);
+    const adapter = this.target.adapters?.[tag];
+    if (adapter) {
+      const file = path.resolve(this.root, adapter); await this.scan(file);
+      return this.component(file, 'default', props, ctx, node);
+    }
+    const imported = await this.componentReference(tag, ctx);
+    if (imported?.file && /\.(tsx|jsx|vue|ts|js)$/.test(imported.file)) return this.component(imported.file, imported.exported, props, ctx, node);
+    if (ctx.module.functions.has(tag)) {
+      const local = { ...ctx, env: { ...ctx.env }, depth: ctx.depth + 1 };
+      if (local.depth > 16) return this.fallback(ctx, node, 'Component recursion limit reached');
+      const body = this.prepareFunction(ctx.module.functions.get(tag), local, props);
+      return body ? this.jsx(body, local) : this.fallback(ctx, node, `Cannot expand ${tag}`);
+    }
+    const preset = await this.preset(tag, imported, props, node.children, ctx, node, 'jsx');
+    if (preset !== undefined) return preset;
+    return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
+  }
+  if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, this.attributes(props));
+  if (nonVisual.has(tag)) return '';
+  const children = tag === 'p' && this.masked(ctx) ? this.text(ctx, node, true) : await this.jsxNodes(node.children, ctx);
+  return this.element(tag, props, children, ctx, node);
+}

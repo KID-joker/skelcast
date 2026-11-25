@@ -44,7 +44,7 @@ export function withSkelCast(config: UserConfigExport): UserConfigExport {
 const firstScreen = (artifact: SkeletonArtifact) => {
   const view = artifact.variants[artifact.defaultVariant];
   const content = `<style>${escapeStyle(view.css)}</style>${view.html}`;
-  return `<div data-sk-initial="${escapeAttribute(artifact.id)}" aria-hidden="true" style="position:fixed;inset:0;z-index:9990;overflow:auto;background:var(--skeleton-page-background,#f5f7fa);padding:32px">${artifact.render === 'shadow' ? `<template shadowrootmode="open">${content}</template>` : content}</div>`;
+  return `<div data-sk-initial="${escapeAttribute(artifact.id)}" aria-hidden="true" style="position:fixed;inset:0;z-index:9990;overflow:auto;background:var(--skeleton-page-background,#f5f7fa)">${artifact.render === 'shadow' ? `<template shadowrootmode="open">${content}</template>` : content}</div>`;
 };
 
 export function skelcastPlugin(): Plugin {

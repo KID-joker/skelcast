@@ -1,8 +1,12 @@
 import { defineConfig } from 'tsup';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
-const compilerHash = createHash('sha256').update(['src/compiler/index.ts', 'src/compiler/expression.ts', 'src/compiler/styles.ts', 'src/compiler/components.ts', 'src/compiler/presets/index.ts', 'src/compiler/presets/types.ts', 'src/compiler/presets/naive-ui.ts', 'src/compiler/presets/shared.ts', 'src/compiler/presets/element-plus.ts', 'src/compiler/presets/ant-design.ts', 'src/generator.ts', 'src/types.ts'].map(f => readFileSync(f, 'utf8')).join('\n')).digest('hex').slice(0, 12);
+const compilerFiles = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+  const file = `${directory}/${entry.name}`;
+  return entry.isDirectory() ? compilerFiles(file) : file.endsWith('.ts') ? [file] : [];
+});
+const compilerHash = createHash('sha256').update([...compilerFiles('src/compiler'), 'src/generator.ts', 'src/types.ts'].sort().map(file => `${file}\n${readFileSync(file, 'utf8')}`).join('\n')).digest('hex').slice(0, 12);
 
 export default defineConfig({
   entry: ['src/index.ts', 'src/cli.ts', 'src/vite.ts', 'src/runtime/index.ts', 'src/adapters/react.ts', 'src/adapters/vue.ts', 'src/client.ts'],

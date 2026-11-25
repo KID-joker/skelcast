@@ -104,8 +104,16 @@ export function evaluate(node: Ast, ctx: ExpressionContext, depth = 0): Value {
       const a = ev(node.left), b = ev(node.right);
       if (a === UNKNOWN || b === UNKNOWN) return UNKNOWN;
       switch (node.operator) {
-        case '===': case '==': return a === b;
-        case '!==': case '!=': return a !== b;
+        case '===': return a === b;
+        case '!==': return a !== b;
+        case '==': case '!=': {
+          // Objects may contain business coercion hooks. Only compare primitives;
+          // never invoke valueOf/toString while interpreting application source.
+          const primitive = (value: unknown): value is string | number | boolean | bigint | symbol | null | undefined => value === null || !['object', 'function'].includes(typeof value);
+          if (!primitive(a) || !primitive(b)) return UNKNOWN;
+          const equal = a == b;
+          return node.operator === '==' ? equal : !equal;
+        }
         case '+': {
           if (typeof a === 'number' && typeof b === 'number') return a + b;
           const primitive = (value: unknown) => value === null || ['string', 'number', 'boolean'].includes(typeof value);

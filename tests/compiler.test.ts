@@ -670,3 +670,19 @@ test('hints reject invalid sizes and cannot add a second layout tree', async () 
     await assert.rejects(saveHints(project, '../../outside', { repeat: 2 }), /Unknown skeleton/);
   });
 });
+
+
+test('React and Vue select the same source branches for coercive equality', async () => {
+  await fixture({
+    'View.tsx': `export default function View(){return <main>{0 == false ? <section/> : <aside/>}{null == undefined ? <header/> : <footer/>}</main>}`,
+    'View.vue': `<template><main><section v-if="0 == false"/><aside v-else/><header v-if="null == undefined"/><footer v-else/></main></template>`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue']) {
+      const { artifact } = await compileTarget(root, { ...target, source });
+      assert.match(artifact.variants.default.html, /<section/);
+      assert.match(artifact.variants.default.html, /<header/);
+      assert.doesNotMatch(artifact.variants.default.html, /<aside|<footer/);
+      assert.deepEqual(artifact.diagnostics, []);
+    }
+  });
+});

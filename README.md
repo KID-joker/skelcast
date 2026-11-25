@@ -319,6 +319,8 @@ import skeleton from 'virtual:skelcast/products.list';
 </template>
 ```
 
+Skeleton markup is mounted on its first display and reused while hidden. Repeated light DOM instances share styles; Shadow DOM instances share constructed stylesheets when available. Boundary updates notify only the affected preview or artifact subscribers.
+
 Boundaries preserve mounted content when switching forced preview, so form state is retained. Application code must still guard data that has not arrived. Initial requests, background refreshes, errors, and retries remain under your application's control; SkelCast does not intercept `fetch`.
 
 Exiting preview resumes the real loading state. Hidden content is inert, `aria-busy` reflects real pending state, and skeletons are hidden from assistive technology.
