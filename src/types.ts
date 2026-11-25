@@ -23,8 +23,27 @@ export interface SkeletonTarget {
 export interface SkeletonConfig {
   targets: SkeletonTarget[];
   aliases?: Record<string, string>;
+  /** Static component names mapped to local source; explicit mappings win over declarations. */
+  components?: Record<string, string>;
+  /** Static expression values scoped to a project-relative component source file. */
+  componentBindings?: Record<string, Record<string, unknown>>;
+  /** Defaults to components.d.ts and src/components.d.ts. Never executes declaration imports. */
+  componentDeclarations?: string[];
+  /** Opt-in library layout adapters; require imports or component declarations identifying the package/export. */
+  componentPresets?: ('naive-ui' | 'element-plus' | 'ant-design-vue' | 'antd')[];
+  styles?: StyleOptions;
   outDir?: string;
   hintsFile?: string;
+}
+export interface StyleOptions {
+  less?: boolean;
+  /** Mini + Attributify utilities. Configuration is data, not application config execution. */
+  unocss?: boolean | {
+    theme?: Record<string, unknown>;
+    shortcuts?: Record<string, string>;
+    safelist?: string[];
+    attributify?: boolean;
+  };
 }
 export interface Diagnostic {
   code: string;

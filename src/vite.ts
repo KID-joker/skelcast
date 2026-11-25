@@ -2,18 +2,38 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ConfigEnv, Plugin, UserConfig, UserConfigExport, ViteDevServer } from 'vite';
 import { checkProject, loadProject, readArtifact, saveHints, syncProject, type Project } from './generator.js';
-import type { SkeletonArtifact } from './types.js';
+import type { SkeletonArtifact, SkeletonTarget } from './types.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
 const escapeStyle = (s: string) => s.replace(/<\/style/gi, '<\\/style');
 const escapeAttribute = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const wildcard = (part: string) => part === '*' || /^:[\w]+\(\.\*\)[*+]?$/.test(part);
 export function matchesRoute(route: string | string[] | undefined, pathname: string): boolean {
   return (Array.isArray(route) ? route : [route ?? '/']).some(pattern => {
     const parts = pattern.split('/').filter(Boolean);
-    const expression = parts.map(part => part === '*' ? '.*' : part.startsWith(':') ? '[^/]+' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/');
+    const expression = parts.map(part => wildcard(part) ? '.*' : part.startsWith(':') ? '[^/]+' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/');
     return new RegExp(`^/${expression}/?$`).test(pathname);
   });
+}
+export function selectPageTarget(targets: SkeletonTarget[], pathname: string): SkeletonTarget | undefined {
+  let selected: SkeletonTarget | undefined;
+  let selectedScore: number[] = [];
+  for (const target of targets) {
+    if (target.kind !== 'page') continue;
+    for (const pattern of Array.isArray(target.route) ? target.route : [target.route ?? '/']) {
+      if (!matchesRoute(pattern, pathname)) continue;
+      const parts = pattern.split('/').filter(Boolean);
+      const score = parts.length ? parts.map(part => wildcard(part) ? 0 : part.startsWith(':') ? 2 : 3) : [3];
+      let better = !selected;
+      for (let i = 0; selected && i < Math.max(score.length, selectedScore.length); i++) {
+        const delta = (score[i] ?? 1) - (selectedScore[i] ?? 1);
+        if (delta) { better = delta > 0; break; }
+      }
+      if (better) { selected = target; selectedScore = score; }
+    }
+  }
+  return selected;
 }
 export function withSkelCast(config: UserConfigExport): UserConfigExport {
   const add = (value: UserConfig): UserConfig => ({ ...value, plugins: [...value.plugins ?? [], skelcastPlugin()] });
@@ -60,7 +80,7 @@ export function skelcastPlugin(): Plugin {
       async handler(_html, context) {
         const rawPath = new URL(context.originalUrl ?? context.path, 'http://localhost').pathname;
         const pathname = rawPath === '/index.html' ? '/' : rawPath;
-        const target = project.config.targets.find(t => t.kind === 'page' && matchesRoute(t.route, pathname));
+        const target = selectPageTarget(project.config.targets, pathname);
         const tags: any[] = [];
         if (target) tags.push({ tag: 'div', attrs: { 'data-sk-initial-container': '' }, children: firstScreen(await readArtifact(project, target.id)), injectTo: 'body-prepend' });
         if (dev) tags.push({ tag: 'script', attrs: { type: 'module', src: `/@fs/${fileURLToPath(new URL('./client.js', import.meta.url))}` }, injectTo: 'head-prepend' });

@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0-77a35031ac32",
+  "version": "0.1.0-904c6764ab65",
   "configHash": "43518b648a9f0db28a0d453259596be087186304700870eafe1877385a83c33e",
   "targets": {
     "products.page": {
       "file": "products.page.mjs",
       "hash": "8454a92db4eb90929bc133dc88b3e264e131b3f497bba96e5c7047bbd41b9600",
-      "outputHash": "b0368eb44936a326e749c458122b58b9a9f857bef1b71c6645ef4be6159f3b90",
+      "outputHash": "f000a1d96b4d1d7594dfbd5e3733ac5c420e0f4971995d3f85bf1f13aaa2a40d",
       "dependencies": {
         "src/CatalogPage.tsx": "176eb7ffcc5086f3b2c02484e7c75a84e4792e669fa7cda8036208f397f062c0",
         "src/ProductGrid.tsx": "f53b62109ed84572d53197e5a1e6b482db3190559ee0816e07125235c259209c",
@@ -15,7 +15,7 @@
     "products.list": {
       "file": "products.list.mjs",
       "hash": "3aad1b13a8f2dee8685cadb5799215b8238cabf82577dc4c25efe4de42aa2cbf",
-      "outputHash": "b1f5f7d6cca66dc51db5b0630335e1ee5e6659ea480c29aa20e20db484e6b9fd",
+      "outputHash": "58bf20699c263110f4cfe78465318845b2f7984085aded5d7485830bf46e8075",
       "dependencies": {
         "src/ProductGrid.tsx": "f53b62109ed84572d53197e5a1e6b482db3190559ee0816e07125235c259209c",
         "src/catalog.module.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f"

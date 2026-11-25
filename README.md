@@ -110,6 +110,138 @@ export default {
 
 Point `source` at a presentation component when possible. `export` selects a named React component; the default is its default export. Adapters are also statically analyzed presentation components.
 
+### Auto-imported Vue components and preprocessed styles
+
+Vue templates use DOM parsing rules, including native void elements such as `<input>`.
+SkelCast statically reads `GlobalComponents` entries in `components.d.ts` and
+`src/components.d.ts` to expand local auto-imported components. It never imports
+their business modules. Explicit imports take precedence; `components` overrides
+declaration mappings. Missing declarations are tracked so creating one invalidates
+existing artifacts. Override the file list with `componentDeclarations` (use `[]`
+to disable discovery).
+
+Enable additional presentation and style support in the development configuration:
+
+```js
+export default {
+  components: { ChartPanel: 'src/skeletons/ChartPanel.vue' },
+  componentBindings: {
+    'src/components/Card.vue': { theme: { borderColor: '#dce1e7' } },
+  },
+  componentDeclarations: ['components.d.ts'],
+  componentPresets: ['naive-ui'], // Enable only the libraries used by the project.
+  styles: {
+    less: true,
+    unocss: {
+      theme: { colors: { primary: '#1ea54c' } },
+      shortcuts: { panel: 'p-24px rounded border' },
+      safelist: [],
+      attributify: true,
+    },
+  },
+  targets: [/* source targets */],
+};
+```
+
+Opt-in presets supply finite presentation primitives for common data components,
+containers and controls. They approximate default geometry, rather than executing
+the actual component library. Unsupported components retain local diagnostics and
+fallbacks; custom themes and complex layouts can use project-local source adapters.
+
+| Preset | Typical use | Data/layout coverage |
+| --- | --- | --- |
+| `naive-ui` | Vue / `naive-ui` | Cards, grids, code output, statistics, images, tags, data tables |
+| `element-plus` | Vue / `element-plus` | Tables/columns, cards, descriptions, statistics, images, avatars, tags, layout/form containers |
+| `ant-design-vue` | Vue / `ant-design-vue` | Tables/columns, cards, lists, descriptions, statistics, images, avatars, tags, layout/form containers |
+| `antd` | React / `antd` | The same basic Ant Design shapes, including JSX compound components such as `Table.Column` and `Form.Item` |
+
+Each preset also handles basic buttons, inputs, selection controls and calendar
+frames. These are inert control representations, not blanket gray placeholders.
+Presets match the package and export in source imports or `GlobalComponents`
+declarations, including renamed and namespace imports. A tag prefix alone never
+enables a library rule. Resolvable local source and explicit project adapters take
+precedence. Common `/es`, `/lib` entry points and explicitly listed component deep
+imports are supported. Library rendering and slot rules live in separate modules under
+`src/compiler/presets/`; the compiler only dispatches confirmed component identities.
+
+Mask the data that is loading, rather than every element containing text. Buttons,
+form labels, editable inputs, navigation and calendar date-grid frames keep their
+static text/geometry. Data text, images, statistics, table cells and read-only output
+fields receive placeholders. Table headers remain readable and wide tables scroll
+inside their container. A control-only target can legitimately have zero data
+placeholders; `quality` reports `preservedNodes` separately.
+Known arrays determine table row count (up to 24); unknown arrays default to four
+rows. Use `hints.repeat` to request predicted rows, including for an initially empty
+array. Source-visible column slots can retain action buttons alongside data cells.
+Set `--skeleton-control-color` and `--skeleton-control-background` to match preserved
+controls to the application's light/dark theme.
+
+Use `data-sk-preserve` on a static subtree to retain its resolved content, or
+`data-sk-mask` to force placeholders for a data subtree. These attributes work in
+Vue and JSX and follow source slots/children through local wrappers. Unknown values
+cannot be reconstructed by a preserve hint and retain an inert empty footprint.
+
+```vue
+<el-button>Refresh</el-button>
+<aside data-sk-preserve>Fixed instructions</aside>
+<section data-sk-mask>{{ report.summary }}</section>
+```
+
+Prefer request boundaries around the data region, with real controls outside the
+boundary when they must remain interactive during loading. Preserved controls in a
+generated artifact have no event handlers and are hidden from assistive technology;
+they do not replace live application controls. A calendar's asynchronous event cells
+are data regions even though its date-grid frame is a control. Current dates, custom
+calendar cells, grouped/custom table renderers and list render callbacks are not
+executed or inferred; finite approximations retain `PRESET_LIMIT` diagnostics.
+Table column APIs follow [Element Plus](https://element-plus.org/en-US/component/table),
+[Ant Design](https://ant.design/components/table/) and
+[Ant Design Vue](https://github.com/vueComponent/ant-design-vue/blob/main/components/table/index.en-US.md).
+Local component roots inherit parent classes, styles and supported utility attributes;
+`defineOptions({ inheritAttrs: false })` disables attribute forwarding.
+Declared local Vue props retain absent/Boolean defaults, literal default factories,
+`v-model` values, `useVModel` aliases and named-slot presence. Array/object `v-for`
+aliases can destructure values, keys and indexes; statically empty lists stay empty.
+Bounded `computed` bodies and literal-array `map`/`find` callbacks are interpreted
+without invoking their implementation. Unsupported calls remain unknown; collection
+operations have size, depth and work limits.
+
+The Naive preset also preserves configuration-provider children, code-output lines,
+vertical dividers and numeric/responsive grids. Grid breakpoints follow the container
+by default or the viewport with `responsive="screen"`. Code with unknown content uses
+three representative lines; it does not claim to infer arbitrary output length.
+Known string `v-html` content becomes inert semantic placeholders, with word lengths
+and whitespace retained for natural wrapping. Event handlers, URLs and directives in
+that HTML are not rendered or evaluated; unknown HTML keeps its local diagnostic.
+Runtime-mounted widgets remain opaque. An empty native ref host is masked using
+its source container geometry and retains a diagnostic; no internal tree is inferred.
+Editor toolbars, panes and content are outside the built-in fidelity scope. Declare
+finite empty/result variants for ordinary application state when needed. Stored-value
+defaults supplied as explicit bindings describe a source-default snapshot, not a
+user's persisted content.
+
+Less is compiled before scoped CSS and CSS Modules processing. Imported Less files
+are fingerprinted. JavaScript, `@plugin` and remote Less imports are disabled.
+CSS `v-bind()` expressions are resolved from each component instance's props,
+defaults, aliases, bounded computed expressions and explicit bindings. Values are
+written as component-scoped CSS variables on its roots, so two instances can keep
+different dimensions. Unresolved expressions retain `STYLE_BINDING` diagnostics.
+Use `componentBindings` for source-file-specific hook results such as a selected
+static theme; hooks themselves are never invoked. A variant's `bindings` can
+override an expression for one component with a key such as
+`'src/components/Card.vue::theme.borderColor'`. Refresh explicit theme bindings
+when their source values change.
+
+UnoCSS uses the Mini and Attributify presets. Set `unocss: true` for their defaults,
+or supply serializable theme, shortcuts and safelist data as above. SkelCast
+generates utilities from artifact markup and preserves supported layout attributes
+such as `flex`, `items-center`, `gap-8px`, `px8`, `pb6` and `important:p0`. It does
+not execute application UnoCSS or Vite configuration, load arbitrary presets, or run source transformers. Copy
+relevant theme/shortcut data into this configuration; advanced UnoCSS features need
+precompiled CSS supplied through each target's `styles`.
+Scoped utilities retain `.dark` and `.light` ancestor selectors, allowing a theme
+class on the document root to affect its skeletons without leaking artifact CSS.
+
 Use `bindings` to resolve expressions that affect branches, classes, or dimensions, such as `{ 'data.mode': 'grid' }`. The analyzer supports bounded expressions, aliases, destructuring, component props, React children, and Vue default/named slots. It never invokes arbitrary business functions or requests. Runtime slot parameters, render props, and complex helper functions need explicit hints or adapters.
 
 Ordinary `sync` commands load the trusted development configuration as executable code; application source is parsed only. Do not import the application entry point from the configuration.
@@ -125,6 +257,20 @@ pnpm exec skelcast check
 Commit `.skelcast/*.mjs`, its manifest, and `skelcast.hints.json` alongside your source. The manifest records dependency fingerprints and artifact paths, not a second layout tree. Unchanged inputs reuse existing outputs. `check` exits with a nonzero status for stale, missing, or modified artifacts and can run in CI.
 
 Opaque components and unknown render calls produce local fallback blocks with source diagnostics. Feed `inspect` output to your coding agent to refine hints or adapters before regenerating.
+
+Inspect structural quality separately from artifact freshness:
+
+```bash
+pnpm exec skelcast quality --json
+pnpm exec skelcast quality --id products.list --strict
+```
+
+`quality` reports placeholder counts, fallback counts, unresolved component tags and
+generation diagnostics for every variant. `--strict` exits nonzero for targets
+needing review, including stale or missing artifacts. `check` retains its existing
+freshness/integrity behavior. Structural quality cannot establish CSS visibility or
+visual similarity: verify representative pages at desktop and mobile widths in a
+browser, then compare them with the real application.
 
 ### Register the Vite plugin
 
@@ -179,7 +325,7 @@ Exiting preview resumes the real loading state. Hidden content is inert, `aria-b
 
 ### Show a skeleton before application JavaScript
 
-A matching `kind: 'page'` target is injected into the initial HTML. A mounted page boundary takes over. If you do not use a page boundary, release the initial skeleton at an explicit application readiness point:
+A matching `kind: 'page'` target is injected into the initial HTML. Specific routes take precedence over parameters and catch-all patterns, including Vue's `:pathMatch(.*)*`. A mounted page boundary permanently takes over from the initial shell, including when a static SPA entry contains another route's shell. Navigating between pages does not restore the old overlay. If you do not use a page boundary, release the initial skeleton at an explicit application readiness point:
 
 ```ts
 import { releasePageSkeleton } from 'skelcast/runtime';
@@ -222,13 +368,13 @@ See the [coding agent skill](skills/skelcast/SKILL.md) for the generation and in
 ## Supported scope
 
 - React function components with JSX/TSX; Vue 3 SFC templates and script setup.
-- Plain CSS, CSS Modules, Vue scoped CSS, CSS imports, media and container queries.
+- Plain CSS, CSS Modules, Vue scoped CSS, CSS imports, media and container queries; opt-in Less and UnoCSS Mini/Attributify generation.
 - Local components, simple prefix aliases, bounded conditions and repetition, static classes/styles, source locations, and visible fallbacks.
 - Static light DOM or Shadow DOM rendering, without generating from screenshots or authenticated sessions.
 
-Full type-system inference, arbitrary function evaluation, runtime CSS-in-JS, Sass/Less/Pug compilation, arbitrary dynamic components, Canvas, and complete third-party design-system adapters are not included. Dynamic aliases and complex path mappings need manual configuration. Vue Options API dynamic values need bindings or adapters. Review ancestor-dependent styles, intrinsic asset dimensions, and complex scoped slots in the real page.
+Full type-system inference, arbitrary function evaluation, runtime CSS-in-JS, Sass/Pug compilation, arbitrary dynamic components, Canvas, and complete third-party design-system adapters are not included. Dynamic aliases and complex path mappings need manual configuration. Vue Options API dynamic values need bindings or adapters. Review ancestor-dependent styles, intrinsic asset dimensions, and complex scoped slots in the real page.
 
-Boundaries use block containers. Place them around suitable block regions rather than directly inside table rows or layouts that require specific direct children. Shadow DOM isolates selectors but still needs a known style context; choose light DOM when application ancestor selectors are essential.
+Boundaries use block containers with `min-width: 0` so the additional wrapper can shrink inside flex and grid parents. Wide content must still provide its intended scroll container. Place boundaries around suitable block regions rather than directly inside table rows or layouts that require specific direct children. Shadow DOM isolates selectors but still needs a known style context; choose light DOM when application ancestor selectors are essential.
 
 ## Development
 

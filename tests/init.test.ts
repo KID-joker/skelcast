@@ -6,9 +6,22 @@ import os from 'node:os';
 import { initProject } from '../src/init/index.js';
 import { checkProject, loadProject, readArtifact } from '../src/generator.js';
 import { parseCode } from '../src/init/ast.js';
-import { matchesRoute, withSkelCast } from '../src/vite.js';
+import { matchesRoute, selectPageTarget, withSkelCast } from '../src/vite.js';
 
 const manifest = { name: 'existing-app', type: 'module', dependencies: { react: '^19', vue: '^3', vite: '^8' }, devDependencies: { skelcast: '^0.1.0' } };
+test('initial page matching prefers specific routes over an earlier Vue catch-all', () => {
+  const targets = [
+    { id: '404', source: '404.vue', kind: 'page' as const, route: '/:pathMatch(.*)*' },
+    { id: 'detail', source: 'Detail.vue', kind: 'page' as const, route: '/tools/:id' },
+    { id: 'new', source: 'New.vue', kind: 'page' as const, route: ['/tools/new', '/create'] },
+    { id: 'home', source: 'Home.vue', kind: 'page' as const, route: '/' },
+  ];
+  assert.equal(selectPageTarget(targets, '/')?.id, 'home');
+  assert.equal(selectPageTarget(targets, '/tools/new')?.id, 'new');
+  assert.equal(selectPageTarget(targets, '/tools/123')?.id, 'detail');
+  assert.equal(selectPageTarget(targets, '/unknown/nested/path')?.id, '404');
+  assert.ok(matchesRoute('/:pathMatch(.*)*', '/nested/path'));
+});
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-init-'));
   try {
@@ -18,6 +31,14 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+test('Vue init accepts native input, br and img without self-closing syntax', async () => {
+  await fixture({ 'src/App.vue': '<script setup></script><template><main><input><br><img src="/photo.png"></main></template>' }, async root => {
+    const report = await initProject(root);
+    assert.equal(report.targets.length, 1);
+    assert.equal(report.diagnostics.filter(row => row.code === 'CODEMOD_SKIPPED').length, 0);
+    assert.match((await readArtifact(await loadProject(root), report.targets[0].id)).variants.default.html, /data-sk-image/);
+  });
+});
 test('init dry-run discovers React pages/regions without executing code or writing files', async () => {
   const code = `globalThis.__initBusinessExecuted=true; throw new Error('do not execute'); export default function App(){const {data,isLoading}=useQuery();return <main><h1>Orders</h1>{isLoading ? <p>Loading...</p> : <section className="orders">{data.map(item=><article>{item.name}</article>)}</section>}</main>}`;
   await fixture({ 'src/App.tsx': code }, async root => {

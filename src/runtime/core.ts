@@ -4,6 +4,7 @@ export interface BoundaryInfo {
   id: string;
   kind: 'page' | 'request';
   pending: boolean;
+  variant?: string;
   artifact: SkeletonArtifact;
   element?: HTMLElement;
 }
@@ -13,6 +14,7 @@ const listeners = new Set<() => void>();
 let revision = 0;
 let preview: PreviewState = { target: null, highlight: false };
 let initialReleased = false;
+let initialHandedOff = false;
 let initialPreviewAllowed = true;
 const overrides = new Map<string, SkeletonArtifact>();
 
@@ -21,8 +23,11 @@ function updateInitial() {
   const root = document.querySelector<HTMLElement>('[data-sk-initial]');
   if (!root) return;
   const id = root.dataset.skInitial!;
-  const managed = [...boundaries.values()].some(b => b.kind === 'page' && b.id === id);
-  root.hidden = managed || initialReleased && (!initialPreviewAllowed || !(preview.target === 'page' || preview.target === id));
+  // A static SPA entry may contain another route's initial shell. Any mounted
+  // page boundary owns the current page and must retire that shell permanently.
+  const managed = [...boundaries.values()].some(b => b.kind === 'page');
+  if (managed) initialHandedOff = true;
+  root.hidden = initialHandedOff || initialReleased && (!initialPreviewAllowed || !(preview.target === 'page' || preview.target === id));
 }
 function emit() { revision++; updateInitial(); listeners.forEach(fn => fn()); }
 export function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }

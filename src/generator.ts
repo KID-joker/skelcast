@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { Manifest, ManifestEntry, SkeletonArtifact, SkeletonConfig, SkeletonHints, SkeletonTarget } from './types.js';
 import { compileTarget } from './compiler/index.js';
 import { digest } from './compiler/styles.js';
+import { presetNames } from './compiler/presets/index.js';
 
 declare const __SKELETON_COMPILER_HASH__: string;
 export const GENERATOR_VERSION = `0.1.0-${typeof __SKELETON_COMPILER_HASH__ === 'string' ? __SKELETON_COMPILER_HASH__ : 'source'}`;
@@ -33,6 +34,21 @@ export async function projectFromConfig(root: string, input: SkeletonConfig): Pr
   const config: SkeletonConfig = structuredClone(input);
   if (!config || !Array.isArray(config.targets)) throw new Error('skelcast.config.mjs must export { targets: [...] }');
   if (config.aliases && Object.values(config.aliases).some(v => typeof v !== 'string')) throw new Error('aliases must map prefixes to source directories');
+  if (config.components && (Array.isArray(config.components) || typeof config.components !== 'object' || Object.values(config.components).some(v => typeof v !== 'string'))) throw new Error('components must map names to source files');
+  if (config.componentBindings && (typeof config.componentBindings !== 'object' || Array.isArray(config.componentBindings) || Object.values(config.componentBindings).some(value => !value || typeof value !== 'object' || Array.isArray(value)))) throw new Error('componentBindings must map component source files to expression values');
+  if (config.componentDeclarations && (!Array.isArray(config.componentDeclarations) || config.componentDeclarations.some(v => typeof v !== 'string'))) throw new Error('componentDeclarations must be a list of declaration files');
+  if (config.componentPresets && (!Array.isArray(config.componentPresets) || config.componentPresets.some(v => !presetNames.includes(v)))) throw new Error(`Supported component presets: ${presetNames.join(', ')}`);
+  if (config.styles) {
+    if (typeof config.styles !== 'object' || Array.isArray(config.styles)) throw new Error('styles must be an object');
+    if (config.styles.less != null && typeof config.styles.less !== 'boolean') throw new Error('styles.less must be a boolean');
+    const uno = config.styles.unocss;
+    if (uno != null && typeof uno !== 'boolean') {
+      if (typeof uno !== 'object' || Array.isArray(uno)) throw new Error('styles.unocss must be a boolean or configuration object');
+      if (uno.attributify != null && typeof uno.attributify !== 'boolean') throw new Error('unocss.attributify must be a boolean');
+      if (uno.shortcuts && Object.values(uno.shortcuts).some(v => typeof v !== 'string')) throw new Error('unocss.shortcuts must map names to utility strings');
+      if (uno.safelist && (!Array.isArray(uno.safelist) || uno.safelist.some(v => typeof v !== 'string'))) throw new Error('unocss.safelist must be a string array');
+    }
+  }
   const hintsFile = path.resolve(root, config.hintsFile ?? 'skelcast.hints.json');
   let saved: Record<string, SkeletonHints> = {};
   try { saved = JSON.parse(await readFile(hintsFile, 'utf8')); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
@@ -63,13 +79,13 @@ async function readManifest(project: Project): Promise<Manifest | undefined> {
   } catch { /* absent or invalid manifests are regenerated */ }
 }
 export const artifactFilename = (id: string) => `${id}.mjs`;
-const targetHash = (target: SkeletonTarget, aliases?: Record<string, string>) => digest(JSON.stringify({ target, aliases }));
+const targetHash = (target: SkeletonTarget, config: SkeletonConfig) => digest(JSON.stringify({ target, aliases: config.aliases, components: config.components, componentBindings: config.componentBindings, componentDeclarations: config.componentDeclarations, componentPresets: config.componentPresets, styles: config.styles }));
 async function entryStatus(project: Project, target: SkeletonTarget, entry?: ManifestEntry, version?: string): Promise<TargetStatus> {
   if (!entry) return { id: target.id, state: 'missing', reason: 'No generated artifact' };
-  if (version !== GENERATOR_VERSION || entry.hash !== targetHash(target, project.config.aliases)) return { id: target.id, state: 'stale', reason: 'Config, hints or generator changed' };
+  if (version !== GENERATOR_VERSION || entry.hash !== targetHash(target, project.config)) return { id: target.id, state: 'stale', reason: 'Config, hints or generator changed' };
   for (const [file, hash] of Object.entries(entry.dependencies)) {
     try { if (digest(await readFile(path.resolve(project.root, file), 'utf8')) !== hash) return { id: target.id, state: 'stale', reason: `${file} changed` }; }
-    catch { return { id: target.id, state: 'stale', reason: `${file} missing` }; }
+    catch (error: any) { if (!(hash === '!missing' && error.code === 'ENOENT')) return { id: target.id, state: 'stale', reason: `${file} missing` }; }
   }
   try {
     const content = await readFile(path.join(project.outDir, artifactFilename(target.id)), 'utf8');
@@ -107,11 +123,11 @@ export async function syncProject(project: Project): Promise<{ id: string; state
       result.push({ id: target.id, state: 'reused', diagnostics: (await readArtifact(project, target.id)).diagnostics.length });
       continue;
     }
-    const { artifact, dependencies } = await compileTarget(project.root, target, project.config.aliases);
+    const { artifact, dependencies } = await compileTarget(project.root, target, project.config.aliases, project.config);
     const module = `// Generated by skelcast ${GENERATOR_VERSION}. Edit source or hints, then sync.\nexport default ${JSON.stringify(artifact, null, 2)};\n`;
     const file = artifactFilename(target.id);
     await atomicWrite(path.join(project.outDir, file), module);
-    manifest.targets[target.id] = { file, hash: targetHash(target, project.config.aliases), outputHash: digest(module), dependencies };
+    manifest.targets[target.id] = { file, hash: targetHash(target, project.config), outputHash: digest(module), dependencies };
     result.push({ id: target.id, state: 'generated', diagnostics: artifact.diagnostics.length });
   }
   await atomicWrite(path.join(project.outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

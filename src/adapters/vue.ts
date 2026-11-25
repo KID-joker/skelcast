@@ -28,16 +28,16 @@ export const LoadingBoundary = defineComponent({
     };
     onMounted(() => {
       unsubscribe = subscribe(() => { revision.value++; updateSkeleton(); });
-      registration = registerBoundary({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, artifact: props.artifact, element: root.value });
+      registration = registerBoundary({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact, element: root.value });
       updateSkeleton();
     });
-    watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ pending: props.pending, artifact: props.artifact }); updateSkeleton(); });
+    watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact }); updateSkeleton(); });
     onBeforeUnmount(() => { unsubscribe?.(); registration?.dispose(); cleanup?.(); });
     return () => {
       void revision.value;
       const artifact = currentArtifact(props.artifact);
       const show = props.pending || forced(artifact.id, artifact.kind);
-      return h('div', { ref: root, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
+      return h('div', { ref: root, style: { minWidth: 0 }, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
         h('div', { ref: skeleton, hidden: !show, 'aria-hidden': 'true' }),
         h('div', { hidden: show, inert: show || undefined, 'data-sk-content': '' }, slots.default?.()),
       ]);

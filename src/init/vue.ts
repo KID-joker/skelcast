@@ -1,5 +1,5 @@
 import { parse as parseSFC } from '@vue/compiler-sfc';
-import { baseParse } from '@vue/compiler-dom';
+import { parse as parseDOM } from '@vue/compiler-dom';
 import { applyEdits, importOffset, loadingName, objectConfig, parseCode, pendingCondition, pureCondition, uniqueName, walk, type Ast, type Edit } from './ast.js';
 import { targetId, type AnalysisContext, type FileAnalysis } from './types.js';
 import type { SkeletonTarget } from '../types.js';
@@ -27,7 +27,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   }
   const boundary = uniqueName(ctx.source, 'SkelCastBoundary');
   const text = template.content;
-  const ast = baseParse(text);
+  const ast = parseDOM(text);
   const edits: Edit[] = [];
   const imports: string[] = [];
   const allBindings: Record<string, boolean> = {};
@@ -118,6 +118,6 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const changed = applyEdits(ctx.source, result.edits);
   const checked = parseSFC(changed, { filename: ctx.file });
   if (checked.errors.length) throw new Error(String(checked.errors[0]));
-  baseParse(checked.descriptor.template!.content);
+  parseDOM(checked.descriptor.template!.content);
   return result;
 }

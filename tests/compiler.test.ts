@@ -6,6 +6,7 @@ import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
 import { checkProject, loadProject, readArtifact, saveHints, syncProject } from '../src/generator.js';
 import type { SkeletonTarget } from '../src/types.js';
+import { analyzeQuality, qualityProject } from '../src/quality.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skeleton-test-'));
@@ -14,14 +15,326 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+const naiveDeclarations = `declare module 'vue' { interface GlobalComponents { ${['NInput','NIcon','NCard','NInputGroup','NInputGroupLabel','NTooltip','NConfigProvider','NCode','NGrid','NGi'].map(name => name + ": typeof import('naive-ui')['" + name + "']").join(';')} } }`;
+
 const target: SkeletonTarget = { id: 'test.list', source: 'View.tsx' };
+
+test('Vue fallthrough attrs reach component/native roots before classifying read-only output', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Wrapper from './Wrapper.vue';import Native from './Native.vue'</script><template><Wrapper readonly class="outer"/><Native readonly/><Wrapper/></template>`,
+    'Wrapper.vue': `<script setup>import Native from './Native.vue';const props=defineProps<{value?:string}>()</script><template><Native class="inner"/></template>`,
+    'Native.vue': `<script setup>const props=defineProps<{value?:string}>()</script><template><input class="field" :value="props.value"></template>`,
+  }, async root => {
+    const {artifact}=await compileTarget(root,{...target,source:'View.vue'});
+    const inputs=artifact.variants.default.html.match(/<input[^>]+>/g)??[];
+    assert.equal(inputs.length,3);
+    assert.match(inputs[0],/readonly/);assert.match(inputs[0],/data-sk-leaf/);assert.match(inputs[0],/class="field inner outer"/);
+    assert.match(inputs[1],/readonly/);assert.match(inputs[1],/data-sk-leaf/);
+    assert.doesNotMatch(inputs[2],/readonly|data-sk-leaf/);
+  });
+});
+
+test('Vue absent props, slots and model aliases select the source branch while opaque values stay diagnosed', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Field from './Field.vue';const blank=ref();const text=ref('ready')</script><template><Field v-model:value="blank"/><Field title="Title" v-model:value="text"/><Field :title="remoteTitle"/></template>`,
+    'Field.vue': `<script setup>const props=defineProps<{title?:string;value?:string;clearable?:boolean}>();const {title,clearable}=toRefs(props);const value=useVModel(props,'value')</script><template><section><header v-if="title">Title</header><button v-if="clearable && value">Clear</button><footer v-if="$slots.footer"><slot name="footer"/></footer><p v-if="value">Filled</p><input v-else></section></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    const html = artifact.variants.default.html;
+    assert.equal((html.match(/<header/g) ?? []).length, 2);
+    assert.equal((html.match(/<input/g) ?? []).length, 2);
+    assert.equal((html.match(/<p /g) ?? []).length, 1);
+    assert.doesNotMatch(html, /<button|<footer/);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'BRANCH_DEFAULT').length, 1);
+  });
+});
+
+test('Vue destructured loops retain object keys and index, preserve empty lists and use literal default factories', async () => {
+  await fixture({
+    'View.vue': `<script setup>const props=withDefaults(defineProps<{rows?:unknown[]}>(),{rows:()=>[{kind:'input'},{kind:'textarea'}]});const {rows}=toRefs(props);const groups={first:{kind:'input'},second:{kind:'textarea'}};</script><template><section v-for="({kind},index) in rows"><input v-if="kind === 'input'"><textarea v-else/></section><article v-for="({kind},key,index) of groups"><input v-if="key === 'first' && index === 0"><textarea v-else/></article><div v-for="entry in []">Empty</div></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    const html = artifact.variants.default.html;
+    assert.equal((html.match(/<section/g) ?? []).length, 2);
+    assert.equal((html.match(/<article/g) ?? []).length, 2);
+    assert.equal((html.match(/<input/g) ?? []).length, 2);
+    assert.equal((html.match(/<textarea/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /<div data-sk-node/);
+    assert.deepEqual(artifact.diagnostics, []);
+  });
+});
+
+test('bounded static HTML becomes inert semantic placeholders and unknown HTML stays local', async () => {
+  await fixture({
+    'View.vue': `<script setup>const html='<h1 onclick="privateCall()">Welcome</h1><p>Body</p><scr' + 'ipt>throw new Error("never run")</scr' + 'ipt><img src="https://private.invalid/tracker"><div v-if="privateCall()">Literal HTML</div>'</script><template><article class="rich" v-html="html"/><aside v-html="privateHtml"/><label v-text="privateText"/></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    const html = artifact.variants.default.html;
+    assert.match(html, /<h1/); assert.match(html, /<p /); assert.match(html, /<label[^>]*><span/);
+    assert.doesNotMatch(html, /onclick|privateCall|private.invalid|<script|Welcome|Literal HTML/);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'FALLBACK').length, 1);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'BRANCH_DEFAULT').length, 0);
+  });
+});
+
+test('empty native mount hosts retain source dimensions as opaque boxes without widget-specific trees', async () => {
+  await fixture({
+    'View.vue': `<script setup>const host=ref(null);throw new Error('never run')</script><template><div ref="host" style="height:600px;width:100%"/><input ref="field"/><div ref="populated"><p>Content</p></div></template>`,
+  }, async root => {
+    const {artifact}=await compileTarget(root,{...target,source:'View.vue'});
+    assert.equal((artifact.variants.default.html.match(/data-sk-opaque/g)??[]).length,1);
+    assert.match(artifact.variants.default.html,/height:600px;width:100%/);
+    assert.equal(artifact.diagnostics.filter(d=>d.code==='FALLBACK').length,1);
+    assert.equal(analyzeQuality(artifact).variants.default.fallbacks,1);
+  });
+});
+
+test('library presets require package identity, preserve aliases/namespaces and remain opt-in', async () => {
+  await fixture({
+    'View.vue': `<script setup>import { NInput as Field } from 'naive-ui';import * as UI from 'naive-ui';import { NInput as Other } from 'other-library';import NCard from './Local.vue';import type {NButton} from 'naive-ui'</script><template><Field/><UI.NInput/><Other/><NCard/><n-input/><NButton/></template>`,
+    'Local.vue': `<template><article>Local card</article></template>`,
+    'Declared.vue': `<template><RenamedControl/><n-input/></template>`,
+    'components.d.ts': `declare module 'vue' {interface GlobalComponents {RenamedControl:typeof import('naive-ui')['NInput']}}`,
+  }, async root => {
+    const {artifact}=await compileTarget(root,{...target,source:'View.vue'},{},{componentPresets:['naive-ui']});
+    const html=artifact.variants.default.html;
+    assert.equal((html.match(/height:34px/g)??[]).length,2);
+    assert.match(html,/<article/);
+    assert.equal(artifact.diagnostics.filter(d=>d.code==='FALLBACK').length,3);
+    assert.ok(artifact.evidence.some(e=>e.decision.includes('naive-ui::NInput')));
+    const declared=await compileTarget(root,{...target,source:'Declared.vue'},{},{componentPresets:['naive-ui']});
+    assert.equal(declared.artifact.diagnostics.filter(d=>d.code==='FALLBACK').length,1);
+    assert.equal((declared.artifact.variants.default.html.match(/height:34px/g)??[]).length,1);
+    const disabled=await compileTarget(root,{...target,source:'Declared.vue'});
+    assert.equal(disabled.artifact.diagnostics.filter(d=>d.code==='FALLBACK').length,2);
+    const adapted=await compileTarget(root,{...target,source:'View.vue'},{},{componentPresets:['naive-ui'],components:{Other:'Local.vue',NCard:'Local.vue'}});
+    assert.equal((adapted.artifact.variants.default.html.match(/<article/g)??[]).length,2);
+    assert.equal(adapted.artifact.diagnostics.filter(d=>d.code==='FALLBACK').length,2);
+  });
+});
+
+test('Naive providers preserve code lines, imported controls and numeric-string grid geometry', async () => {
+  await fixture({
+    'components.d.ts': naiveDeclarations,
+    'View.vue': `<script setup>import {NInputNumber} from 'naive-ui';const code='line one\\nline two'</script><template><n-config-provider><n-grid cols="4" x-gap="12"><n-gi span="2"><NInputNumber/></n-gi><n-gi span="2"><n-code :code="code"/></n-gi></n-grid></n-config-provider></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { componentPresets: ['naive-ui'] });
+    assert.deepEqual(artifact.diagnostics, []);
+    assert.match(artifact.variants.default.html, /grid-template-columns:repeat\(4/);
+    assert.match(artifact.variants.default.html, /grid-column:span 2/);
+    assert.equal((artifact.variants.default.html.match(/data-sk-code-line/g) ?? []).length, 2);
+  });
+});
+
+test('finite dynamic components use explicit source mappings and unknown selections retain diagnostics', async () => {
+  await fixture({
+    'View.vue': `<script setup>const tag='StatusIcon'</script><template><component :is="tag" class="icon"/><component :is="privateComponent"/></template>`,
+    'Icon.vue': `<template><img style="width:1em;height:1em"></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { components: {StatusIcon:'Icon.vue'} });
+    assert.match(artifact.variants.default.html, /<img[^>]*class="icon"/);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'FALLBACK').length, 1);
+  });
+});
+
+test('bounded collection callbacks retain option branches and reject opaque calls or runaway work', async () => {
+  await fixture({
+    'View.vue': `<script setup>const raw=ref(['first',{label:'second',value:'two'}]);const options=computed(()=>{return raw.value.map(option=>{if(typeof option === 'string')return {label:option,value:option};return option})});const selected=computed(()=>options.value.find(option=>option.value==='two'));</script><template><p v-if="selected">Selected</p><input v-else><article v-for="[key,value] in Object.entries({a:1,b:2})">{{key}}</article><div v-if="privateCall()">Unknown</div></template>`,
+    'Work.vue': `<script setup>const result=seed.map(a=>seed.map(b=>a+b))</script><template><span v-if="result">Budget</span></template>`,
+    'Unsafe.vue': `<script setup>const values=[1,2].map(item=>{privateCall();return item});const large=ref(Array(500));</script><template><i v-for="v in values">Opaque</i><span v-if="large">Unknown</span></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    assert.match(artifact.variants.default.html, /<p /); assert.doesNotMatch(artifact.variants.default.html, /<input/);
+    assert.equal((artifact.variants.default.html.match(/<article/g) ?? []).length, 2);
+    assert.equal(artifact.diagnostics.filter(d=>d.code==='BRANCH_DEFAULT').length, 1);
+    const unsafe=await compileTarget(root,{...target,source:'Unsafe.vue'});
+    assert.ok(unsafe.artifact.diagnostics.some(d=>d.code==='BRANCH_DEFAULT'));
+    assert.ok(unsafe.artifact.evidence.some(e=>e.kind==='repeat'&&e.decision.includes('2 placeholders')));
+    const work=await compileTarget(root,{...target,source:'Work.vue',hints:{bindings:{seed:Array.from({length:256},(_,i)=>i)}}});
+    assert.ok(work.artifact.diagnostics.some(d=>d.code==='BRANCH_DEFAULT'));
+  });
+});
+
+test('Object.keys infers static list lengths without invoking imported namespaces', async () => {
+  await fixture({
+    'View.vue': `<script setup>const names=Object.keys({first:privateValue,second:otherValue})</script><template><span v-for="name in names">{{name}}</span></template>`,
+    'Shadow.vue': `<script setup>import Object from './private';const names=Object.keys({first:1,second:2})</script><template><span v-for="name in names">{{name}}</span></template>`,
+    'private.ts': `throw new Error('never import business code');export default privateObject`,
+  }, async root => {
+    const known = await compileTarget(root, { ...target, source: 'View.vue' });
+    const shadow = await compileTarget(root, { ...target, source: 'Shadow.vue' });
+    assert.equal((known.artifact.variants.default.html.match(/data-sk-leaf/g) ?? []).length, 2);
+    assert.equal((shadow.artifact.variants.default.html.match(/data-sk-leaf/g) ?? []).length, 4);
+  });
+});
+
+test('Vue CSS bindings resolve per instance, after prop aliases and computed wrappers, without running hooks', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Card from './Card.vue'</script><template><Card :padding="12"/><Card :padding="28"/></template>`,
+    'Card.vue': `<script setup>const props=withDefaults(defineProps<{padding?:number}>(),{padding:8});const {padding:space}=toRefs(props);const theme=usePrivateTheme();const pad=computed(()=>space.value+'px');throw new Error('never run')</script><template><article class="card"><input></article></template><style scoped>/* v-bind(notAValue) */ .card{padding:v-bind(pad);border:1px solid v-bind('theme.border')}</style>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { componentBindings: { 'Card.vue': { theme: { border: '#123456' } } } });
+    const view = artifact.variants.default;
+    assert.match(view.html, /--sk-bind-[\w]+:12px/); assert.match(view.html, /--sk-bind-[\w]+:28px/);
+    assert.match(view.html, /--sk-bind-[\w]+:#123456/); assert.match(view.css, /padding:var\(--sk-bind-/);
+    assert.equal(artifact.diagnostics.filter(row => row.code === 'STYLE_BINDING').length, 0);
+  });
+});
+
+test('unresolved CSS bindings stay diagnosed and scoped variant bindings override only their component', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Card from './Card.vue'</script><template><Card/></template>`,
+    'Card.vue': `<script setup>const theme=privateTheme()</script><template><div>Body</div></template><style>div{background:v-bind('theme.bg');height:v-bind(missingHeight)}</style>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue', variants: { light: {}, dark: { bindings: { 'Card.vue::theme': { bg: '#111' } } } } }, {}, { componentBindings: { 'Card.vue': { theme: { bg: '#fff' } } } });
+    assert.match(artifact.variants.light.html, /:#fff/); assert.match(artifact.variants.dark.html, /:#111/);
+    assert.ok(artifact.diagnostics.some(row => row.code === 'STYLE_BINDING' && row.message.includes('missingHeight')));
+    assert.ok(!artifact.diagnostics.some(row => row.message.includes('v-bind(theme.bg)')));
+  });
+});
+
+test('kebab props and v-bind objects keep label geometry through local component wrappers', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Wrapper from './Wrapper.vue'</script><template><Wrapper label-width="100px"/></template>`,
+    'Wrapper.vue': `<script setup>import Label from './Label.vue';const props=defineProps<{labelWidth:string}>()</script><template><Label v-bind="props"/></template>`,
+    'Label.vue': `<script setup>const props=withDefaults(defineProps<{labelWidth?:string}>(),{labelWidth:'auto'});const {labelWidth}=toRefs(props)</script><template><label>Name</label></template><style>label{width:v-bind(labelWidth)}</style>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    assert.match(artifact.variants.default.html, /--sk-bind-[\w]+:100px/);
+    assert.equal(artifact.diagnostics.length, 0);
+  });
+});
+
+test('Vue DOM parsing accepts native void elements and makes opaque kebab components visible', async () => {
+  await fixture({ 'View.vue': `<script setup>throw new Error('never execute')</script><template><main><input size="1"><br><vendor-widget/><n-input/></main></template>` }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    assert.match(artifact.variants.default.html, /<input[^>]*data-sk-control/);
+    assert.match(artifact.variants.default.html, /<input size="1"/);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'FALLBACK').length, 2);
+    assert.doesNotMatch(artifact.variants.default.html, /<vendor-widget|<n-input/);
+  });
+});
+
+test('GlobalComponents declarations expand local source, apply defaults and forward root layout attributes', async () => {
+  await fixture({
+    'View.vue': `<script setup>throw new Error('never execute')</script><template><c-card class="outer" style="margin:12px" flex items-center><c-field label="Name"/></c-card></template>`,
+    'components.d.ts': `declare module '@vue/runtime-core' { interface GlobalComponents { CCard: typeof import('./Card.vue')['default']; CField: typeof import('./Field.vue')['default']; External: typeof import('private-vendor')['Widget'] } }`,
+    'Card.vue': `<script setup>throw new Error('never execute')</script><template><section class="card" style="padding:20px" flex><slot/></section></template>`,
+    'Field.vue': `<script setup>const props = withDefaults(defineProps<{multiline?:boolean,label?:string}>(), {multiline:false}); const {multiline,label} = toRefs(props); throw new Error('never execute')</script><template><div><label>{{label}}</label><textarea v-if="multiline"/><input v-else></div></template>`,
+  }, async root => {
+    const { artifact, dependencies } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { styles: { unocss: true } });
+    const view = artifact.variants.default;
+    assert.match(view.html, /class="card outer"/);
+    assert.match(view.html, /style="padding:20px;margin:12px"/);
+    assert.match(view.html, /flex=""/); assert.match(view.html, /items-center=""/);
+    assert.match(view.html, /<input/); assert.doesNotMatch(view.html, /<textarea|<c-card|<c-field/);
+    assert.ok(dependencies['components.d.ts']); assert.ok(dependencies['Field.vue']);
+    assert.equal(artifact.diagnostics.length, 0);
+  });
+});
+
+test('component declaration creation and edits invalidate only consumers, and explicit mappings take precedence', async () => {
+  await fixture({
+    'skelcast.config.mjs': `export default {targets:[{id:'one',source:'View.vue'},{id:'two',source:'Other.tsx'}]}`,
+    'View.vue': `<script setup></script><template><auto-card/></template>`,
+    'Other.tsx': `export default ()=> <div>Other</div>`,
+    'Card.vue': `<script setup></script><template><article>Card</article></template>`,
+    'Override.vue': `<script setup></script><template><aside>Override</aside></template>`,
+  }, async root => {
+    let project = await loadProject(root); await syncProject(project);
+    assert.ok((await checkProject(project)).every(row => row.state === 'ready'));
+    await writeFile(path.join(root, 'components.d.ts'), `declare module 'vue' { interface GlobalComponents { AutoCard: typeof import('./Card.vue')['default'] } }`);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'ready']);
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /<article/);
+    await writeFile(path.join(root, 'skelcast.config.mjs'), `export default {components:{'auto-card':'Override.vue'},targets:[{id:'one',source:'View.vue'}]}`);
+    project = await loadProject(root); assert.equal((await checkProject(project))[0].state, 'stale');
+    await syncProject(project); assert.match((await readArtifact(project, 'one')).variants.default.html, /<aside/);
+  });
+});
+
+test('Less compiles before scoped CSS and imported variables invalidate generated artifacts', async () => {
+  await fixture({
+    'skelcast.config.mjs': `export default {styles:{less:true},targets:[{id:'one',source:'View.vue'}]}`,
+    'View.vue': `<script setup></script><template><div class="card"><span>Text</span></div></template><style lang="less" scoped>@import './tokens.less'; .card { padding:@gap; & > span { display:block; } }</style>`,
+    'tokens.less': `@gap:24px;`,
+  }, async root => {
+    const project = await loadProject(root); await syncProject(project);
+    const view = (await readArtifact(project, 'one')).variants.default;
+    assert.match(view.css, /padding:\s*24px/); assert.match(view.css, /\.card\[data-v-sk-/);
+    await writeFile(path.join(root, 'tokens.less'), '@gap:12px;');
+    assert.equal((await checkProject(project))[0].state, 'stale');
+  });
+});
+
+test('Less cannot execute inline JavaScript or @plugin code', async () => {
+  await fixture({
+    'View.vue': `<script setup></script><template><div>Text</div></template><style lang="less">@plugin './plugin.js';</style>`,
+    'plugin.js': `globalThis.__lessBusinessExecuted=true;module.exports={install(){}};`,
+  }, async root => {
+    await assert.rejects(compileTarget(root, { ...target, source: 'View.vue' }, {}, { styles: { less: true } }));
+    assert.equal((globalThis as any).__lessBusinessExecuted, undefined);
+    await writeFile(path.join(root, 'View.vue'), '<template><div/></template><style lang="less">.x{width:`1+1`}</style>');
+    await assert.rejects(compileTarget(root, { ...target, source: 'View.vue' }, {}, { styles: { less: true } }));
+  });
+});
+
+test('UnoCSS preserves attributify layout without executing application configuration', async () => {
+  await fixture({ 'View.vue': `<script setup></script><template><main class="grid grid-cols-1 md:grid-cols-4 panel"><div flex items-center gap-8px @click="danger" :title="secret"><input></div></main></template>`, 'unocss.config.ts': `globalThis.__unoBusinessExecuted=true;throw new Error('never execute application config')` }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { styles: { unocss: { shortcuts: { panel: 'p-24px' }, theme: { colors: { primary: '#1ea54c' } } } } });
+    const view = artifact.variants.default;
+    assert.match(view.html, /items-center=""/); assert.match(view.html, /gap-8px=""/);
+    assert.doesNotMatch(view.html, /danger|secret|@click/);
+    assert.match(view.css, /display:\s*flex/); assert.match(view.css, /align-items:\s*center/);
+    assert.match(view.css, /padding:\s*24px/); assert.match(view.css, /@media/);
+    assert.match(view.css, /repeat\(4/);
+    assert.equal((globalThis as any).__unoBusinessExecuted, undefined);
+  });
+});
+
+test('opt-in Naive UI adapters preserve container children and bound opaque controls', async () => {
+  await fixture({ 'components.d.ts': naiveDeclarations, 'View.vue': `<script setup></script><template><n-card><n-input-group><n-input-group-label>Label</n-input-group-label><n-input/></n-input-group><n-icon :size="40"/></n-card></template>` }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { componentPresets: ['naive-ui'] });
+    assert.doesNotMatch(artifact.variants.default.html, /<n-/);
+    assert.match(artifact.variants.default.html, /display:flex/);
+    assert.match(artifact.variants.default.html, /height:34px/);
+    assert.match(artifact.variants.default.html, /width:40px;height:40px/);
+    assert.equal(artifact.diagnostics.length, 0);
+    assert.ok(artifact.evidence.some(row => row.decision.includes('naive-ui')));
+  });
+});
+
+test('Naive UI card header and tooltip trigger slots preserve visible presentation', async () => {
+  await fixture({ 'components.d.ts': naiveDeclarations, 'View.vue': `<script setup></script><template><n-card><template #header><h1>Header</h1></template><n-tooltip><template #trigger><button>Trigger</button></template><strong>Popup</strong></n-tooltip></n-card></template>` }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' }, {}, { componentPresets: ['naive-ui'] });
+    assert.match(artifact.variants.default.html, /<h1/); assert.match(artifact.variants.default.html, /<button/);
+    assert.doesNotMatch(artifact.variants.default.html, /<strong/);
+    assert.equal(artifact.diagnostics.length, 0);
+  });
+});
+
+test('quality distinguishes freshness from empty output, unresolved tags and fallback regions', async () => {
+  await fixture({
+    'skelcast.config.mjs': `export default {targets:[{id:'empty',source:'Empty.tsx'},{id:'opaque',source:'View.vue'}]}`,
+    'Empty.tsx': 'export default ()=> <div/>',
+    'View.vue': '<script setup></script><template><vendor-control/></template>',
+  }, async root => {
+    const project = await loadProject(root); await syncProject(project);
+    assert.ok((await checkProject(project)).every(row => row.state === 'ready'));
+    const quality = await qualityProject(project);
+    assert.ok(quality.every(row => row.needsReview));
+    assert.match(JSON.stringify(quality), /EMPTY_SKELETON|FALLBACK_REGIONS/);
+    const artifact = await readArtifact(project, 'opaque'); artifact.variants.default.html = '<vendor-control/>';
+    assert.deepEqual(analyzeQuality(artifact).variants.default.unresolvedComponents, ['vendor-control']);
+  });
+});
 
 test('React generation never executes business imports, top-level side effects, hooks or handlers', async () => {
   await fixture({ 'View.tsx': `import './explode'; globalThis.__skelcastExecuted = true; throw new Error('BUSINESS EXECUTED'); export default function View(){ const result = usePrivateAPI(); return <section className="grid"><h1>{result.title}</h1><img src={result.image}/><button onClick={()=>danger()}>Save</button></section> }`, 'explode.ts': `throw new Error('IMPORT EXECUTED')` }, async root => {
     const { artifact, dependencies } = await compileTarget(root, target);
     assert.match(artifact.variants.default.html, /class="grid"/);
     assert.match(artifact.variants.default.html, /data-sk-image/);
-    assert.doesNotMatch(artifact.variants.default.html, /onClick|danger|result.title|Save/);
+    assert.doesNotMatch(artifact.variants.default.html, /onClick|danger|result.title/);
     assert.equal((globalThis as any).__skelcastExecuted, undefined);
     assert.ok(dependencies['explode.ts']);
   });

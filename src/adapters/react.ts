@@ -17,15 +17,15 @@ export function LoadingBoundary({ artifact: initial, pending, variant, children,
   const skeleton = useRef<HTMLDivElement>(null);
   const registration = useRef<ReturnType<typeof registerBoundary> | null>(null);
   useEffect(() => {
-    registration.current = registerBoundary({ id: artifact.id, kind: artifact.kind, pending, artifact, element: root.current! });
+      registration.current = registerBoundary({ id: artifact.id, kind: artifact.kind, pending, variant, artifact, element: root.current! });
     return () => { registration.current?.dispose(); registration.current = null; };
   }, [artifact.id]);
-  useEffect(() => { registration.current?.update({ pending, artifact }); }, [pending, artifact]);
+  useEffect(() => { registration.current?.update({ pending, variant, kind: artifact.kind, artifact }); }, [pending, artifact, variant]);
   const preview = getPreview();
   useLayoutEffect(() => {
     if (skeleton.current) return mountSkeleton(skeleton.current, artifact, variant);
   }, [artifact, variant, preview.variant, preview.highlight]);
-  return createElement('div', { ref: root, className, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': pending },
+  return createElement('div', { ref: root, className, style: { minWidth: 0 }, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': pending },
     createElement('div', { ref: skeleton, hidden: !show, 'aria-hidden': true }),
     createElement('div', { hidden: show, inert: show || undefined, 'data-sk-content': '' }, children),
   );
