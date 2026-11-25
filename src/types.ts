@@ -51,6 +51,11 @@ export interface Diagnostic {
   file: string;
   line: number;
   node?: string;
+  expression?: string;
+  component?: string;
+  /** Illustrative values for review, never applied automatically. */
+  bindingExamples?: Record<string, unknown>;
+  variants?: string[];
 }
 export interface Evidence {
   kind: 'repeat' | 'branch' | 'binding' | 'component' | 'text' | 'style';
@@ -58,6 +63,8 @@ export interface Evidence {
   decision: string;
   file: string;
   line: number;
+  node?: string;
+  variants?: string[];
 }
 export interface SourceLocation { file: string; line: number }
 export interface SkeletonView { html: string; css: string }

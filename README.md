@@ -400,6 +400,20 @@ Open your normal local application, sign in if needed, and use its real routes. 
 
 The toolbar provides **Follow loading**, **Hold page**, **Hold region**, variant selection, playback, region picking, link copying, source navigation, diagnostics, fallback highlighting, and hint editing. Use DevTools device emulation for viewport testing.
 
+Enable **Highlight fallbacks**, then click a highlighted region (including inside
+Shadow DOM), or choose **Inspect fallback** in the diagnostics list. The inspector
+shows the source expression, file and line, related evidence, and repair examples
+for the selected region and variant. **Open source** jumps to that location.
+
+For unresolved layout values, **Add to hint draft** merges illustrative bindings
+into the existing draft without replacing its values. Review and edit the example,
+then **Save and generate**; no hints are written by adding an example. If a variant
+explicitly overrides the same scoped binding, the inspector instead shows its
+configuration fragment. For opaque components, copy the presentation adapter and
+target mapping examples, merge them into your project, then **Sync artifacts**.
+The detail panel confirms when no fallback remains at that location. These are
+finite presentation examples, not inferred business values or automatic source edits.
+
 Saved hints go to `skelcast.hints.json`:
 
 ```json

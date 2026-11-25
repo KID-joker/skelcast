@@ -123,6 +123,7 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
     return this.vueNode({ ...selected, children: node.children, loc: node.loc, props: node.props.filter((p) => p.name !== 'is' && !(p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is') && p.name !== 'for') }, ctx, true);
   }
   const imported = await this.componentReference(tag, ctx);
+  if (node.tagType === 1 || imported?.file) this.record('component', tag, 'Resolve source component or adapter', ctx, node);
   if (imported?.file || this.target.adapters?.[tag]) {
     const slots: Record<string, SourceSlot> = {};
     const defaults: VueNode[] = [];

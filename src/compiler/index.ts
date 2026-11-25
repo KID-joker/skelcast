@@ -5,7 +5,8 @@ import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseDOM, type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
-import type { Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation } from '../types.js';
+import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation } from '../types.js';
+import { diagnosticDetails } from './diagnostics.js';
 import { UNKNOWN, bindPattern, evaluate, evaluateString, expressionText, type Ast, type Value } from './expression.js';
 import { baseCSS, digest, loadStyle, scopeCSS, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
@@ -26,10 +27,10 @@ export class SourceCompiler extends SourceModules {
   constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}) { super(root, hints, aliases, options); }
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string) {
     const line = this.sourceLine(ctx, node);
-    this.diagnostics.push({ code, message, file: this.relative(ctx.module.file), line, node: id });
+    this.diagnostics.push({ code, message, file: this.relative(ctx.module.file), line, node: id ?? (node ? this.nodeId(ctx, node) : undefined), ...diagnosticDetails(ctx, node) });
   }
   record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: SourceNode) {
-    this.evidence.push({ kind, expression, decision, file: this.relative(ctx.module.file), line: this.sourceLine(ctx, node) });
+    this.evidence.push({ kind, expression, decision, file: this.relative(ctx.module.file), line: this.sourceLine(ctx, node), node: node ? this.nodeId(ctx, node) : undefined });
   }
   private sourceLine(ctx: RenderContext, node?: SourceNode) {
     return (node?.loc?.start?.line ?? 1) + (ctx.module.descriptor?.template && ctx.code === ctx.module.descriptor.template.content ? ctx.module.descriptor.template.loc.start.line - 1 : 0);
@@ -114,16 +115,17 @@ export class SourceCompiler extends SourceModules {
     const component = resolved === ambiguousExport ? undefined : resolved;
     const mod = component?.module ?? await this.module(file);
     const ctx = this.context(mod, props, parent);
-    if (ctx.depth > 16) return this.fallback(ctx, node, 'Component recursion limit reached');
-    if (!component) return this.fallback(ctx, node, `${resolved === ambiguousExport ? 'Ambiguous' : 'Cannot locate'} exported component ${exported}`);
+    const origin = parent && node ? parent : ctx;
+    if (ctx.depth > 16) return this.fallback(origin, node, 'Component recursion limit reached');
+    if (!component) return this.fallback(origin, node, `${resolved === ambiguousExport ? 'Ambiguous' : 'Cannot locate'} exported component ${exported}`);
     if (mod.descriptor) {
       const rootStyle = this.cssVariables(ctx);
       if (!mod.descriptor.scriptSetup && mod.descriptor.script) {
         this.diagnose('VUE_OPTIONS', 'Options API script values are not interpreted; use bindings for dynamic layout', ctx);
       }
       const template = mod.descriptor.template;
-      if (!template) return this.fallback(ctx, node, 'Vue component has no static template');
-      if (template.lang && template.lang !== 'html') return this.fallback(ctx, node, `Template language ${template.lang} needs an adapter`);
+      if (!template) return this.fallback(origin, node, 'Vue component has no static template');
+      if (template.lang && template.lang !== 'html') return this.fallback(origin, node, `Template language ${template.lang} needs an adapter`);
       const ast = parseDOM(template.content);
       ctx.code = template.content;
       const roots = ast.children.filter(child => child.type === 1 || child.type === 5 || child.type === 2 && child.content.trim());
@@ -142,8 +144,8 @@ export class SourceCompiler extends SourceModules {
       return this.inheritRootScopes(await this.vueNodes(ast.children, ctx), parent?.scopes ?? [], mod.inheritAttrs && !root ? this.fallthroughAttrs(mod, props) : {}, rootStyle);
     }
     const fn = component.fn;
-    if (!fn) return this.fallback(ctx, node, `Cannot locate exported component ${exported}`);
-    if (!isRenderFunction(fn)) return this.fallback(ctx, node, `Unsupported component declaration ${fn.type}`);
+    if (!fn) return this.fallback(origin, node, `Cannot locate exported component ${exported}`);
+    if (!isRenderFunction(fn)) return this.fallback(origin, node, `Unsupported component declaration ${fn.type}`);
     const body = this.prepareFunction(fn, ctx, props);
     if (this.target.region && ctx.depth === 1) {
       let region: t.JSXElement | undefined;
@@ -152,7 +154,7 @@ export class SourceCompiler extends SourceModules {
       });
       return region ? this.jsxNodes(region.children, ctx) : this.fallback(ctx, node, `Missing source region ${this.target.region}`);
     }
-    return body ? this.jsx(body, ctx) : this.fallback(ctx, node, `No supported render return in ${exported}`);
+    return body ? this.jsx(body, ctx) : this.fallback(ctx, fn.body, `No supported render return in ${exported}`);
   }
   jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string> { return renderJSX.call(this, node, ctx); }
   masked(ctx: RenderContext) { return ctx.mode === 'mask' || ctx.mode !== 'preserve' && !ctx.control; }
@@ -231,16 +233,26 @@ export async function compileTarget(root: string, target: SkeletonTarget, aliase
     defaultVariant: target.defaultVariant ?? Object.keys(variants)[0], variants: {}, diagnostics: [], evidence: [], sources: {},
   };
   let dependencies: Record<string, string> = {};
+  const diagnostics = new Map<string, Diagnostic>();
+  const evidence = new Map<string, Evidence>();
   for (const [name, hints] of Object.entries(variants)) {
     const compiler = new SourceCompiler(root, target, { ...target.hints, ...hints, bindings: { ...target.hints?.bindings, ...hints.bindings } }, aliases, options);
     const result = await compiler.compile();
     artifact.variants[name] = result.view;
     dependencies = { ...dependencies, ...result.dependencies };
-    artifact.diagnostics.push(...compiler.diagnostics);
-    artifact.evidence.push(...compiler.evidence);
+    collectVariants(diagnostics, compiler.diagnostics, name);
+    collectVariants(evidence, compiler.evidence, name);
     Object.assign(artifact.sources, compiler.sources);
   }
-  artifact.diagnostics = [...new Map(artifact.diagnostics.map(d => [JSON.stringify(d), d])).values()];
-  artifact.evidence = [...new Map(artifact.evidence.map(e => [JSON.stringify(e), e])).values()];
+  artifact.diagnostics = [...diagnostics.values()];
+  artifact.evidence = [...evidence.values()];
   return { artifact, dependencies };
+}
+
+function collectVariants<T extends { variants?: string[] }>(collection: Map<string, T>, items: T[], variant: string) {
+  for (const item of items) {
+    const key = JSON.stringify(item), previous = collection.get(key);
+    if (!previous) collection.set(key, { ...item, variants: [variant] });
+    else if (!previous.variants?.includes(variant)) previous.variants?.push(variant);
+  }
 }

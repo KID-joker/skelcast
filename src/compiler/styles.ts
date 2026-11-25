@@ -151,6 +151,7 @@ export const baseCSS = `
 [data-sk-artifact] [data-sk-multiline] > span { display: block; height: .85em; margin-block: .35em; background: var(--skeleton-color, #e5e9ef); border-radius: 4px; }
 [data-sk-artifact] [data-sk-multiline] > span:last-child { width: 72%; }
 [data-sk-artifact][data-sk-highlight] :is([data-sk-fallback], [data-sk-opaque]) { outline: 2px dashed #e18b2e; outline-offset: -2px; }
+[data-sk-artifact][data-sk-highlight] :is([data-sk-fallback], [data-sk-opaque]) { pointer-events:auto; cursor:help; }
 @media (prefers-reduced-motion: no-preference) { [data-sk-artifact] [data-sk-leaf] { animation: sk-pulse 1.6s ease-in-out infinite alternate; } }
 @keyframes sk-pulse { to { opacity: .55; } }
 `;
