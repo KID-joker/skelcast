@@ -173,6 +173,9 @@ placeholders; `quality` reports `preservedNodes` separately.
 Known arrays determine table row count (up to 24); unknown arrays default to four
 rows. Use `hints.repeat` to request predicted rows, including for an initially empty
 array. Source-visible column slots can retain action buttons alongside data cells.
+React `map` and Vue `v-for` use the same rule: known arrays keep their length up to
+24, known empty arrays stay empty, and unknown collections default to four items.
+An explicit `hints.repeat` overrides those counts.
 Set `--skeleton-control-color` and `--skeleton-control-background` to match preserved
 controls to the application's light/dark theme.
 
@@ -243,6 +246,12 @@ Scoped utilities retain `.dark` and `.light` ancestor selectors, allowing a them
 class on the document root to affect its skeletons without leaking artifact CSS.
 
 Use `bindings` to resolve expressions that affect branches, classes, or dimensions, such as `{ 'data.mode': 'grid' }`. The analyzer supports bounded expressions, aliases, destructuring, component props, React children, and Vue default/named slots. It never invokes arbitrary business functions or requests. Runtime slot parameters, render props, and complex helper functions need explicit hints or adapters.
+
+Static `data-*`, `dir` and `lang` layout attributes are retained. Source IDs become
+`data-sk-source-id`; generated CSS rewrites ID selectors (including `[id]` selectors)
+to match without introducing duplicate DOM IDs, and preserves ID selector specificity.
+The `data-sk-*` namespace is reserved for generated metadata and supported hints.
+Unresolved layout attribute values produce `LAYOUT_ATTRIBUTE_UNKNOWN` diagnostics.
 
 Ordinary `sync` commands load the trusted development configuration as executable code; application source is parsed only. Do not import the application entry point from the configuration.
 
@@ -364,6 +373,11 @@ Saved hints go to `skelcast.hints.json`:
 ```
 
 Hints describe only differences the source cannot determine. Supported ranges: `repeat` 1–24, `lines` 1–8, `minHeight` 16–2000. Edit layout structure in application source, and use adapters for complex local components. Explicit variant hints take precedence over shared hints.
+
+Saving a `bindings` object replaces the target's shared bindings as a whole;
+save `{ "bindings": {} }` to clear them, including bindings from the target's
+configuration. Omit `bindings` when updating other hints to retain the current
+bindings. Explicit variant bindings and component-scoped configuration still apply.
 
 See the [coding agent skill](skills/skelcast/SKILL.md) for the generation and integration workflow.
 

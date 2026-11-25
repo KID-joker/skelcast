@@ -19,6 +19,99 @@ const naiveDeclarations = `declare module 'vue' { interface GlobalComponents { $
 
 const target: SkeletonTarget = { id: 'test.list', source: 'View.tsx' };
 
+test('React and Vue retain static layout attributes and map source IDs without copying internal metadata', async () => {
+  await fixture({
+    'View.tsx': `import './layout.css';export default function View(){return <section id="catalog:main" data-layout="grid" data-note={'a"<&'} dir="rtl" lang="ar" data-sk-boundary="forged" onClick={runBusiness}><span>Title</span></section>}`,
+    'View.vue': `<template><section id="catalog:main" data-layout="grid" data-note="a&quot;&lt;&amp;" dir="rtl" lang="ar" data-sk-boundary="forged" @click="runBusiness"><span>Title</span></section></template><style src="./layout.css"></style>`,
+    'layout.css': `#catalog\\:main[data-layout="grid"] { display:grid } [id^="catalog"] { width:600px } :is(#other, [data-layout="grid"]) { gap:12px }`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue']) {
+      const { artifact } = await compileTarget(root, { ...target, source });
+      const { html, css } = artifact.variants.default;
+      assert.match(html, /data-sk-source-id="catalog:main"/);
+      assert.match(html, /data-layout="grid"/);
+      assert.match(html, /data-note="a&quot;&lt;&amp;"/);
+      assert.match(html, /dir="rtl" lang="ar"/);
+      assert.doesNotMatch(html, /\sid=|forged|onClick|runBusiness/);
+      assert.match(css, /data-sk-source-id="catalog:main"/);
+      assert.match(css, /data-sk-source-id\^="catalog"/);
+      assert.deepEqual(artifact.diagnostics, []);
+      assert.equal(analyzeQuality(artifact).needsReview, false);
+    }
+  });
+});
+
+test('unresolved layout attributes require review instead of silently dropping selector inputs', async () => {
+  await fixture({
+    'View.tsx': `export default function View(){return <section id={state.id} data-layout={state.layout}><span>Title</span></section>}`,
+    'View.vue': `<template><section :id="state.id" :data-layout="state.layout"><span>Title</span></section></template>`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue']) {
+      const { artifact } = await compileTarget(root, { ...target, source });
+      assert.equal(artifact.diagnostics.filter(d => d.code === 'LAYOUT_ATTRIBUTE_UNKNOWN').length, 2);
+      assert.equal(analyzeQuality(artifact).needsReview, true);
+      const resolved = await compileTarget(root, { ...target, source, hints: { bindings: { 'state.id': 'catalog', 'state.layout': 'grid' } } });
+      assert.deepEqual(resolved.artifact.diagnostics, []);
+      assert.match(resolved.artifact.variants.default.html, /data-sk-source-id="catalog" data-layout="grid"/);
+    }
+  });
+});
+
+test('Vue fallthrough replaces mapped root IDs and data attributes without duplicates', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Card from './Card.vue'</script><template><Card id="outer" data-layout="grid"/></template>`,
+    'Card.vue': `<template><template v-if="true"><section id="inner" data-layout="list">Card</section></template></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+    const html = artifact.variants.default.html;
+    assert.equal((html.match(/data-sk-source-id=/g) ?? []).length, 1);
+    assert.equal((html.match(/data-layout=/g) ?? []).length, 1);
+    assert.match(html, /data-sk-source-id="outer" data-layout="grid"/);
+    assert.deepEqual(artifact.diagnostics, []);
+  });
+});
+
+test('saved bindings replace and clear the effective shared bindings while omitted bindings are retained', async () => {
+  await fixture({
+    'View.tsx': `const mode='grid';export default function View(){return <main className={mode}><span>Title</span></main>}`,
+    'skelcast.config.mjs': `export default { targets: [{ id:'one', source:'View.tsx', hints:{lines:2,bindings:{mode:'list',extra:true}} }] }`,
+  }, async root => {
+    let project = await loadProject(root);
+    await syncProject(project);
+    await saveHints(project, 'one', { bindings: { mode: 'compact' } });
+    project = await loadProject(root);
+    assert.deepEqual(project.config.targets[0].hints, { lines: 2, bindings: { mode: 'compact' } });
+    assert.equal((await checkProject(project))[0].state, 'stale');
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /class="compact"/);
+    await saveHints(project, 'one', { repeat: 3 });
+    project = await loadProject(root);
+    assert.deepEqual(project.config.targets[0].hints?.bindings, { mode: 'compact' });
+    await saveHints(project, 'one', { bindings: {} });
+    project = await loadProject(root);
+    assert.deepEqual(project.config.targets[0].hints, { lines: 2, repeat: 3, bindings: {} });
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /class="grid"/);
+    assert.equal((await checkProject(project))[0].state, 'ready');
+  });
+});
+
+test('React and Vue agree on empty, known, unknown and explicitly predicted list lengths', async () => {
+  for (const [list, expected] of [['[]', 0], ['[1,2]', 2], [`[${Array.from({ length: 30 }, (_, i) => i).join(',')}]`, 24], ['fetchItems()', 4]] as const) {
+    await fixture({
+      'View.tsx': `const items=${list};export default function View(){return <ul>{items.map(item=><li>{item}</li>)}</ul>}`,
+      'View.vue': `<script setup>const items=${list}</script><template><ul><li v-for="item in items">{{item}}</li></ul></template>`,
+    }, async root => {
+      for (const source of ['View.tsx', 'View.vue']) {
+        const { artifact } = await compileTarget(root, { ...target, source });
+        assert.equal((artifact.variants.default.html.match(/<li\b/g) ?? []).length, expected, `${source}: ${list}`);
+        const predicted = await compileTarget(root, { ...target, source, hints: { repeat: 3 } });
+        assert.equal((predicted.artifact.variants.default.html.match(/<li\b/g) ?? []).length, 3, `${source}: explicit repeat`);
+      }
+    });
+  }
+});
+
 test('Vue fallthrough attrs reach component/native roots before classifying read-only output', async () => {
   await fixture({
     'View.vue': `<script setup>import Wrapper from './Wrapper.vue';import Native from './Native.vue'</script><template><Wrapper readonly class="outer"/><Native readonly/><Wrapper/></template>`,

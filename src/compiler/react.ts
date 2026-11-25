@@ -28,7 +28,7 @@ export async function renderJSX(this: RenderHost, node: Ast, ctx: RenderContext)
     const fn = node.arguments[0];
     if (!['ArrowFunctionExpression', 'FunctionExpression'].includes(fn?.type)) return this.fallback(ctx, node, 'Unsupported map callback');
     const list = evaluate(node.callee.object, ctx);
-    const count = this.hints.repeat ?? (Array.isArray(list) && list.length ? Math.min(list.length, 12) : 4);
+    const count = this.hints.repeat ?? (Array.isArray(list) ? Math.min(list.length, 24) : 4);
     this.record('repeat', expressionText(node.callee.object, ctx), `Generate ${count} placeholders`, ctx, node);
     let html = '';
     for (let i = 0; i < count; i++) {

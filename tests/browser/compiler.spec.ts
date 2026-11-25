@@ -6,6 +6,43 @@ import { compileTarget } from '../../src/compiler/index.js';
 
 const naiveDeclarations = `declare module 'vue' {interface GlobalComponents {${['NIcon','NInput','NScrollbar','NGrid','NGi','NCode'].map(name=>name+":typeof import('naive-ui')['"+name+"']").join(';')}}}`;
 
+test('mapped ID and data selectors preserve layout and specificity across repeated light and shadow instances', async ({ page }) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-attribute-layout-'));
+  try {
+    await writeFile(path.join(root, 'View.tsx'), `import './layout.css';export default function View(){return <section id="catalog:main" className="panel" data-layout="grid"><span>Title</span><span>Body</span></section>}`);
+    await writeFile(path.join(root, 'View.vue'), `<template><section id="catalog:main" class="panel" data-layout="grid"><span>Title</span><span>Body</span></section></template><style src="./layout.css"></style>`);
+    await writeFile(path.join(root, 'layout.css'), `#catalog\\:main { width:600px } .panel { width:140px } [id^="catalog"] { min-height:72px } [data-layout="grid"] { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px } :is(#other, #catalog\\:main) > span { margin-top:7px }`);
+    for (const source of ['View.tsx', 'View.vue']) {
+      const { artifact } = await compileTarget(root, { id: 'attribute-layout', source });
+      expect(artifact.diagnostics).toHaveLength(0);
+      for (const shadow of [false, true]) {
+        await page.setContent('<section id="catalog:main" class="panel" data-layout="grid" style="width:137px">Live content</section>');
+        await page.evaluate(({ view, shadow }) => {
+          for (let i = 0; i < 2; i++) {
+            const host = document.createElement('div');
+            document.body.append(host);
+            const root = shadow ? host.attachShadow({ mode: 'open' }) : host;
+            root.innerHTML = `<style>${view.css}</style>${view.html}`;
+          }
+        }, { view: artifact.variants.default, shadow });
+        const sections = page.locator('[data-sk-source-id="catalog:main"]');
+        await expect(sections).toHaveCount(2);
+        for (const section of await sections.all()) {
+          await expect(section).toHaveCSS('width', '600px');
+          await expect(section).toHaveCSS('min-height', '72px');
+          await expect(section).toHaveCSS('display', 'grid');
+          await expect(section).toHaveCSS('gap', '12px');
+          await expect(section.locator(':scope > span').first()).toHaveCSS('margin-top', '7px');
+          expect(await section.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(3);
+        }
+        await expect(page.locator('section[id]')).toHaveCount(1);
+        await expect(page.locator('section[id]')).toHaveCSS('width', '137px');
+        await expect(page.locator('section[id]')).toHaveCSS('display', 'block');
+      }
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('source-generated Vue cards keep responsive grid, Less padding and attributify flex layout', async ({ page }) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-layout-'));
   try {

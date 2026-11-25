@@ -3,10 +3,12 @@ import { createHash } from 'node:crypto';
 import postcss from 'postcss';
 import modules from 'postcss-modules';
 import postcssImport from 'postcss-import';
+import selectorParser from 'postcss-selector-parser';
 import { compileStyleAsync } from '@vue/compiler-sfc';
 import type { StyleOptions } from '../types.js';
 
 export const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
+export const sourceIdAttribute = 'data-sk-source-id';
 export interface CSSBinding { variable: string; expression: string; line: number }
 /** Rewrite bindings before preprocessing so variable names are stable per source component. */
 export function bindStyleVariables(source: string, file: string): { css: string; bindings: CSSBinding[] } {
@@ -109,7 +111,25 @@ export function scopeCSS(css: string, id: string): string {
       parent = parent.parent;
     }
     rule.selectors = rule.selectors.flatMap(selector => {
-      const s = selector.trim().replace(/(?:^|\s)(?:html|body|:root)(?=[\s.#:[>+~]|$)/g, match => match.startsWith(' ') ? ' ' : '').trim();
+      const rewritten = selectorParser(selectors => {
+        selectors.walkAttributes(attribute => {
+          if (attribute.attribute === 'id' && !attribute.namespace) attribute.attribute = sourceIdAttribute;
+        });
+        // Collect first so walking cannot revisit the ID kept for specificity.
+        const ids: selectorParser.Identifier[] = [];
+        selectors.walkIds(node => { ids.push(node); });
+        for (const node of ids) {
+          const attribute = selectorParser.attribute({ attribute: sourceIdAttribute, operator: '=', value: node.value, quoteMark: '"', raws: {} });
+          attribute.setValue(node.value, { quoteMark: '"' });
+          const original = selectorParser.selector({ value: '' }); original.append(node.clone());
+          const mapped = selectorParser.selector({ value: '' }); mapped.append(attribute);
+          // :is() retains ID specificity while matching the mapped attribute.
+          const replacement = selectorParser.pseudo({ value: ':is' });
+          replacement.append(original); replacement.append(mapped);
+          node.replaceWith(replacement);
+        }
+      }).processSync(selector);
+      const s = rewritten.trim().replace(/(?:^|\s)(?:html|body|:root)(?=[\s.#:[>+~]|$)/g, match => match.startsWith(' ') ? ' ' : '').trim();
       if (!s) return [scope];
       const theme = s.match(/^(\.(?:dark|light))\s+(.+)$/);
       return theme ? [`${scope} ${s}`, `${theme[1]} ${scope} ${theme[2]}`, `${scope}${theme[1]} ${theme[2]}`] : [`${scope} ${s}`];

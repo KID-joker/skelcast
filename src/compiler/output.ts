@@ -1,9 +1,13 @@
 import { parse as parseDOM, type TemplateChildNode as VueNode } from '@vue/compiler-dom';
 import { UNKNOWN, type Ast, type Value } from './expression.js';
 import { escapeHTML, voids, nonVisual, styleString, classString } from './html.js';
-import { utilityAttribute } from './styles.js';
+import { sourceIdAttribute, utilityAttribute } from './styles.js';
 import type { RenderContext } from './context.js';
 import type { RenderHost } from './render-host.js';
+
+// Keep source IDs out of the live document's ID namespace. Internal data-sk-*
+// attributes are owned by the generator and cannot be supplied by source markup.
+const layoutAttribute = (name: string) => name === 'id' || ['dir', 'lang'].includes(name) || /^data-(?!sk-)[\w.:-]+$/.test(name);
 
 export function renderAttributes(this: RenderHost, props: Record<string, Value>): string {
   let attrs = '';
@@ -11,6 +15,7 @@ export function renderAttributes(this: RenderHost, props: Record<string, Value>)
     if (value === UNKNOWN || value == null) continue;
     if (key === 'className' || key === 'class') { const cls = classString(value); if (cls) attrs += ` class="${escapeHTML(cls)}"`; }
     else if (key === 'style') { const style = styleString(value); if (style) attrs += ` style="${escapeHTML(style)}"`; }
+    else if (layoutAttribute(key) && ['string', 'number', 'boolean'].includes(typeof value)) attrs += ` ${key === 'id' ? sourceIdAttribute : key}="${escapeHTML(value)}"`;
     else if (['width', 'height', 'colSpan', 'rowSpan', 'viewBox'].includes(key)) attrs += ` ${key.toLowerCase()}="${escapeHTML(value)}"`;
     else if (this.options.styles?.unocss && utilityAttribute(key)) attrs += ` ${key}="${value === true ? '' : escapeHTML(value)}"`;
     else if (['rows', 'cols'].includes(key) && typeof value !== 'object') attrs += ` ${key}="${escapeHTML(value)}"`;
@@ -19,6 +24,11 @@ export function renderAttributes(this: RenderHost, props: Record<string, Value>)
   return attrs;
 }
 export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: Ast): string {
+  for (const [key, value] of Object.entries(props)) {
+    if (layoutAttribute(key) && (value === UNKNOWN || value != null && !['string', 'number', 'boolean'].includes(typeof value))) {
+      this.diagnose('LAYOUT_ATTRIBUTE_UNKNOWN', `Cannot resolve ${key}; attribute selectors may not match. Supply an explicit binding`, ctx, node);
+    }
+  }
   let attrs = `${this.attributes(props)} data-sk-node="${this.nodeId(ctx, node)}"${ctx.scopes.map(s => ` ${s}`).join('')}`;
   if (ctx.control || ctx.mode === 'preserve') attrs += ' data-sk-control';
   if (props['data-sk-preserve'] != null) attrs += ' data-sk-preserve';

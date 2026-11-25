@@ -61,7 +61,7 @@ export async function projectFromConfig(root: string, input: SkeletonConfig): Pr
     if (target.route && !(typeof target.route === 'string' || Array.isArray(target.route) && target.route.every(r => typeof r === 'string'))) throw new Error(`Invalid route: ${target.id}`);
     if (target.kind && !['page', 'request'].includes(target.kind)) throw new Error(`Invalid kind: ${target.id}`);
     if (target.render && !['light', 'shadow'].includes(target.render)) throw new Error(`Invalid render mode: ${target.id}`);
-    target.hints = { ...target.hints, ...saved[target.id], bindings: { ...target.hints?.bindings, ...saved[target.id]?.bindings } };
+    target.hints = { ...target.hints, ...saved[target.id] };
     validateHints(target.hints);
     if (target.variants && (Object.keys(target.variants).length > 16 || !Object.keys(target.variants).length)) throw new Error('Use between 1 and 16 variants');
     for (const [name, hints] of Object.entries(target.variants ?? {})) {
@@ -145,6 +145,8 @@ export async function saveHints(project: Project, id: string, hints: SkeletonHin
   validateHints(hints);
   let data: Record<string, SkeletonHints> = {};
   try { data = JSON.parse(await readFile(project.hintsFile, 'utf8')); } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
-  data[id] = { ...data[id], ...hints, bindings: { ...data[id]?.bindings, ...hints.bindings } };
+  // A supplied bindings object is the complete edited value, including {}.
+  // Omitting it leaves the previous bindings intact when updating other hints.
+  data[id] = { ...data[id], ...hints };
   await atomicWrite(project.hintsFile, JSON.stringify(data, null, 2) + '\n');
 }

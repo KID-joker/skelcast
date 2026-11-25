@@ -13,5 +13,5 @@ export default defineConfig({
   format: ['esm'], target: 'es2022', platform: 'neutral', splitting: true,
   sourcemap: true, clean: true, dts: true,
   define: { __SKELETON_COMPILER_HASH__: JSON.stringify(compilerHash) },
-  external: ['react', 'vue', 'vite', '@babel/parser', '@babel/types', '@vue/compiler-dom', '@vue/compiler-sfc', 'postcss', 'postcss-modules', 'postcss-import', 'less', '@unocss/core', '@unocss/preset-mini', '@unocss/preset-attributify'],
+  external: ['react', 'vue', 'vite', '@babel/parser', '@babel/types', '@vue/compiler-dom', '@vue/compiler-sfc', 'postcss', 'postcss-modules', 'postcss-import', 'postcss-selector-parser', 'less', '@unocss/core', '@unocss/preset-mini', '@unocss/preset-attributify'],
 });

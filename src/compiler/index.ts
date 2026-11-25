@@ -3,7 +3,7 @@ import path from 'node:path';
 import { parse as parseDOM, type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import type { Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation } from '../types.js';
 import { UNKNOWN, bindPattern, evaluate, evaluateString, expressionText, type Ast, type Value } from './expression.js';
-import { baseCSS, digest, loadStyle, scopeCSS, utilityCSS } from './styles.js';
+import { baseCSS, digest, loadStyle, scopeCSS, sourceIdAttribute, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
 import type { ComponentReference } from './presets/types.js';
@@ -63,7 +63,8 @@ export class SourceCompiler extends SourceModules {
         const forwarded: Record<string, Value> = roots.length === 1 ? { ...attrs } : {};
         if (rootStyle) forwarded.style = `${rootStyle};${styleString(forwarded.style)}`;
         for (const attr of [...node.props].reverse()) {
-          if (attr.type !== 6 || forwarded[attr.name] == null || !this.attributes({ [attr.name]: forwarded[attr.name] })) continue;
+          const key = attr.name === sourceIdAttribute ? 'id' : attr.name;
+          if (attr.type !== 6 || forwarded[key] == null || !this.attributes({ [key]: forwarded[key] })) continue;
           if (attr.name === 'class') forwarded.class = `${attr.value?.content ?? ''} ${classString(forwarded.class)}`;
           else if (attr.name === 'style') forwarded.style = `${attr.value?.content ?? ''};${styleString(forwarded.style)}`;
           html = html.slice(0, attr.loc.start.offset) + html.slice(attr.loc.end.offset);
