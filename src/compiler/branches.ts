@@ -1,6 +1,23 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName } from './ast.js';
 import { UNKNOWN, bindPattern, evaluate, type ExpressionContext, type Value } from './expression.js';
+import { parseExpression } from '@babel/parser';
+
+/** Nested boundaries contribute their content branch to a page skeleton, even
+ * when newly added guards are absent from that page's original hints. */
+export function boundaryContentContext<T extends ExpressionContext>(context: T, pending: string): T {
+  const bindings = { ...context.bindings, [pending]: false };
+  try {
+    let expression: t.Expression = parseExpression(pending, { plugins: ['typescript'] });
+    let value = false;
+    while (expression.type === 'UnaryExpression' && expression.operator === '!') {
+      expression = expression.argument;
+      value = !value;
+      bindings[pending.slice(expression.start!, expression.end!)] = value;
+    }
+  } catch { /* An opaque pending expression remains a single finite binding. */ }
+  return { ...context, bindings };
+}
 
 function branchReturn(branch: t.Statement | null | undefined): t.ReturnStatement | undefined {
   if (branch?.type === 'ReturnStatement') return branch;

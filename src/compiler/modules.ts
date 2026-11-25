@@ -1,6 +1,7 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName } from './ast.js';
 import { readFile, realpath, stat } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { parse as parseJS } from '@babel/parser';
 import { parse as parseSFC } from '@vue/compiler-sfc';
@@ -137,8 +138,14 @@ export class SourceModules {
       }
       if (statement.type === 'ImportDeclaration') {
         for (const spec of statement.specifiers) mod.env[spec.local.name] = classHelpers.has(spec.local.name) ? CLASS_HELPER : UNKNOWN;
-        if (['skelcast/react', 'skelcast/vue'].includes(statement.source.value)) for (const spec of statement.specifiers) if (spec.type === 'ImportSpecifier' && nodeName(spec.imported) === 'LoadingBoundary') mod.boundaries.add(spec.local.name);
+        if (['skelcast/react', 'skelcast/vue'].includes(statement.source.value)) for (const spec of statement.specifiers) {
+          if (spec.type === 'ImportSpecifier' && nodeName(spec.imported) === 'LoadingBoundary') mod.boundaries.add(spec.local.name);
+          if (spec.type === 'ImportNamespaceSpecifier') mod.boundaries.add(`${spec.local.name}.LoadingBoundary`);
+        }
         const resolved = await this.resolve(file, statement.source.value);
+        if (resolved && /\.(?:png|jpe?g|gif|webp|svg)$/i.test(resolved) && !/[?&](?:raw|inline)(?:[=&]|$)/.test(statement.source.value)) {
+          for (const spec of statement.specifiers) if (spec.type === 'ImportDefaultSpecifier') mod.env[spec.local.name] = pathToFileURL(resolved).href;
+        }
         for (const spec of statement.specifiers) if ((spec.type !== 'ImportSpecifier' || spec.importKind !== 'type') && statement.importKind !== 'type') mod.imports.set(spec.local.name, {
           file: resolved, request: statement.source.value,
           exported: spec.type === 'ImportNamespaceSpecifier' ? '*' : spec.type === 'ImportDefaultSpecifier' ? 'default' : nodeName(spec.imported)!,
@@ -164,6 +171,14 @@ export class SourceModules {
       if (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') mod.exportAll.push({ file: await this.resolve(file, statement.source.value), request: statement.source.value, exported: '*' });
     }
     if (descriptor) {
+      visit(ast, node => {
+        if (node.type !== 'ObjectProperty' || nodeName(node.key) !== 'components' || node.value.type !== 'ObjectExpression') return;
+        for (const prop of node.value.properties) if (prop.type === 'ObjectProperty' && mod.boundaries.has(nodeName(prop.value) ?? '')) {
+          const name = nodeName(prop.key);
+          if (name) mod.boundaries.add(name);
+        }
+      });
+      for (const name of [...mod.boundaries]) mod.boundaries.add(name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase());
       // Missing declared props have Vue's absent value, rather than an opaque
       // business value. Read only local type members; imported types stay unknown.
       const declaredProps = (type: Ast | undefined) => {

@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0-c0edda8a63cc",
+  "version": "0.1.0-5793c717e4b1",
   "configHash": "6393f2ce335fcbf11cff85a56e23df41c4311ced5a52b0949fa26dcbd9f440d1",
   "targets": {
     "products.page": {
       "file": "products.page.mjs",
       "hash": "2871b470ea7c892c5270377067a4c12e12714b5256a656b0ccd1c857818e4cbf",
-      "outputHash": "61a6b830a11f8f24b2aaa19614f31eb44381e907edb18361179bef0fd26e979e",
+      "outputHash": "e63fb728c89817070c370ca979fe59a89f699330f4a092a9c1932ce2197329ac",
       "dependencies": {
         "src/CatalogPage.vue": "89384c912cd36e9093cc0e0acc28fa145eb17c7fc7aa67960d7cb8c2ccfcbab1",
         "src/ProductGrid.vue": "adecf2e444a74e58b85d3db148e2ab347140e0640c1bc68899a461bfe6c2007e",
@@ -17,7 +17,7 @@
     "products.list": {
       "file": "products.list.mjs",
       "hash": "ddc627bfa20344ed090a6df321d96a67ef014472d7201f898932c3149ac72db0",
-      "outputHash": "2e208e4db2c29ee0cae09b40c600bf53ae04156f06008a91c3caa06d5c4488d7",
+      "outputHash": "525e5ade92dcdb655e60ae35dabee2563c16b10425f11300e0ed5f843bb34899",
       "dependencies": {
         "src/ProductGrid.vue": "adecf2e444a74e58b85d3db148e2ab347140e0640c1bc68899a461bfe6c2007e",
         "src/catalog.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f",

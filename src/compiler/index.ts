@@ -20,6 +20,8 @@ import { renderJSX } from './react.js';
 import { renderVueNodes, renderVueNode } from './vue.js';
 import postcss from 'postcss';
 import { embedStyleAssets } from './css-resources.js';
+import { imageDimensions } from './images.js';
+import { fileURLToPath } from 'node:url';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -54,7 +56,7 @@ export class SourceCompiler extends SourceModules {
     const id = this.nodeId(ctx, node);
     if (ctx.mode === 'preserve') return `<span data-sk-node="${id}" data-sk-text>&nbsp;</span>`;
     if (multiline && (this.hints.lines ?? 1) > 1) return `<span data-sk-node="${id}" data-sk-multiline>${Array.from({ length: this.hints.lines! }, () => '<span></span>').join('')}</span>`;
-    return `<span data-sk-node="${id}" data-sk-text data-sk-leaf>&nbsp;</span>`;
+    return `<span data-sk-node="${id}" data-sk-text data-sk-leaf${ctx.textWidth ? ` style="width:${ctx.textWidth};min-width:0"` : ''}>&nbsp;</span>`;
   }
   budget(ctx: RenderContext, node: SourceNode | undefined): string | undefined {
     if (++this.renderedNodes <= 6000) return;
@@ -92,7 +94,7 @@ export class SourceCompiler extends SourceModules {
         }
       }
     }
-    return { module: mod, code: mod.code, env, bindings, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control };
+    return { module: mod, code: mod.code, env, bindings, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth };
   }
   private fallthroughAttrs(mod: ModuleInfo, props: Record<string, Value>): Record<string, Value> {
     return fallthroughAttrs(mod, props);
@@ -163,6 +165,11 @@ export class SourceCompiler extends SourceModules {
   masked(ctx: RenderContext) { return ctx.mode === 'mask' || ctx.mode !== 'preserve' && !ctx.control; }
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string {
     if (!this.masked(ctx) && (typeof value === 'string' || typeof value === 'number')) return escapeHTML(value);
+    if (this.masked(ctx) && !ctx.textWidth && (typeof value === 'string' || typeof value === 'number' && Number.isFinite(value))) {
+      // Transparent source-visible text keeps the actual font advances, line
+      // breaks and intrinsic size. The browser lays it out without measuring DOM.
+      return value === '' ? '' : `<span data-sk-node="${this.nodeId(ctx, node)}" data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escapeHTML(value)}"></span>`;
+    }
     return this.text(ctx, node);
   }
   contentContext(ctx: RenderContext, props: Record<string, Value>, tag = ''): RenderContext {
@@ -170,10 +177,16 @@ export class SourceCompiler extends SourceModules {
     if (props['data-sk-preserve'] === true || props['data-sk-preserve'] === '' || props['data-sk-preserve'] === 'true') mode = 'preserve';
     if (props['data-sk-mask'] === true || props['data-sk-mask'] === '' || props['data-sk-mask'] === 'true') mode = 'mask';
     const control = ['button','label','select','option','input','textarea','nav','th'].includes(tag) ? !(['input','textarea'].includes(tag) && (props.readonly === true || props.readOnly === true)) : ctx.control;
-    return { ...ctx, mode, control };
+    let textWidth = ctx.textWidth;
+    if (props['data-sk-text-width'] != null) {
+      const width = String(props['data-sk-text-width']);
+      if (/^(?:0|\d+(?:\.\d+)?(?:px|em|rem|ch|ex|%|vw|vh))$/.test(width)) textWidth = width;
+      else this.diagnose('PLACEHOLDER_HINT', 'data-sk-text-width must be a nonnegative CSS length or percentage', ctx);
+    }
+    return { ...ctx, mode, control, textWidth };
   }
   renderSlot(slot: SourceSlot, ctx: RenderContext): Promise<string> {
-    const parent = { ...slot.context, mode: ctx.mode, control: ctx.control, depth: Math.max(ctx.depth, slot.context.depth) };
+    const parent = { ...slot.context, mode: ctx.mode, control: ctx.control, textWidth: ctx.textWidth, depth: Math.max(ctx.depth, slot.context.depth) };
     return slot.framework === 'vue' ? this.vueNodes(slot.nodes, parent) : this.jsxNodes(slot.nodes, parent);
   }
   async componentReference(tag: string, ctx: RenderContext): Promise<ComponentReference | undefined> {
@@ -221,6 +234,28 @@ export class SourceCompiler extends SourceModules {
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string> { return renderVueNodes.call(this, nodes, ctx); }
   vueNode(node: VueNode, ctx: RenderContext, skipFor = false): Promise<string> { return renderVueNode.call(this, node, ctx, skipFor); }
   staticHTML(source: string, ctx: RenderContext, origin: Ast): string { return renderStaticHTML.call(this, source, ctx, origin); }
+  async image(props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string> {
+    const source = props.src;
+    let size: ReturnType<typeof imageDimensions>;
+    if (typeof source === 'string') {
+      try {
+        let bytes: Uint8Array | undefined;
+        if (source.startsWith('data:image/')) {
+          const match = /^data:image\/[^;,]+(;base64)?,([\s\S]*)$/.exec(source);
+          if (match) bytes = match[1] ? Buffer.from(match[2], 'base64') : Buffer.from(decodeURIComponent(match[2]));
+        } else if (!/^(?:[a-z][\w+.-]*:|\/\/|#)/i.test(source) || source.startsWith('file:')) {
+          const file = source.startsWith('file:') ? fileURLToPath(source) : source.startsWith('/')
+            ? await this.resolve(path.join(this.root, 'public', '__entry'), `.${source}`)
+            : await this.resolve(ctx.module.file, source);
+          if (file) bytes = await this.readAsset(file);
+        }
+        if (bytes) size = imageDimensions(bytes);
+      } catch (error) {
+        this.diagnose('IMAGE_GEOMETRY', `Cannot read local image dimensions: ${String(error)}`, ctx, node);
+      }
+    }
+    return this.element('img', { ...props, __skImageSize: size }, '', ctx, node);
+  }
   async compile(): Promise<{ view: { html: string; css: string }; dependencies: Record<string, string> }> {
     const source = path.resolve(this.root, this.target.source);
     await this.scan(source);

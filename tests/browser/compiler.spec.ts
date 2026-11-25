@@ -6,6 +6,41 @@ import { compileTarget } from '../../src/compiler/index.js';
 
 const naiveDeclarations = `declare module 'vue' {interface GlobalComponents {${['NIcon','NInput','NScrollbar','NGrid','NGi','NCode'].map(name=>name+":typeof import('naive-ui')['"+name+"']").join(';')}}}`;
 
+test('known text wraps with source fonts and images retain intrinsic, explicit and CSS geometry', async ({ page }) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-content-geometry-'));
+  const text = 'Wide WWW, narrow iii, 中文排版 and enough words to wrap naturally in a narrow container.';
+  const markup = `<main class="frame"><h1>Short title</h1><p>${text} <strong>Mixed inline content</strong> continues here.</p><pre>first line\nsecond line with spaces</pre><img class="intrinsic" src="./photo.svg"/><img class="tiny" src="./photo.svg" width="20" height="10"/><img class="css-ratio" src="./photo.svg"/><img class="override" src="./photo.svg" data-sk-image-ratio="16 / 9"/></main>`;
+  const css = `.frame{width:100%;font:18px/1.6 Arial,sans-serif;letter-spacing:.3px}.frame h1{font-size:28px}.frame p{margin:12px 0}.frame pre{white-space:pre-wrap;font:16px/1.4 monospace}.frame img{display:block;max-width:100%;height:auto}.intrinsic{width:150px}.css-ratio{width:120px;aspect-ratio:2}.override{width:160px}`;
+  try {
+    await writeFile(path.join(root, 'photo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"/>');
+    await writeFile(path.join(root, 'layout.css'), css);
+    await writeFile(path.join(root, 'View.tsx'), `import './layout.css';export default function View(){return ${markup.replace(/class=/g, 'className=').replace('first line\nsecond line with spaces', "{'first line\\nsecond line with spaces'}")}}`);
+    await writeFile(path.join(root, 'View.vue'), `<template>${markup}</template><style src="./layout.css"></style>`);
+    for (const source of ['View.tsx', 'View.vue']) {
+      const { artifact } = await compileTarget(root, { id: 'content-geometry', source });
+      expect(artifact.diagnostics).toEqual([]);
+      for (const shadow of [false, true]) for (const width of [390, 1000]) {
+        await page.setViewportSize({ width, height: 1000 });
+        const real = markup.replaceAll('./photo.svg', 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22240%22 height=%2280%22/%3E').replace('data-sk-image-ratio="16 / 9"', 'style="aspect-ratio:16/9"');
+        await page.setContent(`<style>body{margin:16px}${css}</style><div id="real">${real}</div><div id="skeleton"></div>`);
+        await page.evaluate(({ view, shadow }) => {
+          const host = document.querySelector('#skeleton')!;
+          const root = shadow ? host.attachShadow({ mode: 'open' }) : host;
+          root.innerHTML = `<style>${view.css}</style>${view.html}`;
+        }, { view: artifact.variants.default, shadow });
+        await page.evaluate(() => Promise.all([...document.images].map(image => image.decode())));
+        for (const selector of ['main', 'h1', 'p', 'pre', '.intrinsic', '.tiny', '.css-ratio', '.override']) {
+          const actual = await page.locator(`#real ${selector}`).boundingBox();
+          const skeleton = await page.locator(`#skeleton ${selector}`).boundingBox();
+          expect(skeleton!.width, `${source} ${selector} width`).toBeCloseTo(actual!.width, 1);
+          expect(skeleton!.height, `${source} ${selector} height`).toBeCloseTo(actual!.height, 1);
+        }
+        await expect(page.locator('#skeleton [data-sk-measured]').first()).toHaveCSS('color', 'rgba(0, 0, 0, 0)');
+      }
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('mapped ID and data selectors preserve layout and specificity across repeated light and shadow instances', async ({ page }) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-attribute-layout-'));
   try {

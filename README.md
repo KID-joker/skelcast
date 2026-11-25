@@ -72,9 +72,9 @@ The dry-run JSON includes targets, diagnostics, and the before/after content of 
 
 `withSkelCast()` wraps an existing Vite default export while preserving its plugins, server settings, and synchronous or asynchronous configuration factory. A generated target's `region` refers to the artifact import binding in the original source file; no duplicate page component is required.
 
-Repeated runs preserve already integrated components instead of adding nested boundaries. New targets are appended to existing static configuration while retaining manual targets and comments. Originals are saved under `.skelcast/init-backups/`; the change list and diagnostics are written to `.skelcast/init-report.json`. A generation failure rolls back this run's source, configuration, and artifact changes.
+Repeated runs preserve existing boundaries and scan their components for newly added loading regions. Already managed guards and loading attributes are not wrapped again; new regions receive separate targets while existing IDs, hints and manual boundaries remain intact. Adapter import aliases and Vue Options API boundary registrations are reused. New targets are appended to existing static configuration while retaining manual targets and comments. Originals are saved under `.skelcast/init-backups/`; the change list and diagnostics are written to `.skelcast/init-report.json`. A generation failure rolls back this run's source, configuration, and artifact changes.
 
-Ambiguous loading relationships are left intact and reported. Routes inferred from file locations have a `ROUTE_CONVENTION` diagnostic and should be checked against the router. Dynamic configurations or Vite roots, Vue 2, Next/Nuxt, other bundlers, complex conditional chains, and boundaries inside table rows require explicit adapters. Init reports these cases instead of claiming they are integrated. Ask your coding agent to add newly introduced regions in already integrated components; use `sync` to update their artifacts.
+Ambiguous loading relationships are left intact and reported. Routes inferred from file locations have a `ROUTE_CONVENTION` diagnostic and should be checked against the router. Dynamic configurations or Vite roots, Vue 2, Next/Nuxt, other bundlers, complex conditional chains, and boundaries inside table rows require explicit adapters. Init reports these cases instead of claiming they are integrated. Rerun `init --dry-run --json` to review newly introduced regions, then `init` to integrate them; use `sync` when only the contents of existing regions change.
 
 ### Manual configuration
 
@@ -189,6 +189,24 @@ cannot be reconstructed by a preserve hint and retain an inert empty footprint.
 <aside data-sk-preserve>Fixed instructions</aside>
 <section data-sk-mask>{{ report.summary }}</section>
 ```
+
+Known source-visible text and finite text bindings retain their actual font layout
+instead of a fixed-width bar. Escaped text is stored in artifact metadata and drawn
+as transparent CSS generated content, preserving font advances, inline emphasis,
+line height and natural wrapping without adding searchable text nodes. Paragraphs
+keep their source children unless an explicit `hints.lines` override is supplied.
+Unknown text still uses a representative width; set `data-sk-text-width="18ch"`
+on a local container (inherited by its text) to override it, or supply a finite
+text binding. `--skeleton-text-width` sets the fallback width through CSS.
+
+Image placeholders retain width/height attributes and source CSS. For resolvable
+local SVG, PNG, JPEG, GIF and WebP files, including default asset imports and
+public-root URLs, intrinsic dimensions are read without rendering the image and
+their bytes are included in dependency fingerprints. Source CSS aspect ratios take
+precedence over the default intrinsic ratio. Use `data-sk-image-ratio="16 / 9"`
+on an image for a local ratio override, or `--skeleton-image-ratio` in CSS. Remote
+images are never fetched; explicit dimensions describe their predicted geometry.
+Images with no known dimensions retain a representative 400 × 300 intrinsic size.
 
 Prefer request boundaries around the data region, with real controls outside the
 boundary when they must remain interactive during loading. Preserved controls in a

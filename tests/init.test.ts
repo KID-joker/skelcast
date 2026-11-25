@@ -240,3 +240,95 @@ test('withSkelCast preserves object, async factory and Promise configs', async (
   assert.equal((await factory({ command: 'build', mode: 'production' })).base, '/prod/');
   assert.equal(((await withSkelCast(Promise.resolve({ plugins: [] }))) as any).plugins[0].name, 'skelcast');
 });
+
+for (const framework of ['react', 'vue'] as const) test(`${framework}: repeated init discovers new loading regions without wrapping existing regions again`, async () => {
+  const file = framework === 'react' ? 'src/App.tsx' : 'src/App.vue';
+  const source = framework === 'react'
+    ? `export default function App(){const {data,isLoading}=useQuery();return <main>{isLoading ? <p>Loading...</p> : <section className="original">{data.map(item=><article>{item.name}</article>)}</section>}<aside>New regions go here</aside></main>}`
+    : `<script setup>const loading=usePending()</script><template><main><section class="original" v-loading="loading">Original content</section><aside>New regions go here</aside></main></template>`;
+  await fixture({ [file]: source }, async root => {
+    const initial = await initProject(root);
+    const originalTargets = (await loadProject(root)).config.targets;
+    assert.equal(originalTargets.length, 2);
+    const originalBoundary = initial.targets.find(t => t.kind === 'request')!.region!;
+    const firstCode = await readFile(path.join(root, file), 'utf8');
+    for (const index of [1, 2]) {
+      const before = await readFile(path.join(root, file), 'utf8');
+      const region = framework === 'react'
+        ? `{extra${index}Loading ? <p>Loading...</p> : <section className="extra${index}">Additional content</section>}`
+        : `<section class="extra${index}" v-loading="extra${index}Loading">Additional content</section>`;
+      await writeFile(path.join(root, file), before.replace('<aside>', `${region}<aside>`));
+      const dry = await initProject(root, { dryRun: true });
+      assert.equal(dry.targets.length, 1);
+      assert.equal(dry.targets[0].kind, 'request');
+      assert.match(dry.changes.find(c => c.file === file)!.after, new RegExp(`extra${index}`));
+      const report = await initProject(root);
+      assert.equal(report.targets.length, 1);
+      const project = await loadProject(root);
+      assert.equal(project.config.targets.length, originalTargets.length + index);
+      assert.deepEqual(project.config.targets.slice(0, 2), originalTargets);
+      const changed = await readFile(path.join(root, file), 'utf8');
+      assert.equal((changed.match(/from 'skelcast\/(?:react|vue)'/g) ?? []).length, 1);
+      assert.equal((changed.match(/skelcast:init/g) ?? []).length, 2 + index);
+      assert.equal((changed.match(new RegExp(`import ${originalBoundary} from`, 'g')) ?? []).length, 1);
+      assert.equal((await initProject(root)).changes.length, 0);
+      const artifact = await readArtifact(project, report.targets[0].id);
+      assert.match(artifact.variants.default.html, new RegExp(`class="extra${index}"`));
+      const page = await readArtifact(project, originalTargets.find(t => t.kind === 'page')!.id);
+      assert.match(page.variants.default.html, new RegExp(`class="extra${index}"`));
+      assert.ok(!page.diagnostics.some(d => ['FALLBACK', 'BRANCH_DEFAULT'].includes(d.code)));
+    }
+    assert.ok(firstCode.includes(originalBoundary));
+  });
+});
+
+test('incremental init reuses manually aliased React and Options API Vue boundaries', async () => {
+  for (const framework of ['react', 'vue'] as const) {
+    const file = framework === 'react' ? 'src/App.tsx' : 'src/App.vue';
+    const source = framework === 'react'
+      ? `import {LoadingBoundary as Wait} from 'skelcast/react';import old from 'virtual:skelcast/manual';export default function App(){return <main><Wait artifact={old} pending={loading}><section loading={loading}>Old</section></Wait>{nextLoading ? <p>Loading...</p> : <article>New</article>}</main>}`
+      : `<script>import {LoadingBoundary as Boundary} from 'skelcast/vue';import old from 'virtual:skelcast/manual';export default {components:{Wait:Boundary},data(){return {old}}}</script><template><main><wait :artifact="old" :pending="loading"><section :loading="loading">Old</section></wait><article v-loading="nextLoading">New</article></main></template>`;
+    await fixture({ [file]: source, 'src/Old.tsx': 'export default () => <section>Old</section>', 'skelcast.config.mjs': `export default {targets:[{id:'manual',source:'src/Old.tsx'}]}` }, async root => {
+      const report = await initProject(root);
+      assert.equal(report.targets.filter(t => t.kind === 'request').length, 1);
+      const changed = await readFile(path.join(root, file), 'utf8');
+      assert.equal((changed.match(/from 'skelcast\/(?:react|vue)'/g) ?? []).length, 1);
+      assert.equal((await initProject(root)).changes.length, 0);
+    });
+  }
+});
+
+test('early-return boundaries remain unchanged while nested new regions are integrated', async () => {
+  await fixture({ 'src/App.tsx': `export default function App(){const loading=usePending();if(loading)return <Spinner/>;const title=data.title;return <main><h1>{title}</h1></main>}` }, async root => {
+    await initProject(root);
+    const file = path.join(root, 'src/App.tsx');
+    const before = await readFile(file, 'utf8');
+    assert.equal((await initProject(root)).changes.length, 0);
+    await writeFile(file, before.replace('</main>', '{nextLoading ? <p>Loading...</p> : <aside>New</aside>}</main>'));
+    const next = await initProject(root);
+    assert.equal(next.targets.length, 1);
+    assert.equal(next.targets[0].kind, 'request');
+    const after = await readFile(file, 'utf8');
+    assert.ok(after.indexOf('if(loading)') < after.indexOf('const title=data.title'));
+    assert.equal((after.match(/pending=\{loading\} \/>/g) ?? []).length, 1);
+    assert.equal((await initProject(root)).changes.length, 0);
+  });
+});
+
+for (const framework of ['react', 'vue'] as const) test(`${framework}: incremental inverse guards contribute content to existing page skeletons`, async () => {
+  const file = framework === 'react' ? 'src/App.tsx' : 'src/App.vue';
+  await fixture({ [file]: framework === 'react' ? 'export default function App(){return <main><h1>Title</h1></main>}' : '<template><main><h1>Title</h1></main></template>' }, async root => {
+    const initial = await initProject(root);
+    const before = await readFile(path.join(root, file), 'utf8');
+    const extra = framework === 'react'
+      ? `{nextLoading ? <aside>Additional details</aside> : <Spinner/>}`
+      : `<aside v-if="nextLoading">Additional details</aside><Spinner v-else/>`;
+    await writeFile(path.join(root, file), before.replace('</main>', `${extra}</main>`));
+    const report = await initProject(root);
+    assert.equal(report.targets.length, 1);
+    const page = await readArtifact(await loadProject(root), initial.targets[0].id);
+    assert.match(page.variants.default.html, /<aside/);
+    assert.ok(!page.diagnostics.some(d => ['FALLBACK', 'BRANCH_DEFAULT'].includes(d.code)));
+    assert.equal((await initProject(root)).changes.length, 0);
+  });
+});

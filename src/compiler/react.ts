@@ -4,6 +4,7 @@ import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } 
 import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
+import { boundaryContentContext } from './branches.js';
 
 export async function renderJSX(this: RenderHost, node: Ast | null | undefined, ctx: RenderContext): Promise<string> {
   if (!node) return '';
@@ -11,7 +12,12 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   if (exhausted !== undefined) return exhausted;
   if ((node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression' || node.type === 'ParenthesizedExpression')) return this.jsx(node.expression, ctx);
   if (node.type === 'JSXFragment') return this.jsxNodes(node.children, ctx);
-  if (node.type === 'JSXText') return node.value.trim() ? this.contentText(node.value, ctx, node) : '';
+  if (node.type === 'JSXText') {
+    // Match JSX's removal of indentation while retaining meaningful spaces.
+    const lines = node.value.replace(/\t/g, ' ').split(/\r\n|\n|\r/);
+    const value = lines.map((line, i) => (i ? line.replace(/^ +/, '') : line).replace(i < lines.length - 1 ? / +$/ : /$^/, '')).filter(Boolean).join(' ');
+    return value ? this.contentText(value, ctx, node) : '';
+  }
   if (node.type === 'JSXExpressionContainer') return node.expression.type === 'JSXEmptyExpression' ? '' : this.jsx(node.expression, ctx);
   if (node.type === 'ConditionalExpression') {
     const test = evaluate(node.test, ctx);
@@ -72,7 +78,11 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
     }
   }
   ctx = this.contentContext(ctx, props, tag);
-  if (ctx.module.boundaries.has(tag)) return this.jsxNodes(node.children, ctx);
+  if (ctx.module.boundaries.has(tag)) {
+    const pending = opening.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'pending');
+    const expression = pending?.type === 'JSXAttribute' && pending.value?.type === 'JSXExpressionContainer' ? expressionText(pending.value.expression, ctx) : '';
+    return this.jsxNodes(node.children, expression ? boundaryContentContext(ctx, expression) : ctx);
+  }
   if (unknownGeometry(props.style)) unknownLayout = true;
   if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
   if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression') {
@@ -97,6 +107,7 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   }
   if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, this.attributes(props));
   if (nonVisual.has(tag)) return '';
-  const children = tag === 'p' && this.masked(ctx) ? this.text(ctx, node, true) : await this.jsxNodes(node.children, ctx);
+  if (tag === 'img') return this.image(props, ctx, node);
+  const children = tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true) : await this.jsxNodes(node.children, ctx);
   return this.element(tag, props, children, ctx, node);
 }

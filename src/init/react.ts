@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { applyEdits, endOf, nodeName, startOf, importOffset, isFunction, isLoader, loadingName, parseCode, pendingCondition, pureCondition, slice, uniqueName, unwrap, walk, type Ast } from './ast.js';
+import { applyEdits, boundaryImports, endOf, nodeName, startOf, importOffset, isFunction, isLoader, loadingName, parseCode, pendingCondition, pureCondition, sameCondition, slice, uniqueName, unwrap, walk, type Ast } from './ast.js';
 import { targetId, type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
 import type { SkeletonTarget } from '../types.js';
 
@@ -43,17 +43,19 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
   const code = ctx.source, ast = parseCode(code);
   const components = reactComponents(ast);
-  const boundary = uniqueName(code, '__SkelCastBoundary');
+  const boundaryNames = boundaryImports(ast, 'react');
+  const boundary = [...boundaryNames][0] ?? uniqueName(code, '__SkelCastBoundary');
+  const isBoundary = (node: Ast): node is t.JSXElement => node.type === 'JSXElement' && boundaryNames.has(nodeName(node.openingElement.name) ?? '');
+  const pendingOf = (node: t.JSXElement) => {
+    const prop = node.openingElement.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'pending');
+    return prop?.type === 'JSXAttribute' && prop.value?.type === 'JSXExpressionContainer' ? slice(code, prop.value.expression) : '';
+  };
   const imports: string[] = [];
   let artifactIndex = 0;
   for (const component of components) {
     const fn = component.node;
     if (fn.async) { result.diagnostics.push({ code: 'ASYNC_COMPONENT', file: ctx.file, message: `Skipped async component ${component.name}; SSR needs a framework adapter` }); continue; }
     const body = fn.body;
-    if (slice(code, body).includes('/* skelcast:init */')) continue;
-    let alreadyWrapped = false;
-    walk(body, n => { if (n.type === 'JSXOpeningElement' && /SkelCastBoundary|LoadingBoundary/.test(nodeName(n.name) ?? '')) alreadyWrapped = true; });
-    if (alreadyWrapped) { result.diagnostics.push({ code: 'ALREADY_INTEGRATED', file: ctx.file, message: `Preserved existing boundary in ${component.name}` }); continue; }
     const regions: Region[] = [];
     const knownFlags = new Set<string>();
     const dataFlags = new Map<string, string>();
@@ -74,10 +76,12 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
     const mainReturn = body.type === 'BlockStatement' ? [...body.body].reverse().find((n): n is t.ReturnStatement => n.type === 'ReturnStatement' && !!n.argument) : undefined;
     const root = mainReturn?.argument ?? (body.type !== 'BlockStatement' ? body : undefined);
     if (!root) { result.diagnostics.push({ code: 'COMPLEX_RETURNS', file: ctx.file, message: `No simple final return in ${component.name}` }); continue; }
+    const managed = (ancestors: Ast[], pending: string) => ancestors.some(n => isBoundary(n) && sameCondition(pendingOf(n), pending));
     const early: EarlyLoader[] = [];
     if (body.type === 'BlockStatement') for (const s of body.body) {
       if (s.type !== 'IfStatement' || s.alternate || !pendingCondition(slice(code, s.test), knownFlags)) continue;
       const ret = s.consequent.type === 'ReturnStatement' ? s.consequent : s.consequent.type === 'BlockStatement' && s.consequent.body.length === 1 ? s.consequent.body[0] : undefined;
+      if (ret?.type === 'ReturnStatement' && ret.argument && isBoundary(unwrap(ret.argument)!)) continue;
       if (ret?.type === 'ReturnStatement' && isLoader(ret.argument, code)) early.push({ guard: s, returned: ret });
     }
     if (early.length === 1) {
@@ -86,7 +90,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
     } else if (early.length > 1) result.diagnostics.push({ code: 'MULTIPLE_EARLY_LOADERS', file: ctx.file, message: `Multiple early loading guards in ${component.name}; preserved for manual review` });
     if (!early.length) walk(root, (node, ancestors) => {
       if (node !== root && isFunction(node)) return false;
-      if (node.type === 'ConditionalExpression' && pendingCondition(slice(code, node.test), knownFlags)) {
+      if (node.type === 'ConditionalExpression' && pendingCondition(slice(code, node.test), knownFlags) && !managed(ancestors, slice(code, node.test)) && !managed(ancestors, `!(${slice(code, node.test)})`)) {
         const a = isLoader(node.consequent, code), b = isLoader(node.alternate, code);
         if (a !== b) {
           const test = slice(code, node.test);
@@ -98,24 +102,29 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
       if (node.type === 'JSXElement') {
         const tag = nodeName(node.openingElement.name) ?? '';
         const attr = node.openingElement.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'loading' && a.value?.type === 'JSXExpressionContainer');
-        if (attr?.type === 'JSXAttribute' && attr.value?.type === 'JSXExpressionContainer' && !/button|input|select|link/i.test(tag)) {
+        if (!isBoundary(node) && attr?.type === 'JSXAttribute' && attr.value?.type === 'JSXExpressionContainer' && !/button|input|select|link/i.test(tag)) {
           const pending = slice(code, attr.value.expression);
-          if (pureCondition(pending)) { regions.push({ node, pending, content: slice(code, node), bindings: { [pending]: false } }); return false; }
+          if (pureCondition(pending) && !managed(ancestors, pending)) { regions.push({ node, pending, content: slice(code, node), bindings: { [pending]: false } }); return false; }
         }
       }
       if ((node.type === 'CallExpression' || node.type === 'OptionalCallExpression') && (node.callee.type === 'MemberExpression' || node.callee.type === 'OptionalMemberExpression') && nodeName(node.callee.property) === 'map') {
         let data = node.callee.object;
         while (data.type === 'MemberExpression' || data.type === 'OptionalMemberExpression') data = data.object;
         const pending = dataFlags.get(nodeName(data) ?? '');
-        if (!pending) return;
-        const container = [...ancestors].reverse().find(n => n.type === 'JSXElement' && /^(?:main|section|article|div|ul|ol)$/.test(nodeName(n.openingElement.name) ?? ''));
+        if (!pending || managed(ancestors, pending)) return;
+        const nearestBoundary = ancestors.map(isBoundary).lastIndexOf(true);
+        const container = ancestors.slice(nearestBoundary + 1).reverse().find(n => n.type === 'JSXElement' && /^(?:main|section|article|div|ul|ol)$/.test(nodeName(n.openingElement.name) ?? ''));
+        let containsBoundary = false;
+        if (container) walk(container, n => { if (isBoundary(n)) containsBoundary = true; });
+        if (containsBoundary) return;
         if (container && !regions.some(r => startOf(r.node) <= startOf(container) && endOf(r.node) >= endOf(container))) {
           regions.push({ node: container, pending, content: slice(code, container), bindings: { [pending]: false } });
         }
       }
     });
     const selected = regions.sort((a, b) => startOf(a.node) - startOf(b.node) || endOf(b.node) - endOf(a.node)).filter((r, i, all) => !all.slice(0, i).some(p => startOf(p.node) <= startOf(r.node) && endOf(p.node) >= endOf(r.node)));
-    const isPage = ctx.page && (component.exported === 'default' || /Page$/.test(component.name) || components.length === 1);
+    const existingPage = ctx.existing.targets.some(target => target.kind === 'page' && ast.program.body.some(statement => statement.type === 'ImportDeclaration' && statement.source.value === `virtual:skelcast/${target.id}` && statement.specifiers.some(s => s.local.name === target.region)) && (!target.export || target.export === component.exported));
+    const isPage = !existingPage && !isBoundary(root) && ctx.page && (component.exported === 'default' || /Page$/.test(component.name) || components.length === 1);
     const pageBindings: Record<string, boolean> = {};
     let pageRegion = false;
     const add = (node: Ast, kind: 'page' | 'request', pending: string, content: string, bindings: Record<string, boolean>, early?: EarlyLoader[]) => {
@@ -155,7 +164,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   }
   if (result.targets.length) {
     const offset = importOffset(ast);
-    result.edits.push({ start: offset, end: offset, text: `\nimport { LoadingBoundary as ${boundary} } from 'skelcast/react';\n${imports.join('\n')}\n` });
+    result.edits.push({ start: offset, end: offset, text: `\n${boundaryNames.size ? '' : `import { LoadingBoundary as ${boundary} } from 'skelcast/react';\n`}${imports.join('\n')}\n` });
     parseCode(applyEdits(code, result.edits));
   }
   return result;

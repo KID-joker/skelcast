@@ -11,6 +11,9 @@ test('layout audit tolerates metadata-only artifact refresh while rejecting chan
   await page.goto('http://127.0.0.1:5173/');
   await page.getByRole('button', { name: 'Enter demo workspace' }).click();
   await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('aria-busy', 'false');
+  // The first render precedes the request effect and can report idle with no
+  // items. Audit only after actual data-backed content has a visible box.
+  await expect(page.locator('[data-sk-boundary="products.list"] [data-sk-content] article').first()).toBeVisible();
   await page.waitForFunction(async moduleURL => (await import(moduleURL)).listBoundaries().some((item: { id: string }) => item.id === 'products.list'), coreModule);
   const results = await page.evaluate(async ({ browserModule, coreModule }) => {
     const { auditBoundaryLayout } = await import(browserModule);
@@ -37,6 +40,8 @@ test('browser layout check catches bad geometry and hidden placeholders and rest
   await page.getByRole('button', { name: 'Enter demo workspace' }).click();
   const boundary = page.locator('[data-sk-boundary="products.list"]');
   await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('aria-busy', 'false');
+  await expect(boundary.locator('[data-sk-content] article').first()).toBeAttached();
+  await expect(boundary).toHaveAttribute('aria-busy', 'false');
   const originalURL = page.url();
   const audit = () => page.evaluate(async url => {
     const { auditBoundaryLayout } = await import(url);
@@ -71,6 +76,9 @@ test('layout checks reject concurrent work and preserve a preview selected by th
   await page.goto('http://127.0.0.1:5174/?__sk=products.list');
   await page.getByRole('button', { name: 'Enter demo workspace' }).click();
   await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('aria-busy', 'false');
+  const boundary = page.locator('[data-sk-boundary="products.list"]');
+  await expect(boundary.locator('[data-sk-content] article').first()).toBeAttached();
+  await expect(boundary).toHaveAttribute('aria-busy', 'false');
   const concurrent = await page.evaluate(async url => {
     const { auditBoundaryLayout } = await import(url);
     const boundary = document.querySelector('[data-sk-boundary="products.list"]');

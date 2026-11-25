@@ -41,6 +41,16 @@ for (const framework of ['react', 'vue'] as const) test(`init integrates an unto
     const request = report.targets.find(t => t.kind === 'request')!;
     const repeated = await execute(process.execPath, [path.join(repo, 'dist/cli.js'), 'init', '--root', root, '--json']);
     expect(JSON.parse(repeated.stdout).changes).toHaveLength(0);
+    const sourceFile = path.join(root, `src/App.${framework === 'react' ? 'jsx' : 'vue'}`);
+    const integrated = await readFile(sourceFile, 'utf8');
+    const added = framework === 'react'
+      ? `{loading ? <p>Loading...</p> : <aside>Additional details</aside>}`
+      : `<aside v-loading="loading">Additional details</aside>`;
+    await writeFile(sourceFile, integrated.replace('</main>', `${added}</main>`));
+    const incremental = JSON.parse((await execute(process.execPath, [path.join(repo, 'dist/cli.js'), 'init', '--root', root, '--json'])).stdout) as InitReport;
+    expect(incremental.targets).toHaveLength(1);
+    expect(incremental.targets[0].kind).toBe('request');
+    expect(JSON.parse((await execute(process.execPath, [path.join(repo, 'dist/cli.js'), 'init', '--root', root, '--json'])).stdout).changes).toHaveLength(0);
     await build({ root, logLevel: 'silent' });
     expect(await readFile(path.join(root, 'dist/index.html'), 'utf8')).toContain('data-sk-initial');
     server = await createServer({ root, logLevel: 'silent', server: { host: '127.0.0.1', port: 0 } });
@@ -48,20 +58,25 @@ for (const framework of ['react', 'vue'] as const) test(`init integrates an unto
     const address = server.httpServer!.address() as { port: number };
     await page.goto(`http://127.0.0.1:${address.port}/`);
     const region = page.locator(`[data-sk-boundary="${request.id}"]`);
+    const newRegion = page.locator(`[data-sk-boundary="${incremental.targets[0].id}"]`);
     await expect(region).toHaveAttribute('data-sk-visible', 'true');
     await expect(region).toHaveAttribute('data-sk-visible', 'false');
+    await expect(newRegion).toHaveAttribute('data-sk-visible', 'false');
     await expect(page.getByText('Alpha', { exact: true })).toBeVisible();
     await page.getByRole('textbox', { name: 'Draft' }).fill('Keep my draft');
     const toolbar = page.locator('#skelcast-devtools');
     await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption(request.id);
     await toolbar.getByRole('combobox', { name: 'Preview mode' }).selectOption('selected');
     await expect(region).toHaveAttribute('data-sk-visible', 'true');
+    await expect(newRegion).toHaveAttribute('data-sk-visible', 'false');
     await expect(region.locator('article[data-sk-node]')).toHaveCount(2);
     await toolbar.getByRole('button', { name: 'Exit', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Draft' })).toHaveValue('Keep my draft');
     await page.getByRole('button', { name: 'Reload' }).click();
     await expect(region).toHaveAttribute('data-sk-visible', 'true');
+    await expect(newRegion).toHaveAttribute('data-sk-visible', 'true');
     await expect(region).toHaveAttribute('data-sk-visible', 'false');
+    await expect(newRegion).toHaveAttribute('data-sk-visible', 'false');
     expect(errors).toEqual([]);
   } finally { await server?.close(); await rm(root, { recursive: true, force: true }); }
 });

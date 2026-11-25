@@ -19,6 +19,50 @@ const naiveDeclarations = `declare module 'vue' { interface GlobalComponents { $
 
 const target: SkeletonTarget = { id: 'test.list', source: 'View.tsx' };
 
+test('known text keeps font-shaped layout, paragraphs and finite bindings while unknown text accepts local widths', async () => {
+  await fixture({
+    'View.tsx': `const title='Known & <text>';export default function View(){return <main><h1>{title}</h1><p>A paragraph with <strong>mixed</strong> content and 中文。</p><section data-sk-text-width="18ch">{unknown}</section><aside>{unknown}</aside><b>{0}</b></main>}`,
+    'View.vue': `<script setup>const title='Known & <text>'</script><template><main><h1>{{title}}</h1><p>A paragraph with <strong>mixed</strong> content and 中文。</p><section data-sk-text-width="18ch">{{unknown}}</section><aside>{{unknown}}</aside><b v-text="0"/></main></template>`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue']) {
+      const { artifact } = await compileTarget(root, { ...target, source });
+      const { html } = artifact.variants.default;
+      assert.match(html, /data-sk-measured data-sk-leaf data-sk-text-content="Known &amp; &lt;text&gt;"/);
+      assert.match(html, /<strong[^>]*><span[^>]*data-sk-measured/);
+      assert.match(html, /width:18ch;min-width:0/);
+      assert.match(html, /data-sk-measured data-sk-leaf data-sk-text-content="0"/);
+      assert.doesNotMatch(html, /data-sk-text-width=/);
+      assert.deepEqual(artifact.diagnostics, []);
+      const explicit = await compileTarget(root, { ...target, source, hints: { lines: 3 } });
+      assert.match(explicit.artifact.variants.default.html, /<p[^>]*><span[^>]*data-sk-multiline/);
+    }
+  });
+});
+
+test('images preserve explicit, CSS and local intrinsic dimensions and track local asset changes', async () => {
+  await fixture({
+    'photo.svg': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80"/>',
+    'View.tsx': `import photo from './photo.svg';export default function View(){return <main><img src={photo}/><img src="./photo.svg" width="20" height="10"/><img src="https://never-fetch.invalid/image" data-sk-image-ratio="16 / 9" style={{width:160,height:'auto'}}/><img src="./photo.svg" style={{aspectRatio:2}}/></main>}`,
+    'View.vue': `<template><main><img src="./photo.svg"/><img src="./photo.svg" width="20" height="10"/><img src="https://never-fetch.invalid/image" data-sk-image-ratio="16 / 9" style="width:160px;height:auto"/><img src="./photo.svg" style="aspect-ratio:2"/></main></template>`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue']) {
+      const first = await compileTarget(root, { ...target, source });
+      assert.match(first.artifact.variants.default.html, /width=%27240%27 height=%2780%27/);
+      assert.match(first.artifact.variants.default.html, /width="20" height="10"/);
+      assert.match(first.artifact.variants.default.html, /aspect-ratio:1\.777/);
+      assert.match(first.artifact.variants.default.html, /aspect-ratio:2/);
+      assert.doesNotMatch(first.artifact.variants.default.html, /never-fetch|data-sk-image-ratio=/);
+      assert.ok(first.dependencies['photo.svg']);
+      assert.deepEqual(first.artifact.diagnostics, []);
+    }
+    const first = await compileTarget(root, target);
+    await writeFile(path.join(root, 'photo.svg'), '<svg viewBox="0 0 100 200"/>');
+    const changed = await compileTarget(root, target);
+    assert.notEqual(first.dependencies['photo.svg'], changed.dependencies['photo.svg']);
+    assert.match(changed.artifact.variants.default.html, /width=%27100%27 height=%27200%27/);
+  });
+});
+
 test('React and Vue retain static layout attributes and map source IDs without copying internal metadata', async () => {
   await fixture({
     'View.tsx': `import './layout.css';export default function View(){return <section id="catalog:main" data-layout="grid" data-note={'a"<&'} dir="rtl" lang="ar" data-sk-boundary="forged" onClick={runBusiness}><span>Title</span></section>}`,

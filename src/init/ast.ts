@@ -20,6 +20,24 @@ export function uniqueName(code: string, base: string): string {
   while (new RegExp(`\\b${name}\\b`).test(code)) name = `${base}${index++}`;
   return name;
 }
+/** Identify adapter imports rather than matching unrelated component names. */
+export function boundaryImports(ast: t.File, framework: 'react' | 'vue'): Set<string> {
+  const names = new Set<string>();
+  for (const statement of ast.program.body) {
+    if (statement.type !== 'ImportDeclaration' || statement.source.value !== `skelcast/${framework}`) continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === 'ImportSpecifier' && nodeName(specifier.imported) === 'LoadingBoundary') names.add(specifier.local.name);
+      if (specifier.type === 'ImportNamespaceSpecifier') names.add(`${specifier.local.name}.LoadingBoundary`);
+    }
+  }
+  return names;
+}
+export function sameCondition(left: string, right: string): boolean {
+  if (left === right) return true;
+  const key = (code: string) => JSON.stringify(parseExpression(code, { plugins: ['typescript'] }), (name, value: unknown) =>
+    ['start', 'end', 'loc', 'extra', 'leadingComments', 'trailingComments', 'innerComments', 'comments'].includes(name) ? undefined : value);
+  try { return key(left) === key(right); } catch { return false; }
+}
 export function unwrap(node: t.Node | null | undefined): t.Node | undefined {
   while (node) {
     switch (node.type) {

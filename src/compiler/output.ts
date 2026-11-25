@@ -4,6 +4,7 @@ import { escapeHTML, voids, nonVisual, styleString, classString } from './html.j
 import { sourceIdAttribute, utilityAttribute } from './styles.js';
 import type { RenderContext, SourceNode } from './context.js';
 import type { RenderHost } from './render-host.js';
+import { imageRatio } from './images.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
 // attributes are owned by the generator and cannot be supplied by source markup.
@@ -32,7 +33,18 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
   let attrs = `${this.attributes(props)} data-sk-node="${this.nodeId(ctx, node)}"${ctx.scopes.map(s => ` ${s}`).join('')}`;
   if (ctx.control || ctx.mode === 'preserve') attrs += ' data-sk-control';
   if (props['data-sk-preserve'] != null) attrs += ' data-sk-preserve';
-  if (tag === 'img') attrs += ` data-sk-image${this.masked(ctx) ? ' data-sk-leaf' : ''}` + '  alt="" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27400%27 height=%27300%27/%3E"';
+  if (tag === 'img') {
+    const dimension = (value: unknown) => typeof value === 'number' || typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
+    const width = dimension(props.width), height = dimension(props.height);
+    const ratio = imageRatio(props['data-sk-image-ratio']);
+    const intrinsic = props.__skImageSize as { width: number; height: number } | undefined;
+    const size = ratio ? { width: ratio * 100, height: 100 } : intrinsic ?? (width > 0 && height > 0 ? { width, height } : { width: 400, height: 300 });
+    if (props['data-sk-image-ratio'] != null && !ratio) this.diagnose('PLACEHOLDER_HINT', 'data-sk-image-ratio must be a positive number or WIDTH / HEIGHT', ctx, node);
+    attrs += ` data-sk-image${this.masked(ctx) ? ' data-sk-leaf' : ''} alt="" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27${size.width}%27 height=%27${size.height}%27/%3E"`;
+    if (ratio) attrs = / style="/.test(attrs)
+      ? attrs.replace(/ style="([^"]*)"/, (_match, style: string) => ` style="${style};aspect-ratio:${ratio}"`)
+      : `${attrs} style="aspect-ratio:${ratio}"`;
+  }
   if (['input', 'textarea', 'button', 'select'].includes(tag)) {
     attrs += `${this.masked(ctx) ? ' data-sk-leaf' : ''} tabindex="-1"`;
     for (const key of ['type','placeholder','value','checked','disabled','readonly','multiple','min','max','step']) {

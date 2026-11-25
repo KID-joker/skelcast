@@ -6,6 +6,7 @@ import type { RenderHost } from './render-host.js';
 import { parseExpression } from '@babel/parser';
 import { parse as parseDOM, type TemplateChildNode as VueNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import { componentName } from './components.js';
+import { boundaryContentContext } from './branches.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -68,6 +69,7 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
   const props: Record<string, Value> = Object.create(null);
   let unknownLayout = false;
   let htmlContent: string | undefined, textContent = false;
+  let textValue: Value = UNKNOWN;
   for (const p of node.props) {
     if (p.type === 6) props[p.name] = p.value?.content ?? true;
     else if (p.name === 'bind' && !p.arg) {
@@ -89,7 +91,7 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
     } else if (p.name === 'show') {
       const show = evaluateString(expression(p.exp) ?? '', ctx);
       if (show !== UNKNOWN && !show) return '';
-    } else if (p.name === 'text') textContent = true;
+    } else if (p.name === 'text') { textContent = true; textValue = evaluateString(expression(p.exp) ?? '', ctx); }
     else if (p.name === 'html') {
       const value = evaluateString(expression(p.exp) ?? '', ctx);
       if (typeof value !== 'string' || value.length > 32768) return this.fallback(ctx, node, 'Dynamic v-html content needs an adapter', this.attributes(props));
@@ -107,7 +109,11 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
   }
   const tag = node.tag;
   ctx = this.contentContext(ctx, props, tag);
-  if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') return this.vueNodes(node.children, ctx);
+  if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') {
+    const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');
+    const value = expression(pending?.exp);
+    return this.vueNodes(node.children, value ? boundaryContentContext(ctx, value) : ctx);
+  }
   if (unknownGeometry(props.style)) unknownLayout = true;
   if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
   if (['template', 'transition', 'Transition', 'transition-group', 'TransitionGroup', 'KeepAlive', 'keep-alive'].includes(tag)) return this.vueNodes(node.children, ctx);
@@ -143,7 +149,10 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
   if (presentation !== undefined) return presentation;
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   if (nonVisual.has(tag)) return '';
-  const children = htmlContent !== undefined ? this.staticHTML(htmlContent, ctx, node) : textContent || tag === 'p' && this.masked(ctx) ? this.text(ctx, node, true) : await this.vueNodes(node.children, ctx);
+  if (tag === 'img') return this.image(props, ctx, node);
+  const children = htmlContent !== undefined ? this.staticHTML(htmlContent, ctx, node)
+    : tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true)
+    : textContent ? this.contentText(textValue, ctx, node) : await this.vueNodes(node.children, ctx);
   if (['div', 'section', 'article', 'main', 'canvas'].includes(tag) && Object.hasOwn(props, 'ref') && htmlContent === undefined && !textContent && node.children.every((child) => child.type === 3 || child.type === 2 && !child.content.trim())) {
     // An empty imperative mount host has no source-visible internal tree.
     // Mask only its existing box; do not invent widget-specific geometry.

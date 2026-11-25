@@ -31,4 +31,4 @@ export type SourceSlot =
 /** Only source positions cross the Babel/Vue frontend boundary. */
 export interface SourceNode { start?: number | null; end?: number | null; loc?: { start: { line: number; offset?: number }; end?: { line?: number; offset?: number } } | null }
 export const slotValue = Symbol('source-slot');
-export interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; fallthrough?: { node: ElementNode; props: Record<string, Value> } }
+export interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; textWidth?: string; fallthrough?: { node: ElementNode; props: Record<string, Value> } }

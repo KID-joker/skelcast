@@ -23,6 +23,7 @@ export interface RenderHost {
   attributes(props: Record<string, Value>): string;
   element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string;
   staticHTML(source: string, ctx: RenderContext, origin: SourceNode): string;
+  image(props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string>;
   jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string>;
   jsxNodes(nodes: (Ast | null)[], ctx: RenderContext): Promise<string>;
   vueNode(node: VueNode, ctx: RenderContext, skipFor?: boolean): Promise<string>;
