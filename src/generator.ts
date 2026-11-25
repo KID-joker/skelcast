@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Manifest, ManifestEntry, SkeletonArtifact, SkeletonConfig, SkeletonHints, SkeletonTarget } from './types.js';
@@ -84,8 +84,14 @@ async function entryStatus(project: Project, target: SkeletonTarget, entry?: Man
   if (!entry) return { id: target.id, state: 'missing', reason: 'No generated artifact' };
   if (version !== GENERATOR_VERSION || entry.hash !== targetHash(target, project.config)) return { id: target.id, state: 'stale', reason: 'Config, hints or generator changed' };
   for (const [file, hash] of Object.entries(entry.dependencies)) {
+    if (hash === '!missing') {
+      // Resolution candidates can be directories, or have a non-directory parent.
+      try { if ((await stat(path.resolve(project.root, file))).isFile()) return { id: target.id, state: 'stale', reason: `${file} created` }; }
+      catch (error: any) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) return { id: target.id, state: 'stale', reason: `${file} unavailable` }; }
+      continue;
+    }
     try { if (digest(await readFile(path.resolve(project.root, file), 'utf8')) !== hash) return { id: target.id, state: 'stale', reason: `${file} changed` }; }
-    catch (error: any) { if (!(hash === '!missing' && error.code === 'ENOENT')) return { id: target.id, state: 'stale', reason: `${file} missing` }; }
+    catch { return { id: target.id, state: 'stale', reason: `${file} missing` }; }
   }
   try {
     const content = await readFile(path.join(project.outDir, artifactFilename(target.id)), 'utf8');

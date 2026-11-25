@@ -482,6 +482,177 @@ test('transitive non-render helpers invalidate artifacts without executing them'
     assert.equal((await checkProject(project))[0].state, 'stale');
   });
 });
+
+for (const [source, code, component, aliases] of [
+  ['View.tsx', `import Card from './Card'; export default ()=> <Card/>`, 'Card.tsx', {}],
+  ['View.vue', `<script setup>import Card from '@/Card.vue'</script><template><Card/></template>`, 'Card.vue', { '@': '.' }],
+] as const) test(`creating and deleting a missing ${component} invalidates only its consumers`, async () => {
+  await fixture({
+    'skelcast.config.mjs': `export default ${JSON.stringify({ aliases, targets: [{ id: 'one', source }, { id: 'two', source: 'Other.tsx' }] })}`,
+    [source]: code,
+    'Other.tsx': `export default ()=> <aside>Other</aside>`,
+  }, async root => {
+    const project = await loadProject(root);
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /data-sk-fallback/);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['ready', 'ready']);
+    await writeFile(path.join(root, component), component.endsWith('.vue')
+      ? `<template><article>Card</article></template>`
+      : `throw new Error('never execute'); export default ()=> <article>Card</article>`);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'ready']);
+    assert.deepEqual((await syncProject(project)).map(row => row.state), ['generated', 'reused']);
+    const artifact = await readArtifact(project, 'one');
+    assert.match(artifact.variants.default.html, /<article/);
+    assert.equal(artifact.diagnostics.length, 0);
+    await rm(path.join(root, component));
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'ready']);
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /data-sk-fallback/);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['ready', 'ready']);
+  });
+});
+
+test('new higher-priority resolution candidates invalidate directory imports without perpetual staleness', async () => {
+  await fixture({
+    'skelcast.config.mjs': config,
+    'View.tsx': `import Card from './Card'; export default ()=> <Card/>`,
+    'Card/index.tsx': `export default ()=> <article>Directory</article>`,
+    'Other.tsx': `export default ()=> <aside>Other</aside>`,
+  }, async root => {
+    const project = await loadProject(root);
+    await syncProject(project);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['ready', 'ready']);
+    assert.deepEqual((await syncProject(project)).map(row => row.state), ['reused', 'reused']);
+    await writeFile(path.join(root, 'Card.tsx'), `export default ()=> <section>File</section>`);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'ready']);
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /<section/);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['ready', 'ready']);
+  });
+});
+
+test('missing transitive style imports are tracked until their files are created', async () => {
+  await fixture({
+    'skelcast.config.mjs': config,
+    'View.tsx': `import './helper'; export default ()=> <main>One</main>`,
+    'helper.ts': `import './theme.css'; throw new Error('never execute')`,
+    'Other.tsx': `export default ()=> <aside>Other</aside>`,
+  }, async root => {
+    const project = await loadProject(root);
+    await syncProject(project);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['ready', 'ready']);
+    await writeFile(path.join(root, 'theme.css'), `main{gap:37px}`);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'ready']);
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.css, /gap:37px/);
+  });
+});
+
+test('React components resolve through named, default, imported and namespace re-export chains', async () => {
+  await fixture({
+    'View.tsx': `import {Card as Named} from './named'; import Default from './default'; import {Imported} from './imported'; import * as UI from './named'; import {Cards} from './namespace'; import {Local} from './local'; export default ()=> <main><Named width={71}>Body</Named><Default width={72}/><Imported width={73}/><UI.Card width={74}/><Cards.Card width={75}/><Local width={76}/></main>`,
+    'named.ts': `export {default as Card} from './default'; throw new Error('never execute')`,
+    'default.ts': `export {Panel as default} from './Card'`,
+    'imported.ts': `import Local from './default'; export {Local as Imported}`,
+    'namespace.ts': `export * as Cards from './named'`,
+    'local.tsx': `const Local = ({width})=> <article style={{width}}/>; export {Local}`,
+    'Card.tsx': `import './card.css'; export function Panel({width,children}){return <article style={{width}}>{children}</article>} throw new Error('never execute')`,
+    'card.css': `article{display:grid}`,
+  }, async root => {
+    const { artifact, dependencies } = await compileTarget(root, target);
+    assert.equal(artifact.diagnostics.length, 0);
+    const html = artifact.variants.default.html;
+    assert.equal((html.match(/<article/g) ?? []).length, 6);
+    for (const width of [71, 72, 73, 74, 75, 76]) assert.match(html, new RegExp(`width:${width}px`));
+    assert.match(html, /<article[^>]*><span/);
+    assert.match(artifact.variants.default.css, /display:grid/);
+    for (const file of ['named.ts', 'default.ts', 'imported.ts', 'namespace.ts', 'local.tsx', 'Card.tsx', 'card.css']) assert.ok(dependencies[file], file);
+  });
+});
+
+test('init-style targets can still select private source components and their regions', async () => {
+  await fixture({
+    'View.tsx': `import {LoadingBoundary} from 'skelcast/react'; import region from 'virtual:skelcast/test.list'; function Inner(){return <LoadingBoundary artifact={region} pending={false}><article>Body</article></LoadingBoundary>} export default ()=> <Inner/>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { ...target, export: 'Inner', region: 'region' });
+    assert.equal(artifact.diagnostics.length, 0);
+    assert.match(artifact.variants.default.html, /<article/);
+    assert.doesNotMatch(artifact.variants.default.html, /LoadingBoundary/);
+  });
+});
+
+test('Vue default and named slots survive local component re-exports and dependency edits', async () => {
+  await fixture({
+    'skelcast.config.mjs': `export default {targets:[{id:'one',source:'View.vue'},{id:'two',source:'Other.tsx'}]}`,
+    'View.vue': `<script setup>import {Panel} from './barrel'</script><template><Panel :width="82"><template #header><h1>Title</h1></template><p>Body</p></Panel></template>`,
+    'barrel.ts': `export {default as Panel} from './forward'; throw new Error('never execute')`,
+    'forward.ts': `import Panel from './Panel.vue'; export default Panel`,
+    'Panel.vue': `<script setup>defineProps(['width'])</script><template><article :style="{width:width+'px'}"><header><slot name="header"/></header><main><slot/></main></article></template><style scoped>article{display:grid}</style>`,
+    'Other.tsx': `export default ()=> <aside>Other</aside>`,
+  }, async root => {
+    const project = await loadProject(root);
+    await syncProject(project);
+    const artifact = await readArtifact(project, 'one');
+    assert.equal(artifact.diagnostics.length, 0);
+    assert.match(artifact.variants.default.html, /<article[^>]*width:82px/);
+    assert.match(artifact.variants.default.html, /<header[^>]*><h1/);
+    assert.match(artifact.variants.default.html, /<main[^>]*><p/);
+    assert.match(artifact.variants.default.css, /article\[data-v-sk-/);
+    await writeFile(path.join(root, 'Panel.vue'), `<template><section>Updated</section></template>`);
+    assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'ready']);
+    await syncProject(project);
+    assert.match((await readArtifact(project, 'one')).variants.default.html, /<section/);
+  });
+});
+
+test('star re-exports handle diamonds and cycles while explicit exports win', async () => {
+  await fixture({
+    'View.tsx': `import {Card} from './barrel'; export default ()=> <Card/>`,
+    'barrel.ts': `export * from './left'; export * from './right'; export * from './cycle'`,
+    'left.ts': `export {default as Card} from './Card'`,
+    'right.ts': `export * from './left'`,
+    'cycle.ts': `export * from './barrel'`,
+    'Card.tsx': `export default ()=> <article>Card</article>`,
+  }, async root => {
+    const first = await compileTarget(root, target);
+    assert.equal(first.artifact.diagnostics.length, 0);
+    assert.match(first.artifact.variants.default.html, /<article/);
+    await writeFile(path.join(root, 'barrel.ts'), `export * from './left'; export {default as Card} from './Override'`);
+    await writeFile(path.join(root, 'Override.tsx'), `export default ()=> <aside>Override</aside>`);
+    const second = await compileTarget(root, target);
+    assert.equal(second.artifact.diagnostics.length, 0);
+    assert.match(second.artifact.variants.default.html, /<aside/);
+  });
+});
+
+test('cyclic named re-exports produce a local fallback and keep sibling content', async () => {
+  await fixture({
+    'View.tsx': `import {Card} from './left'; export default ()=> <main><Card/><aside>Keep</aside></main>`,
+    'left.ts': `export {Card} from './right'`,
+    'right.ts': `export {Card} from './left'`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, target);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'FALLBACK').length, 1);
+    assert.match(artifact.variants.default.html, /data-sk-fallback/);
+    assert.match(artifact.variants.default.html, /<aside/);
+  });
+});
+
+test('star re-exports do not expose defaults, private functions, types or ambiguous names', async () => {
+  await fixture({
+    'View.tsx': `import Missing, {Private,Card,TypeOnly} from './barrel'; export default ()=> <main><Missing/><Private/><Card/><TypeOnly/></main>`,
+    'barrel.ts': `export * from './left'; export * from './right'; export type {TypeOnly} from './typed'`,
+    'left.tsx': `function Private(){return <nav/>} export default ()=> <header/>; export function Card(){return <article/>}`,
+    'right.tsx': `export function Card(){return <aside/>}`,
+    'typed.tsx': `export function TypeOnly(){return <footer/>}`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, target);
+    assert.equal(artifact.diagnostics.filter(d => d.code === 'FALLBACK').length, 4);
+    assert.ok(artifact.diagnostics.some(d => d.message === 'Ambiguous exported component Card'));
+    assert.doesNotMatch(artifact.variants.default.html, /<(?:nav|header|article|aside|footer)\b/);
+  });
+});
+
 test('artifact corruption is detected and sync regenerates it', async () => {
   await fixture({ 'skelcast.config.mjs': config, 'View.tsx': 'export default ()=> <div/>', 'Other.tsx': 'export default ()=> <div/>' }, async root => {
     const project = await loadProject(root); await syncProject(project);

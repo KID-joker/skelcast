@@ -44,6 +44,9 @@ interface ModuleInfo {
   ast: Ast;
   functions: Map<string, Ast>;
   imports: Map<string, ComponentReference>;
+  exports: Map<string, string>;
+  reexports: Map<string, ComponentReference>;
+  exportAll: ComponentReference[];
   env: Record<string, Value>;
   descriptor?: ReturnType<typeof parseSFC>['descriptor'];
   scopes: string[];
@@ -53,6 +56,8 @@ interface ModuleInfo {
   inheritAttrs: boolean;
   cssBindings: CSSBinding[];
 }
+interface ResolvedComponent { module: ModuleInfo; fn?: Ast }
+const ambiguousExport = Symbol('ambiguous-export');
 interface SourceSlot { nodes: Ast[]; context: RenderContext; framework: 'vue' | 'jsx' }
 const slotValue = Symbol('source-slot');
 interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; fallthrough?: { node: Ast; props: Record<string, Value> } }
@@ -85,7 +90,11 @@ export class SourceCompiler {
       base = path.resolve(this.root, this.aliases[alias], `.${request.slice(alias.length)}`.split('?')[0]);
     }
     for (const ext of extensions) {
-      try { if ((await stat(base + ext)).isFile()) return base + ext; } catch { /* next */ }
+      const candidate = base + ext;
+      try { if ((await stat(candidate)).isFile()) return candidate; }
+      catch (error: any) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
+      // Earlier candidates also matter: creating one can change which file wins.
+      this.dependencies[this.relative(candidate)] = '!missing';
     }
   }
   private globalComponents() {
@@ -210,7 +219,7 @@ export class SourceCompiler {
       code = [descriptor.script?.content, descriptor.scriptSetup?.content].filter(Boolean).join('\n');
     }
     const ast: Ast = parseJS(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
-    const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), env: Object.create(null), scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
+    const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), exports: new Map(), reexports: new Map(), exportAll: [], env: Object.create(null), scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
     const ec = { code, env: mod.env, bindings: this.hints.bindings ?? {} };
     for (const statement of ast.program.body) {
       const decl = statement.declaration ?? statement;
@@ -222,6 +231,7 @@ export class SourceCompiler {
         else bindPattern(d.id, evaluate(d.init, ec), mod.env);
       }
       if (statement.type === 'ExportDefaultDeclaration') {
+        mod.exports.set('default', 'default');
         const d = statement.declaration;
         if (d.type === 'Identifier') mod.functions.set('default', d);
         else if (d.type === 'CallExpression' && ['memo', 'forwardRef'].includes(d.callee.name)) mod.functions.set('default', d.arguments[0]);
@@ -241,10 +251,19 @@ export class SourceCompiler {
           for (const spec of statement.specifiers) mod.env[spec.local.name] = mapping;
         }
       }
-      if (statement.type === 'ExportNamedDeclaration') for (const spec of statement.specifiers ?? []) {
-        const name = spec.exported.name;
-        if (resolvedIdentifier(spec.local)) mod.functions.set(name, spec.local);
+      if (statement.type === 'ExportNamedDeclaration' && statement.exportKind !== 'type') {
+        if (decl.type === 'FunctionDeclaration' && decl.id) mod.exports.set(decl.id.name, decl.id.name);
+        if (decl.type === 'VariableDeclaration') for (const item of decl.declarations) if (item.id.type === 'Identifier') mod.exports.set(item.id.name, item.id.name);
+        const request = statement.source?.value;
+        const resolved = request ? await this.resolve(file, request) : undefined;
+        for (const spec of statement.specifiers ?? []) {
+          if (spec.exportKind === 'type') continue;
+          const name = spec.exported.name ?? spec.exported.value;
+          if (request) mod.reexports.set(name, { file: resolved, request, exported: spec.type === 'ExportNamespaceSpecifier' ? '*' : spec.local.name ?? spec.local.value });
+          else mod.exports.set(name, spec.local.name ?? spec.local.value);
+        }
       }
+      if (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') mod.exportAll.push({ file: await this.resolve(file, statement.source.value), request: statement.source.value, exported: '*' });
     }
     if (descriptor) {
       // Missing declared props have Vue's absent value, rather than an opaque
@@ -303,6 +322,45 @@ export class SourceCompiler {
       }
     }
     return mod;
+  }
+  private async resolveExport(file: string, exported: string, allowLocal = false, seen = new Set<string>(), budget = { remaining: 1000 }): Promise<ResolvedComponent | typeof ambiguousExport | undefined> {
+    const key = JSON.stringify([file, exported]);
+    if (seen.has(key) || seen.size >= 64 || --budget.remaining < 0) return;
+    const next = new Set(seen).add(key);
+    const mod = await this.module(file);
+    if (mod.descriptor) return exported === 'default' ? { module: mod } : undefined;
+    const follow = (reference: ComponentReference, name = reference.exported) => reference.file ? this.resolveExport(reference.file, name, false, next, budget) : undefined;
+    // Init can select a private source component. Imports still require a public export.
+    const binding = mod.exports.get(exported) ?? (allowLocal && mod.functions.has(exported) ? exported : undefined);
+    if (binding !== undefined) {
+      let local: string = binding;
+      const bindings = new Set<string>();
+      while (!bindings.has(local)) {
+        bindings.add(local);
+        const fn = mod.functions.get(local);
+        if (fn?.type === 'Identifier') { local = fn.name; continue; }
+        if (fn) return { module: mod, fn };
+        const imported = mod.imports.get(local);
+        return imported ? follow(imported) : undefined;
+      }
+      return;
+    }
+    const explicit = mod.reexports.get(exported);
+    if (explicit) return follow(explicit);
+    const [namespace, ...members] = exported.split('.');
+    const reference = mod.reexports.get(namespace) ?? mod.imports.get(mod.exports.get(namespace) ?? '');
+    if (members.length && reference?.exported === '*') return follow(reference, members.join('.'));
+    // export * never forwards default, and conflicting bindings are not a choice.
+    if (exported === 'default') return;
+    let result: ResolvedComponent | undefined;
+    for (const reference of mod.exportAll) {
+      const candidate = await follow(reference, exported);
+      if (candidate === ambiguousExport) return ambiguousExport;
+      if (!candidate) continue;
+      if (result && (result.module !== candidate.module || result.fn !== candidate.fn)) return ambiguousExport;
+      result = candidate;
+    }
+    return result;
   }
   private context(mod: ModuleInfo, props: Record<string, Value> = {}, parent?: RenderContext): RenderContext {
     const file = this.relative(mod.file);
@@ -367,9 +425,12 @@ export class SourceCompiler {
     return output;
   }
   private async component(file: string, exported: string, props: Record<string, Value> = {}, parent?: RenderContext, node?: Ast): Promise<string> {
-    const mod = await this.module(file);
+    const resolved = await this.resolveExport(file, exported, !parent);
+    const component = resolved === ambiguousExport ? undefined : resolved;
+    const mod = component?.module ?? await this.module(file);
     const ctx = this.context(mod, props, parent);
     if (ctx.depth > 16) return this.fallback(ctx, node, 'Component recursion limit reached');
+    if (!component) return this.fallback(ctx, node, `${resolved === ambiguousExport ? 'Ambiguous' : 'Cannot locate'} exported component ${exported}`);
     if (mod.descriptor) {
       const rootStyle = this.cssVariables(ctx);
       if (!mod.descriptor.scriptSetup && mod.descriptor.script) {
@@ -395,9 +456,7 @@ export class SourceCompiler {
       }
       return this.inheritRootScopes(await this.vueNodes(ast.children, ctx), parent?.scopes ?? [], mod.inheritAttrs && !root ? this.fallthroughAttrs(mod, props) : {}, rootStyle);
     }
-    let fn = mod.functions.get(exported);
-    const seen = new Set<string>();
-    while (fn?.type === 'Identifier' && !seen.has(fn.name)) { seen.add(fn.name); fn = mod.functions.get(fn.name); }
+    const fn = component.fn;
     if (!fn) return this.fallback(ctx, node, `Cannot locate exported component ${exported}`);
     if (!['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(fn.type)) return this.fallback(ctx, node, `Unsupported component declaration ${fn.type}`);
     const body = this.prepareFunction(fn, ctx, props);
@@ -755,8 +814,6 @@ export class SourceCompiler {
     return { view: { html, css: `${css}\n${baseCSS}` }, dependencies: this.dependencies };
   }
 }
-function resolvedIdentifier(node: Ast) { return node?.type === 'Identifier'; }
-
 export async function compileTarget(root: string, target: SkeletonTarget, aliases: Record<string, string> = {}, options: Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'> = {}): Promise<{ artifact: SkeletonArtifact; dependencies: Record<string, string> }> {
   root = await realpath(root);
   const variants = target.variants && Object.keys(target.variants).length ? target.variants : { default: {} };
