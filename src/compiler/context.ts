@@ -1,3 +1,5 @@
+import type * as t from '@babel/types';
+import type { ElementNode, TemplateChildNode } from '@vue/compiler-dom';
 import type { parse as parseSFC } from '@vue/compiler-sfc';
 import type { Ast, ExpressionContext, Value } from './expression.js';
 import type { CSSBinding } from './styles.js';
@@ -6,7 +8,7 @@ import type { ComponentReference } from './presets/types.js';
 export interface ModuleInfo {
   file: string;
   code: string;
-  ast: Ast;
+  ast: t.File;
   functions: Map<string, Ast>;
   imports: Map<string, ComponentReference>;
   exports: Map<string, string>;
@@ -23,6 +25,10 @@ export interface ModuleInfo {
 }
 export interface ResolvedComponent { module: ModuleInfo; fn?: Ast }
 export const ambiguousExport = Symbol('ambiguous-export');
-export interface SourceSlot { nodes: Ast[]; context: RenderContext; framework: 'vue' | 'jsx' }
+export type SourceSlot =
+  | { nodes: Ast[]; context: RenderContext; framework: 'jsx' }
+  | { nodes: TemplateChildNode[]; context: RenderContext; framework: 'vue' };
+/** Only source positions cross the Babel/Vue frontend boundary. */
+export interface SourceNode { start?: number | null; loc?: { start: { line: number; offset?: number } } | null }
 export const slotValue = Symbol('source-slot');
-export interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; fallthrough?: { node: Ast; props: Record<string, Value> } }
+export interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; fallthrough?: { node: ElementNode; props: Record<string, Value> } }

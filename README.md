@@ -281,6 +281,47 @@ freshness/integrity behavior. Structural quality cannot establish CSS visibility
 visual similarity: verify representative pages at desktop and mobile widths in a
 browser, then compare them with the real application.
 
+### Check rendered layout in the browser
+
+After real data is ready, open the inspector and choose **Check layout**. The check
+briefly shows real content and the selected skeleton variant, then restores the
+previous preview state. It reports width/height differences, the change in the
+region's bottom edge (potential displacement of following content), uncontained
+horizontal overflow, and whether data placeholders have visible painted boxes.
+Light DOM and open Shadow DOM are supported. Existing scroll containers are not
+reported as uncontained overflow.
+
+Use the same browser-only API in development or browser acceptance tests:
+
+```ts
+import { auditBoundaryLayout } from 'skelcast/browser';
+
+const boundary = document.querySelector<HTMLElement>(
+  '[data-sk-boundary="products.list"]',
+)!;
+const report = await auditBoundaryLayout(boundary, {
+  variant: 'grid',
+  tolerancePx: 4,
+  toleranceRatio: 0.05,
+  overflowTolerancePx: 1,
+});
+console.log(report.needsReview, report.delta, report.issues);
+```
+
+Run this at representative desktop/mobile widths after fonts, images, data and
+transitions have settled. Checks refuse pending or hidden content and abort if the
+region or preview changes during measurement. Concurrent checks must run serially.
+The default dimension tolerance is **4px + 5% of the real dimension**; position
+uses 4px and overflow uses 1px. Exported `captureLayout()` and `compareLayouts()`
+also support custom browser fixtures and stored geometry snapshots.
+
+This is a geometry snapshot, not pixel similarity or the browser's CLS metric.
+Equal outer dimensions do not prove matching internal layout, colors or content.
+Use screenshots/overlays for those checks. `skelcast quality` remains a separate,
+source-only structural check and never launches or signs into the application.
+Import `skelcast/browser` only in development/test code when automated measurements
+are needed; the production Vite integration does not inject the inspector.
+
 ### Register the Vite plugin
 
 ```ts
@@ -387,6 +428,29 @@ See the [coding agent skill](skills/skelcast/SKILL.md) for the generation and in
 - Plain CSS, CSS Modules, Vue scoped CSS, CSS imports, media and container queries; opt-in Less and UnoCSS Mini/Attributify generation.
 - Local components, simple prefix aliases, bounded conditions and repetition, static classes/styles, source locations, and visible fallbacks.
 - Static light DOM or Shadow DOM rendering, without generating from screenshots or authenticated sessions.
+
+The compatibility matrix separates source generation from automatic onboarding:
+
+| Project feature | Direct support | Hints or configuration | Adapter / manual integration |
+| --- | --- | --- | --- |
+| React function components / Vue 3 SFC templates | Source layout, props, local children and supported slots | Explicit values for opaque layout expressions | Class components, arbitrary render functions |
+| Vite React / Vue 3 project onboarding | Static page/loading patterns, aliases and lazy route imports | Verify inferred routes and dynamic relationships | Other bundlers, dynamic configs, Vue 2 |
+| Conditions, repeated lists, finite variants | Bounded expressions and known arrays | `bindings`, `repeat`, explicit `variants` for unknown state | Business helper execution is not supported |
+| Local CSS, CSS Modules, scoped CSS, media/container queries | Static CSS and imports | Ancestor styles may need target `styles` or light DOM | Runtime-generated styles require a source adapter or supplied CSS |
+| Less / UnoCSS Mini + Attributify | After explicitly enabling the matching style option | Copy serializable theme/shortcut data | Sass/Pug and arbitrary UnoCSS plugins/transformers |
+| Local default/named slots and React children | Source-visible content | Bind finite slot-presence/prop values where supported | Scoped slot parameters, render props and arbitrary callbacks |
+| Naive UI / Element Plus / Ant Design | Listed finite primitives after enabling the preset | Local adapters for custom themes or unsupported components | Full library behavior is not executed |
+| CSS-in-JS, Canvas and imperative widgets | Opaque source container only | Explicit dimensions can describe the footprint | Local presentation adapter; widget internals are not inferred |
+| Page shell before JavaScript | Vite HTML injection and explicit route matching | Multi-route static SPA shell selection | Next/Nuxt adapters and generic request-level SSR hydration are not implemented |
+
+The checked-in [acceptance projects](tests/fixtures/projects/README.md) cover an
+aliased, lazy-routed React administration page with CSS Modules and a scrollable
+table, plus a Vue workspace with named slots, scoped Less and prop-based CSS
+variables. Browser tests copy these projects to temporary directories, run init
+and production builds, and compare real/skeleton geometry at 1440px and 390px.
+These are representative reproducible fixtures, not a claim of compatibility with
+arbitrary production applications. Real adopters should run the same checks on
+their own authenticated pages and component libraries.
 
 Full type-system inference, arbitrary function evaluation, runtime CSS-in-JS, Sass/Pug compilation, arbitrary dynamic components, Canvas, and complete third-party design-system adapters are not included. Dynamic aliases and complex path mappings need manual configuration. Vue Options API dynamic values need bindings or adapters. Review ancestor-dependent styles, intrinsic asset dimensions, and complex scoped slots in the real page.
 

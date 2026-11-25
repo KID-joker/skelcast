@@ -1,12 +1,12 @@
 import { parse as parseSFC } from '@vue/compiler-sfc';
-import { parse as parseDOM } from '@vue/compiler-dom';
-import { applyEdits, importOffset, loadingName, objectConfig, parseCode, pendingCondition, pureCondition, uniqueName, walk, type Ast, type Edit } from './ast.js';
+import { parse as parseDOM, type ElementNode, type TemplateChildNode, type DirectiveNode } from '@vue/compiler-dom';
+import { applyEdits, startOf, nodeName, importOffset, loadingName, objectConfig, parseCode, pendingCondition, pureCondition, uniqueName, walk, type Edit } from './ast.js';
 import { targetId, type AnalysisContext, type FileAnalysis } from './types.js';
 import type { SkeletonTarget } from '../types.js';
 
-const directive = (node: Ast, name: string) => node.props?.find((p: Ast) => p.type === 7 && p.name === name);
-const contentOf = (text: string, node: Ast) => text.slice(node.loc.start.offset, node.loc.end.offset);
-const loader = (node: Ast) => /loader|loading|spinner|skeleton|progress/i.test(node.tag ?? '') || /loading|加载|请稍候/i.test((node.children ?? []).filter((n: Ast) => n.type === 2).map((n: Ast) => n.content).join(''));
+const directive = (node: ElementNode, name: string) => node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === name);
+const contentOf = (text: string, node: ElementNode) => text.slice(node.loc.start.offset, node.loc.end.offset);
+const loader = (node: ElementNode) => /loader|loading|spinner|skeleton|progress/i.test(node.tag ?? '') || /loading|加载|请稍候/i.test((node.children ?? []).filter(n => n.type === 2).map(n => n.content).join(''));
 export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
   const { descriptor, errors } = parseSFC(ctx.source, { filename: ctx.file });
@@ -19,7 +19,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const scripts = [descriptor.script, descriptor.scriptSetup].filter(Boolean);
   const flags = new Set<string>();
   for (const script of scripts) walk(parseCode(script!.content), n => {
-    if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern') for (const p of n.id.properties) if (loadingName(p.key?.name ?? '') && p.value?.type === 'Identifier') flags.add(p.value.name);
+    if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern') for (const p of n.id.properties) if (p.type === 'ObjectProperty' && loadingName(nodeName(p.key) ?? '') && p.value.type === 'Identifier') flags.add(p.value.name);
   });
   if (scripts.some(s => s!.src)) { result.diagnostics.push({ code: 'VUE_SCRIPT_EXTERNAL', file: ctx.file, message: 'External scripts need manual boundary registration' }); return result; }
   if (/<(?:LoadingBoundary|_?_*SkelCastBoundary)\b/.test(template.content)) {
@@ -32,7 +32,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const imports: string[] = [];
   const allBindings: Record<string, boolean> = {};
   let index = 0;
-  const rootNodes = ast.children.filter((n: Ast) => n.type !== 3 && !(n.type === 2 && !n.content.trim()));
+  const rootNodes = ast.children.filter(n => n.type !== 3 && !(n.type === 2 && !n.content.trim()));
   const add = (start: number, end: number, html: string, pending: string, bindings: Record<string, boolean>, kind: 'page' | 'request') => {
     const id = targetId(ctx, kind === 'page' ? 'page' : `loading-${++index}`);
     const artifact = uniqueName(ctx.source + imports.join('\n'), `__skelcast${result.targets.length}`);
@@ -42,7 +42,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
     result.targets.push(target); Object.assign(allBindings, bindings);
     edits.push({ start, end, text: `<${boundary} :artifact="${artifact}" :pending="${pending.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><!-- skelcast:init -->${html}</${boundary}>` });
   };
-  const scan = (nodes: Ast[]) => {
+  const scan = (nodes: TemplateChildNode[]) => {
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       if (node.type !== 1) continue;
@@ -51,13 +51,17 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
         continue;
       }
       const condition = directive(node, 'if');
-      const expr = condition?.exp?.content;
+      const expr = condition?.exp?.type === 4 ? condition.exp.content : undefined;
       if (expr && pendingCondition(expr, flags)) {
         let j = i + 1;
-        while (j < nodes.length && (nodes[j].type === 3 || nodes[j].type === 2 && !nodes[j].content.trim())) j++;
+        while (j < nodes.length) {
+          const sibling = nodes[j];
+          if (sibling.type !== 3 && !(sibling.type === 2 && !sibling.content.trim())) break;
+          j++;
+        }
         const alternate = nodes[j];
         const elseDirective = alternate?.type === 1 ? directive(alternate, 'else') : undefined;
-        if (elseDirective && loader(node) !== loader(alternate)) {
+        if (alternate?.type === 1 && elseDirective && loader(node) !== loader(alternate)) {
           const firstIsLoader = loader(node), content = firstIsLoader ? alternate : node;
           const pending = firstIsLoader ? expr : `!(${expr})`;
           let html = contentOf(text, content);
@@ -74,8 +78,9 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
         }
       }
       const loading = directive(node, 'loading');
-      const boundLoading = node.props.find((p: Ast) => p.type === 7 && p.name === 'bind' && p.arg?.content === 'loading');
-      const pending = (loading ?? boundLoading)?.exp?.content;
+      const boundLoading = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'loading');
+      const expression = (loading ?? boundLoading)?.exp;
+      const pending = expression?.type === 4 ? expression.content : undefined;
       if (pending && !/button|input|select|link/i.test(node.tag) && pureCondition(pending)) {
         let html = contentOf(text, node);
         if (loading) {
@@ -107,9 +112,9 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
     const script = descriptor.script;
     const scriptAST = parseCode(script.content), config = objectConfig(scriptAST);
     if (!config) { result.diagnostics.push({ code: 'VUE_OPTIONS_DYNAMIC', file: ctx.file, message: 'Cannot statically register a boundary in this Options API export' }); return { ...result, edits: [], targets: [] }; }
-    const components = config.properties.find((p: Ast) => p.type === 'ObjectProperty' && (p.key.name ?? p.key.value) === 'components');
-    if (components && components.value.type !== 'ObjectExpression') { result.diagnostics.push({ code: 'VUE_COMPONENTS_DYNAMIC', file: ctx.file, message: 'Dynamic components registry needs manual integration' }); return { ...result, edits: [], targets: [] }; }
-    const position = components ? components.value.start + 1 : config.start + 1;
+    const components = config.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'components');
+    if (components && (components.type !== 'ObjectProperty' || components.value.type !== 'ObjectExpression')) { result.diagnostics.push({ code: 'VUE_COMPONENTS_DYNAMIC', file: ctx.file, message: 'Dynamic components registry needs manual integration' }); return { ...result, edits: [], targets: [] }; }
+    const position = components?.type === 'ObjectProperty' ? startOf(components.value) + 1 : startOf(config) + 1;
     result.edits.push({ start: script.loc.start.offset + position, end: script.loc.start.offset + position, text: components ? ` ${boundary}, ` : ` components: { ${boundary} }, ` });
     const offset = script.loc.start.offset + importOffset(scriptAST);
     result.edits.push({ start: offset, end: offset, text: importCode });

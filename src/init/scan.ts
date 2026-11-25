@@ -1,13 +1,14 @@
+import type * as t from '@babel/types';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import { evaluate } from '../compiler/expression.js';
-import { parseCode, unwrap, walk, type Ast } from './ast.js';
+import { nodeName, parseCode, unwrap, walk, type Ast } from './ast.js';
 import { reactComponents } from './react.js';
 import type { InitDiagnostic } from './types.js';
 
 const ignored = new Set(['node_modules', '.git', '.skelcast', '.skelcast-init', 'dist', 'build', 'coverage', '.next', '.nuxt', '.output', 'test-results', 'playwright-report', 'vendor', 'tests', '__tests__', '__mocks__']);
-export interface SourceFile { file: string; code: string; ast: Ast; vue: boolean; imports: Map<string, string> }
+export interface SourceFile { file: string; code: string; ast: t.File; vue: boolean; imports: Map<string, string> }
 export interface ScanResult { files: SourceFile[]; routes: Map<string, Set<string>>; aliases: Record<string, string>; diagnostics: InitDiagnostic[] }
 export const relativePath = (root: string, file: string) => path.relative(root, file).split(path.sep).join('/');
 async function exists(file: string) { try { return (await stat(file)).isFile(); } catch { return false; } }
@@ -33,6 +34,17 @@ async function discover(root: string, directory = root): Promise<string[]> {
   }
   return files;
 }
+function record(value: unknown): Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+function jsxAttribute(node: t.JSXElement, name: string): t.JSXAttribute['value'] {
+  const attribute = node.openingElement.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === name);
+  return attribute?.type === 'JSXAttribute' ? attribute.value : undefined;
+}
+function jsxLiteral(value: t.JSXAttribute['value']): string | boolean | undefined {
+  if (value?.type === 'StringLiteral') return value.value;
+  if (value?.type === 'JSXExpressionContainer' && (value.expression.type === 'StringLiteral' || value.expression.type === 'BooleanLiteral')) return value.expression.value;
+}
 async function readAliases(root: string, diagnostics: InitDiagnostic[]): Promise<Record<string, string>> {
   const aliases: Record<string, string> = {};
   const visited = new Set<string>();
@@ -42,23 +54,27 @@ async function readAliases(root: string, diagnostics: InitDiagnostic[]): Promise
     try {
       const code = await readFile(file, 'utf8');
       const ast = parseCode(`export default (${code});`);
-      const config = evaluate(ast.program.body[0].declaration, { code: `export default (${code});`, env: {}, bindings: {} }) as any;
+      const declaration = ast.program.body[0];
+      if (declaration.type !== 'ExportDefaultDeclaration') return;
+      const value = evaluate(declaration.declaration, { code: `export default (${code});`, env: {}, bindings: {} });
+      const config = record(value);
       if (typeof config.extends === 'string' && config.extends.startsWith('.')) {
         let base = path.resolve(path.dirname(file), config.extends);
         if (!base.endsWith('.json')) base += '.json';
         await visit(base);
       }
-      for (const ref of config.references ?? []) if (typeof ref.path === 'string') {
-        const candidate = path.resolve(path.dirname(file), ref.path);
+      for (const ref of Array.isArray(config.references) ? config.references : []) if (typeof record(ref).path === 'string') {
+        const candidate = path.resolve(path.dirname(file), String(record(ref).path));
         await visit(candidate.endsWith('.json') ? candidate : path.join(candidate, 'tsconfig.json'));
       }
-      const base = path.resolve(path.dirname(file), config.compilerOptions?.baseUrl ?? '.');
-      for (const [key, values] of Object.entries(config.compilerOptions?.paths ?? {})) {
-        const value = (values as any)?.[0];
+      const options = record(config.compilerOptions);
+      const base = path.resolve(path.dirname(file), typeof options.baseUrl === 'string' ? options.baseUrl : '.');
+      for (const [key, values] of Object.entries(record(options.paths))) {
+        const value = Array.isArray(values) ? values[0] : undefined;
         if (typeof value === 'string' && /^(?:[^*]+|[^*]+\/\*)$/.test(key)) aliases[key.replace(/\/\*$/, '')] = relativePath(root, path.resolve(base, value.replace(/\/\*$/, ''))) || '.';
       }
-    } catch (error: any) {
-      if (error.code !== 'ENOENT') diagnostics.push({ code: 'TSCONFIG_PARSE', file: relativePath(root, file), message: String(error) });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') diagnostics.push({ code: 'TSCONFIG_PARSE', file: relativePath(root, file), message: String(error) });
     }
   };
   await visit(path.join(root, 'tsconfig.json'));
@@ -89,7 +105,7 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
       const ast = parseCode(script), imports = new Map<string, string>();
       for (const node of ast.program.body) if (node.type === 'ImportDeclaration') for (const spec of node.specifiers) imports.set(spec.local.name, node.source.value);
       walk(ast, node => {
-        if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init?.type === 'CallExpression' && ['lazy', 'defineAsyncComponent'].includes(node.init.callee.name)) {
+        if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init?.type === 'CallExpression' && ['lazy', 'defineAsyncComponent'].includes(nodeName(node.init.callee) ?? '')) {
           const request = lazyImport(node.init); if (request) imports.set(node.id.name, request);
         }
       });
@@ -97,12 +113,12 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
     } catch (error) { diagnostics.push({ code: 'SOURCE_PARSE', file, message: String(error) }); }
   }
   const routes = new Map<string, Set<string>>();
-  const route = async (source: SourceFile, node: Ast, url: string) => {
+  const route = async (source: SourceFile, input: Ast, url: string) => {
     let request: string | undefined;
-    node = unwrap(node);
+    const node = unwrap(input);
     if (node?.type === 'Identifier') request = source.imports.get(node.name);
-    if (node?.type === 'JSXElement') request = source.imports.get(node.openingElement.name.name);
-    request ??= lazyImport(node);
+    if (node?.type === 'JSXElement') request = source.imports.get(nodeName(node.openingElement.name) ?? '');
+    if (node) request ??= lazyImport(node);
     if (!request) return;
     const resolved = await resolveSource(root, source.file, request, aliases);
     if (!resolved) { diagnostics.push({ code: 'ROUTE_IMPORT', file: source.file, message: `Cannot resolve route import ${request}` }); return; }
@@ -112,33 +128,34 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
     const pending: Promise<void>[] = [];
     walk(source.ast, (node, ancestors) => {
       if (node.type === 'ObjectExpression') {
-        const props = node.properties.filter((p: Ast) => p.type === 'ObjectProperty');
-        const routePath = props.find((p: Ast) => (p.key.name ?? p.key.value) === 'path')?.value;
-        const indexRoute = props.find((p: Ast) => (p.key.name ?? p.key.value) === 'index')?.value?.value === true;
-        const component = props.find((p: Ast) => ['component', 'Component', 'element'].includes(p.key.name ?? p.key.value))?.value;
+        const props = node.properties.filter(p => p.type === 'ObjectProperty');
+        const routePath = props.find(p => nodeName(p.key) === 'path')?.value;
+        const indexValue = props.find(p => nodeName(p.key) === 'index')?.value;
+        const indexRoute = indexValue?.type === 'BooleanLiteral' && indexValue.value;
+        const component = props.find(p => ['component', 'Component', 'element'].includes(nodeName(p.key) ?? ''))?.value;
         if ((routePath?.type === 'StringLiteral' || indexRoute) && component) {
-          let url = routePath?.value ?? '';
+          let url = routePath?.type === 'StringLiteral' ? routePath.value : '';
           for (const parent of [...ancestors].reverse()) {
             if (url.startsWith('/')) break;
             if (parent.type === 'ObjectExpression') {
-              const p = parent.properties.find((p: Ast) => p.type === 'ObjectProperty' && (p.key.name ?? p.key.value) === 'path');
-              if (p?.value.type === 'StringLiteral') url = `${p.value.value.replace(/\/$/, '')}/${url}`;
+              const p = parent.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'path');
+              if (p?.type === 'ObjectProperty' && p.value.type === 'StringLiteral') url = `${p.value.value.replace(/\/$/, '')}/${url}`;
             }
           }
           pending.push(route(source, component, url.startsWith('/') ? url : `/${url}`));
         }
       }
-      if (node.type === 'JSXElement' && node.openingElement.name.name === 'Route') {
-        const attr = (name: string) => node.openingElement.attributes.find((a: Ast) => a.type === 'JSXAttribute' && a.name.name === name)?.value;
+      if (node.type === 'JSXElement' && nodeName(node.openingElement.name) === 'Route') {
+        const attr = (name: string) => jsxAttribute(node, name);
         const p = attr('path'), element = attr('element') ?? attr('Component');
-        const indexRoute = node.openingElement.attributes.some((a: Ast) => a.type === 'JSXAttribute' && a.name.name === 'index' && (!a.value || a.value.expression?.value === true));
-        let url = p?.value ?? p?.expression?.value ?? (indexRoute ? '' : undefined);
-        if (typeof url === 'string' && element?.expression) {
+        const index = node.openingElement.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'index');
+        const indexRoute = index?.type === 'JSXAttribute' && (!index.value || jsxLiteral(index.value) === true);
+        let url = jsxLiteral(p) ?? (indexRoute ? '' : undefined);
+        if (typeof url === 'string' && element?.type === 'JSXExpressionContainer') {
           for (const parent of [...ancestors].reverse()) {
             if (url.startsWith('/')) break;
-            if (parent.type !== 'JSXElement' || parent.openingElement.name.name !== 'Route') continue;
-            const prop = parent.openingElement.attributes.find((a: Ast) => a.type === 'JSXAttribute' && a.name.name === 'path')?.value;
-            const prefix = prop?.value ?? prop?.expression?.value;
+            if (parent.type !== 'JSXElement' || nodeName(parent.openingElement.name) !== 'Route') continue;
+            const prefix = jsxLiteral(jsxAttribute(parent, 'path'));
             if (typeof prefix === 'string') url = `${prefix.replace(/\/$/, '')}/${url}`.replace(/\/$/, '') || '/';
           }
           pending.push(route(source, element.expression, url.startsWith('/') ? url : `/${url}`));

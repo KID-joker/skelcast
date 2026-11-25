@@ -1,15 +1,19 @@
+import type * as t from '@babel/types';
+import { isRenderFunction, nodeName } from './ast.js';
+import { prepareRenderFunction } from './branches.js';
+import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseDOM, type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import type { Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation } from '../types.js';
 import { UNKNOWN, bindPattern, evaluate, evaluateString, expressionText, type Ast, type Value } from './expression.js';
-import { baseCSS, digest, loadStyle, scopeCSS, sourceIdAttribute, utilityCSS } from './styles.js';
+import { baseCSS, digest, loadStyle, scopeCSS, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
 import type { ComponentReference } from './presets/types.js';
 import { SourceModules, type CompilerOptions } from './modules.js';
-import { ambiguousExport, type ModuleInfo, type RenderContext, type SourceSlot } from './context.js';
-import { escapeHTML, styleString, classString, visit } from './html.js';
+import { ambiguousExport, type ModuleInfo, type RenderContext, type SourceSlot, type SourceNode } from './context.js';
+import { escapeHTML, styleString, visit } from './html.js';
 import { renderAttributes, renderElement, renderStaticHTML } from './output.js';
 import { renderJSX } from './react.js';
 import { renderVueNodes, renderVueNode } from './vue.js';
@@ -20,64 +24,44 @@ export class SourceCompiler extends SourceModules {
   private renderedNodes = 0;
   private budgetReported = false;
   constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}) { super(root, hints, aliases, options); }
-  diagnose(code: string, message: string, ctx: RenderContext, node?: Ast, id?: string) {
+  diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string) {
     const line = this.sourceLine(ctx, node);
     this.diagnostics.push({ code, message, file: this.relative(ctx.module.file), line, node: id });
   }
-  record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: Ast) {
+  record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: SourceNode) {
     this.evidence.push({ kind, expression, decision, file: this.relative(ctx.module.file), line: this.sourceLine(ctx, node) });
   }
-  private sourceLine(ctx: RenderContext, node?: Ast) {
+  private sourceLine(ctx: RenderContext, node?: SourceNode) {
     return (node?.loc?.start?.line ?? 1) + (ctx.module.descriptor?.template && ctx.code === ctx.module.descriptor.template.content ? ctx.module.descriptor.template.loc.start.line - 1 : 0);
   }
-  nodeId(ctx: RenderContext, node?: Ast): string {
-    const id = digest(`${this.relative(ctx.module.file)}:${node?.start ?? node?.loc?.start?.offset ?? 0}`).slice(0, 12);
+  nodeId(ctx: RenderContext, node?: SourceNode): string {
+    const id = digest(`${this.relative(ctx.module.file)}:${node?.start ?? node?.loc?.start.offset ?? 0}`).slice(0, 12);
     this.sources[id] = { file: this.relative(ctx.module.file), line: this.sourceLine(ctx, node) };
     return id;
   }
-  fallback(ctx: RenderContext, node: Ast, message: string, attrs = '') {
+  fallback(ctx: RenderContext, node: SourceNode | undefined, message: string, attrs = '') {
     const id = this.nodeId(ctx, node);
     this.diagnose('FALLBACK', message, ctx, node, id);
     const style = attrs.match(/ style="([^"]*)"/)?.[1];
     attrs = attrs.replace(/ style="[^"]*"/, '');
     return `<div data-sk-node="${id}" data-sk-fallback${ctx.mode === 'preserve' ? ' data-sk-control' : ' data-sk-leaf'}${attrs} style="${style ? `${style};` : ''}min-height:${this.hints.minHeight ?? 96}px"></div>`;
   }
-  text(ctx: RenderContext, node: Ast, multiline = false): string {
+  text(ctx: RenderContext, node: SourceNode | undefined, multiline = false): string {
     const id = this.nodeId(ctx, node);
     if (ctx.mode === 'preserve') return `<span data-sk-node="${id}" data-sk-text>&nbsp;</span>`;
     if (multiline && (this.hints.lines ?? 1) > 1) return `<span data-sk-node="${id}" data-sk-multiline>${Array.from({ length: this.hints.lines! }, () => '<span></span>').join('')}</span>`;
     return `<span data-sk-node="${id}" data-sk-text data-sk-leaf>&nbsp;</span>`;
   }
-  budget(ctx: RenderContext, node: Ast): string | undefined {
+  budget(ctx: RenderContext, node: SourceNode | undefined): string | undefined {
     if (++this.renderedNodes <= 6000) return;
     if (this.budgetReported) return '';
     this.budgetReported = true;
     return this.fallback(ctx, node, 'Static expansion budget reached; simplify the boundary or supply a local adapter');
   }
   private inheritRootScopes(html: string, scopes: string[], attrs: Record<string, Value> = {}, rootStyle = ''): string {
-    if (!html) return html;
-    const roots = parseDOM(html).children.filter((node): node is ElementNode => node.type === 1);
-    for (const node of roots.reverse()) {
-      let inherited = '';
-      if (roots.length === 1 || rootStyle) {
-        const forwarded: Record<string, Value> = roots.length === 1 ? { ...attrs } : {};
-        if (rootStyle) forwarded.style = `${rootStyle};${styleString(forwarded.style)}`;
-        for (const attr of [...node.props].reverse()) {
-          const key = attr.name === sourceIdAttribute ? 'id' : attr.name;
-          if (attr.type !== 6 || forwarded[key] == null || !this.attributes({ [key]: forwarded[key] })) continue;
-          if (attr.name === 'class') forwarded.class = `${attr.value?.content ?? ''} ${classString(forwarded.class)}`;
-          else if (attr.name === 'style') forwarded.style = `${attr.value?.content ?? ''};${styleString(forwarded.style)}`;
-          html = html.slice(0, attr.loc.start.offset) + html.slice(attr.loc.end.offset);
-        }
-        inherited = this.attributes(forwarded);
-      }
-      const extra = scopes.filter(s => !node.props.some(prop => prop.name === s));
-      const offset = node.loc.start.offset + node.tag.length + 1;
-      html = html.slice(0, offset) + inherited + extra.map(s => ` ${s}`).join('') + html.slice(offset);
-    }
-    return html;
+    return inheritRootScopes(html, scopes, attrs, rootStyle, props => this.attributes(props));
   }
-  async jsxNodes(nodes: Ast[], ctx: RenderContext): Promise<string> {
+  async jsxNodes(nodes: (Ast | null)[], ctx: RenderContext): Promise<string> {
     let html = '';
     for (const node of nodes) html += await this.jsx(node, ctx);
     return html;
@@ -94,11 +78,11 @@ export class SourceCompiler extends SourceModules {
     for (const [name, value] of Object.entries(bindings)) if (/^[\w$]+$/.test(name)) env[name] = value;
     if (mod.descriptor?.scriptSetup) {
       for (const statement of mod.ast.program.body) {
-        const declaration = statement.declaration ?? statement;
+        const declaration = statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration' ? statement.declaration ?? statement : statement;
         if (declaration.type !== 'VariableDeclaration') continue;
         for (const item of declaration.declarations) {
           if (item.id.type === 'Identifier' && mod.propBindings.includes(item.id.name)) continue;
-          if (item.id.type === 'ObjectPattern' && item.init?.type === 'CallExpression' && item.init.callee.name === 'toRefs') {
+          if (item.id.type === 'ObjectPattern' && item.init?.type === 'CallExpression' && nodeName(item.init.callee) === 'toRefs') {
             bindPattern(item.id, evaluate(item.init.arguments[0], { code: mod.code, env, bindings, unwrapRefs: true }), env);
           } else bindPattern(item.id, evaluate(item.init, { code: mod.code, env, bindings, unwrapRefs: true }), env);
         }
@@ -107,7 +91,7 @@ export class SourceCompiler extends SourceModules {
     return { module: mod, code: mod.code, env, bindings, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control };
   }
   private fallthroughAttrs(mod: ModuleInfo, props: Record<string, Value>): Record<string, Value> {
-    return Object.fromEntries(Object.entries(props).filter(([key]) => !key.startsWith('__sk') && !Object.hasOwn(mod.propDefaults, key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()))));
+    return fallthroughAttrs(mod, props);
   }
   private cssVariables(ctx: RenderContext): string {
     const styles: Record<string, Value> = {};
@@ -120,31 +104,12 @@ export class SourceCompiler extends SourceModules {
     }
     return styleString(styles);
   }
-  prepareFunction(fn: Ast, ctx: RenderContext, props: Record<string, Value>): Ast | undefined {
-    bindPattern(fn.params?.[0], props, ctx.env);
-    if (fn.params?.[0]?.type === 'ObjectPattern') for (const p of fn.params[0].properties) if (p.value?.type === 'AssignmentPattern') {
-      const key = p.key.name ?? p.key.value;
-      if (!Object.hasOwn(props, key) || props[key] === UNKNOWN) bindPattern(p.value.left, evaluate(p.value.right, ctx), ctx.env);
-    }
-    if (fn.body?.type !== 'BlockStatement') return fn.body;
-    let output: Ast | undefined;
-    for (const statement of fn.body.body) {
-      if (statement.type === 'VariableDeclaration') for (const d of statement.declarations) bindPattern(d.id, evaluate(d.init, ctx), ctx.env);
-      if (statement.type === 'ReturnStatement') { output = statement.argument; break; }
-      if (statement.type === 'IfStatement') {
-        const test = evaluate(statement.test, ctx);
-        const branch = test === UNKNOWN ? null : test ? statement.consequent : statement.alternate;
-        if (branch?.type === 'ReturnStatement') { output = branch.argument; break; }
-        if (branch?.type === 'BlockStatement') {
-          const ret = branch.body.find((n: Ast) => n.type === 'ReturnStatement');
-          if (ret) { output = ret.argument; break; }
-        }
-        if (test === UNKNOWN) this.record('branch', expressionText(statement.test, ctx), 'Unknown early-return guard: prefer the later content return', ctx, statement);
-      }
-    }
-    return output;
+  prepareFunction(fn: Ast | undefined, ctx: RenderContext, props: Record<string, Value>): Ast | undefined {
+    return prepareRenderFunction(fn, ctx, props, test => {
+      this.record('branch', expressionText(test, ctx), 'Unknown early-return guard: prefer the later content return', ctx, test);
+    });
   }
-  async component(file: string, exported: string, props: Record<string, Value> = {}, parent?: RenderContext, node?: Ast): Promise<string> {
+  async component(file: string, exported: string, props: Record<string, Value> = {}, parent?: RenderContext, node?: SourceNode): Promise<string> {
     const resolved = await this.resolveExport(file, exported, !parent);
     const component = resolved === ambiguousExport ? undefined : resolved;
     const mod = component?.module ?? await this.module(file);
@@ -178,20 +143,20 @@ export class SourceCompiler extends SourceModules {
     }
     const fn = component.fn;
     if (!fn) return this.fallback(ctx, node, `Cannot locate exported component ${exported}`);
-    if (!['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(fn.type)) return this.fallback(ctx, node, `Unsupported component declaration ${fn.type}`);
+    if (!isRenderFunction(fn)) return this.fallback(ctx, node, `Unsupported component declaration ${fn.type}`);
     const body = this.prepareFunction(fn, ctx, props);
     if (this.target.region && ctx.depth === 1) {
-      let region: Ast;
+      let region: t.JSXElement | undefined;
       visit(fn.body, n => {
-        if (n.type === 'JSXElement' && mod.boundaries.has(n.openingElement.name.name) && n.openingElement.attributes.some((a: Ast) => a.type === 'JSXAttribute' && a.name.name === 'artifact' && a.value?.expression?.name === this.target.region) && n.children.some((c: Ast) => c.type !== 'JSXText' || c.value.trim())) region = n;
+        if (n.type === 'JSXElement' && mod.boundaries.has(nodeName(n.openingElement.name) ?? '') && n.openingElement.attributes.some((a: Ast) => a.type === 'JSXAttribute' && a.name.name === 'artifact' && a.value?.type === 'JSXExpressionContainer' && a.value.expression.type === 'Identifier' && a.value.expression.name === this.target.region) && n.children.some((c: Ast) => c.type !== 'JSXText' || c.value.trim())) region = n;
       });
       return region ? this.jsxNodes(region.children, ctx) : this.fallback(ctx, node, `Missing source region ${this.target.region}`);
     }
     return body ? this.jsx(body, ctx) : this.fallback(ctx, node, `No supported render return in ${exported}`);
   }
-  jsx(node: Ast, ctx: RenderContext): Promise<string> { return renderJSX.call(this, node, ctx); }
+  jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string> { return renderJSX.call(this, node, ctx); }
   masked(ctx: RenderContext) { return ctx.mode === 'mask' || ctx.mode !== 'preserve' && !ctx.control; }
-  contentText(value: unknown, ctx: RenderContext, node: Ast): string {
+  contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string {
     if (!this.masked(ctx) && (typeof value === 'string' || typeof value === 'number')) return escapeHTML(value);
     return this.text(ctx, node);
   }
@@ -215,18 +180,20 @@ export class SourceCompiler extends SourceModules {
     const configured = Object.keys(this.options.components ?? {}).some(name => componentName(name) === componentName(tag));
     return configured ? (await this.globalComponents()).get(componentName(tag)) ?? direct : direct ?? (await this.globalComponents()).get(componentName(tag));
   }
-  async preset(tag: string, reference: ComponentReference | undefined, props: Record<string, Value>, nodes: Ast[], ctx: RenderContext, node: Ast, framework: 'vue' | 'jsx'): Promise<string | undefined> {
+  async preset(tag: string, reference: ComponentReference | undefined, props: Record<string, Value>, slot: SourceSlot, node: SourceNode): Promise<string | undefined> {
+    const ctx = slot.context;
     const resolved = resolvePreset(this.options.componentPresets, reference);
     if (!resolved) return;
     const {preset,name} = resolved;
     const role = preset.role(name, props);
     const local = { ...ctx, control: role === 'control' ? true : role === 'data' ? false : ctx.control };
     const slots = preset.slots(name);
-    const childrenNodes = framework === 'jsx' ? slots.includes('default') ? nodes : [] : (nodes as VueNode[]).flatMap(n => {
-      const slot = n.type === 1 && n.tag === 'template' ? n.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'slot')?.arg : undefined;
-      return slot && slot.type === 4 && n.type === 1 ? slots.includes(slot.content) ? n.children : [] : slots.includes('default') ? [n] : [];
-    });
-    const children = framework === 'vue' ? await this.vueNodes(childrenNodes, local) : await this.jsxNodes(childrenNodes, local);
+    const children = slot.framework === 'jsx'
+      ? await this.jsxNodes(slots.includes('default') ? slot.nodes : [], local)
+      : await this.vueNodes(slot.nodes.flatMap(n => {
+        const name = n.type === 1 && n.tag === 'template' ? n.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'slot')?.arg : undefined;
+        return name?.type === 4 && n.type === 1 ? slots.includes(name.content) ? n.children : [] : slots.includes('default') ? [n] : [];
+      }), local);
     const presentation = preset.present(name, props, children, this.masked(local) ? this.text(local,node) : this.contentText(props.value ?? props.title ?? UNKNOWN,local,node), this.hints, {mask:this.masked(local)});
     if (!presentation) return;
     this.record('component',tag,`Use ${preset.id} ${role} adapter for ${reference!.request}::${reference!.exported}`,ctx,node);
@@ -237,7 +204,7 @@ export class SourceCompiler extends SourceModules {
     return html;
   }
   attributes(props: Record<string, Value>): string { return renderAttributes.call(this, props); }
-  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: Ast): string { return renderElement.call(this, tag, props, children, ctx, node); }
+  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string { return renderElement.call(this, tag, props, children, ctx, node); }
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string> { return renderVueNodes.call(this, nodes, ctx); }
   vueNode(node: VueNode, ctx: RenderContext, skipFor = false): Promise<string> { return renderVueNode.call(this, node, ctx, skipFor); }
   staticHTML(source: string, ctx: RenderContext, origin: Ast): string { return renderStaticHTML.call(this, source, ctx, origin); }

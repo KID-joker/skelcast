@@ -1,8 +1,8 @@
 import { parse as parseDOM, type TemplateChildNode as VueNode } from '@vue/compiler-dom';
-import { UNKNOWN, type Ast, type Value } from './expression.js';
+import { UNKNOWN, type Value } from './expression.js';
 import { escapeHTML, voids, nonVisual, styleString, classString } from './html.js';
 import { sourceIdAttribute, utilityAttribute } from './styles.js';
-import type { RenderContext } from './context.js';
+import type { RenderContext, SourceNode } from './context.js';
 import type { RenderHost } from './render-host.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
@@ -23,7 +23,7 @@ export function renderAttributes(this: RenderHost, props: Record<string, Value>)
   }
   return attrs;
 }
-export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: Ast): string {
+export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string {
   for (const [key, value] of Object.entries(props)) {
     if (layoutAttribute(key) && (value === UNKNOWN || value != null && !['string', 'number', 'boolean'].includes(typeof value))) {
       this.diagnose('LAYOUT_ATTRIBUTE_UNKNOWN', `Cannot resolve ${key}; attribute selectors may not match. Supply an explicit binding`, ctx, node);
@@ -45,7 +45,7 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
   }
   return voids.has(tag) ? `<${tag}${attrs}>` : `<${tag}${attrs}>${children}</${tag}>`;
 }
-export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderContext, origin: Ast): string {
+export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderContext, origin: SourceNode): string {
   this.record('component', 'v-html', 'Replace bounded static HTML content with inert semantic placeholders', ctx, origin);
   const render = (node: VueNode): string => {
     const exhausted = this.budget(ctx, origin);

@@ -1,3 +1,5 @@
+import type * as t from '@babel/types';
+import { isRenderFunction, nodeName } from './ast.js';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseJS } from '@babel/parser';
@@ -83,7 +85,7 @@ export class SourceModules {
     try {
       const ast = parseJS(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
       const requests: string[] = [];
-      visit(ast, n => { if (['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(n.type) && n.source) requests.push(n.source.value); });
+      visit(ast, n => { if ((n.type === 'ImportDeclaration' || n.type === 'ExportNamedDeclaration' || n.type === 'ExportAllDeclaration') && n.source) requests.push(n.source.value); });
       for (const request of requests) { const dep = await this.resolve(file, request); if (dep) await this.scan(dep); }
     } catch { /* unsupported dependency is still fingerprinted */ }
   }
@@ -104,32 +106,32 @@ export class SourceModules {
       descriptor = parsed.descriptor;
       code = [descriptor.script?.content, descriptor.scriptSetup?.content].filter(Boolean).join('\n');
     }
-    const ast: Ast = parseJS(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
+    const ast = parseJS(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
     const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), exports: new Map(), reexports: new Map(), exportAll: [], env: Object.create(null), scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
     const ec = { code, env: mod.env, bindings: this.hints.bindings ?? {} };
     for (const statement of ast.program.body) {
-      const decl = statement.declaration ?? statement;
+      const decl = statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportNamedDeclaration' ? statement.declaration ?? statement : statement;
       if (decl.type === 'FunctionDeclaration' && decl.id) { mod.functions.set(decl.id.name, decl); mod.env[decl.id.name] = UNKNOWN; }
       if (decl.type === 'VariableDeclaration') for (const d of decl.declarations) {
-        let init = d.init;
-        if (init?.type === 'CallExpression' && ['memo', 'forwardRef'].includes(init.callee.name)) init = init.arguments[0];
-        if (d.id.type === 'Identifier' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(init?.type)) mod.functions.set(d.id.name, init);
+        let init: t.Node | null | undefined = d.init;
+        if (init?.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(init.callee) ?? '')) init = init.arguments[0];
+        if (d.id.type === 'Identifier' && isRenderFunction(init)) mod.functions.set(d.id.name, init);
         else bindPattern(d.id, evaluate(d.init, ec), mod.env);
       }
       if (statement.type === 'ExportDefaultDeclaration') {
         mod.exports.set('default', 'default');
         const d = statement.declaration;
         if (d.type === 'Identifier') mod.functions.set('default', d);
-        else if (d.type === 'CallExpression' && ['memo', 'forwardRef'].includes(d.callee.name)) mod.functions.set('default', d.arguments[0]);
+        else if (d.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(d.callee) ?? '')) { if (d.arguments[0]) mod.functions.set('default', d.arguments[0]); }
         else mod.functions.set('default', d);
       }
       if (statement.type === 'ImportDeclaration') {
         for (const spec of statement.specifiers) mod.env[spec.local.name] = UNKNOWN;
-        if (['skelcast/react', 'skelcast/vue'].includes(statement.source.value)) for (const spec of statement.specifiers) if (spec.imported?.name === 'LoadingBoundary') mod.boundaries.add(spec.local.name);
+        if (['skelcast/react', 'skelcast/vue'].includes(statement.source.value)) for (const spec of statement.specifiers) if (spec.type === 'ImportSpecifier' && nodeName(spec.imported) === 'LoadingBoundary') mod.boundaries.add(spec.local.name);
         const resolved = await this.resolve(file, statement.source.value);
-        for (const spec of statement.specifiers) if (spec.importKind !== 'type' && statement.importKind !== 'type') mod.imports.set(spec.local.name, {
+        for (const spec of statement.specifiers) if ((spec.type !== 'ImportSpecifier' || spec.importKind !== 'type') && statement.importKind !== 'type') mod.imports.set(spec.local.name, {
           file: resolved, request: statement.source.value,
-          exported: spec.type === 'ImportNamespaceSpecifier' ? '*' : spec.type === 'ImportDefaultSpecifier' ? 'default' : spec.imported?.name ?? spec.imported?.value,
+          exported: spec.type === 'ImportNamespaceSpecifier' ? '*' : spec.type === 'ImportDefaultSpecifier' ? 'default' : nodeName(spec.imported)!,
         });
         if (resolved && /\.(css|less)$/.test(resolved)) {
           const { css, mapping } = await loadStyle(resolved, f => this.read(f), undefined, undefined, this.options.styles);
@@ -143,10 +145,10 @@ export class SourceModules {
         const request = statement.source?.value;
         const resolved = request ? await this.resolve(file, request) : undefined;
         for (const spec of statement.specifiers ?? []) {
-          if (spec.exportKind === 'type') continue;
-          const name = spec.exported.name ?? spec.exported.value;
-          if (request) mod.reexports.set(name, { file: resolved, request, exported: spec.type === 'ExportNamespaceSpecifier' ? '*' : spec.local.name ?? spec.local.value });
-          else mod.exports.set(name, spec.local.name ?? spec.local.value);
+          if (spec.type === 'ExportSpecifier' && spec.exportKind === 'type') continue;
+          const name = nodeName(spec.exported)!;
+          if (request) mod.reexports.set(name, { file: resolved, request, exported: spec.type === 'ExportNamespaceSpecifier' ? '*' : spec.type === 'ExportDefaultSpecifier' ? 'default' : nodeName(spec.local)! });
+          else if (spec.type === 'ExportSpecifier') mod.exports.set(name, nodeName(spec.local)!);
         }
       }
       if (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') mod.exportAll.push({ file: await this.resolve(file, statement.source.value), request: statement.source.value, exported: '*' });
@@ -154,20 +156,20 @@ export class SourceModules {
     if (descriptor) {
       // Missing declared props have Vue's absent value, rather than an opaque
       // business value. Read only local type members; imported types stay unknown.
-      const declaredProps = (type: Ast) => {
+      const declaredProps = (type: Ast | undefined) => {
         if (type?.type === 'TSIntersectionType') { type.types.forEach(declaredProps); return; }
         if (type?.type !== 'TSTypeLiteral') return;
         for (const member of type.members) {
-          const key = member.key?.name ?? member.key?.value;
+          const key = member.type === 'TSPropertySignature' ? nodeName(member.key) : undefined;
           if (member.type === 'TSPropertySignature' && !member.computed && typeof key === 'string') mod.propDefaults[key] = member.typeAnnotation?.typeAnnotation?.type === 'TSBooleanKeyword' ? false : undefined;
         }
       };
       visit(ast, n => {
-        if (n.type === 'CallExpression' && n.callee.name === 'defineOptions' && n.arguments[0]?.type === 'ObjectExpression') {
+        if (n.type === 'CallExpression' && nodeName(n.callee) === 'defineOptions' && n.arguments[0]?.type === 'ObjectExpression') {
           const value = evaluate(n.arguments[0], ec);
           if (value && typeof value === 'object' && 'inheritAttrs' in value && value.inheritAttrs === false) mod.inheritAttrs = false;
         }
-        if (n.type === 'CallExpression' && n.callee.name === 'defineProps') {
+        if (n.type === 'CallExpression' && nodeName(n.callee) === 'defineProps') {
           declaredProps(n.typeParameters?.params?.[0]);
           const runtime = n.arguments[0];
           if (runtime?.type === 'ArrayExpression') for (const item of runtime.elements) if (item?.type === 'StringLiteral') mod.propDefaults[item.value] = undefined;
@@ -176,17 +178,18 @@ export class SourceModules {
       visit(ast, n => {
         if (n.type !== 'VariableDeclarator' || n.id.type !== 'Identifier') return;
         const init = n.init;
-        const declaration = init?.callee?.name === 'withDefaults' ? init.arguments[0] : init;
-        if (declaration?.callee?.name !== 'defineProps') return;
+        if (init?.type !== 'CallExpression') return;
+        const declaration = nodeName(init.callee) === 'withDefaults' ? init.arguments[0] : init;
+        if (declaration?.type !== 'CallExpression' || nodeName(declaration.callee) !== 'defineProps') return;
         mod.propBindings.push(n.id.name);
-        if (init.callee.name === 'withDefaults') {
+        if (nodeName(init.callee) === 'withDefaults') {
           const defaults = evaluate(init.arguments[1], ec);
           if (defaults && defaults !== UNKNOWN && typeof defaults === 'object') Object.assign(mod.propDefaults, defaults);
           // Vue invokes default factories. Interpret only their literal
           // expression bodies; never call source functions.
-          for (const property of init.arguments[1]?.properties ?? []) {
+          for (const property of init.arguments[1]?.type === 'ObjectExpression' ? init.arguments[1].properties : []) {
             if (property.type !== 'ObjectProperty' || property.computed || property.value.type !== 'ArrowFunctionExpression' || property.value.params.length || property.value.body.type === 'BlockStatement') continue;
-            const key = property.key.name ?? property.key.value;
+            const key = nodeName(property.key);
             if (typeof key === 'string') mod.propDefaults[key] = evaluate(property.value.body, ec);
           }
         }

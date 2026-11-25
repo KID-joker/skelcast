@@ -1,4 +1,4 @@
-import { parse } from '@vue/compiler-dom';
+import { parse, type RootNode, type TemplateChildNode, type SimpleExpressionNode } from '@vue/compiler-dom';
 import type { SkeletonArtifact } from './types.js';
 import { checkProject, readArtifact, type Project } from './generator.js';
 
@@ -22,16 +22,16 @@ export function analyzeQuality(artifact: SkeletonArtifact): ArtifactQuality {
   for (const diagnostic of artifact.diagnostics) result.diagnostics[diagnostic.code] = (result.diagnostics[diagnostic.code] ?? 0) + 1;
   for (const [name, view] of Object.entries(artifact.variants)) {
     const quality: VariantQuality = { nodes: 0, placeholders: 0, preservedNodes: 0, fallbacks: 0, unresolvedComponents: [], issues: [] };
-    const walk = (node: any) => {
+    const walk = (node: RootNode | TemplateChildNode | SimpleExpressionNode) => {
       if (node.type === 1) {
-        const has = (name: string) => node.props.some((prop: any) => prop.type === 6 && prop.name === name);
+        const has = (name: string) => node.props.some((prop) => prop.type === 6 && prop.name === name);
         quality.nodes++;
         if (has('data-sk-leaf') || has('data-sk-multiline')) quality.placeholders++;
         if (has('data-sk-control')) quality.preservedNodes++;
         if (has('data-sk-fallback') || has('data-sk-opaque')) quality.fallbacks++;
         if (node.tagType === 1) quality.unresolvedComponents.push(node.tag);
       }
-      for (const child of node.children ?? []) walk(child);
+      if ('children' in node) for (const child of node.children) if (typeof child === 'object') walk(child);
     };
     try { walk(parse(view.html)); }
     catch (error) { quality.issues.push(`INVALID_HTML: ${String(error)}`); }

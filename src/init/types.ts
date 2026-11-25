@@ -1,4 +1,5 @@
 import type { SkeletonConfig, SkeletonTarget } from '../types.js';
+import type { RenderFunction } from '../compiler/ast.js';
 import type { Edit } from './ast.js';
 
 export interface InitDiagnostic { code: string; message: string; file: string; line?: number }
@@ -14,7 +15,7 @@ export interface InitReport {
   generated?: { id: string; state: 'generated' | 'reused'; diagnostics: number }[];
   backup?: string;
 }
-export interface ComponentInfo { name: string; exported: string; node: any }
+export interface ComponentInfo { name: string; exported: string; node: RenderFunction }
 export interface FileAnalysis { edits: Edit[]; targets: SkeletonTarget[]; diagnostics: InitDiagnostic[] }
 export interface AnalysisContext {
   file: string;

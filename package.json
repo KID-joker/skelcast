@@ -35,6 +35,10 @@
       "types": "./dist/adapters/vue.d.ts",
       "import": "./dist/adapters/vue.js"
     },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
     "./client": "./dist/client.js",
     "./virtual": { "types": "./dist/virtual.d.ts" }
   },

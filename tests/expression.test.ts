@@ -23,3 +23,12 @@ test('loose equality never coerces objects or functions and propagates unknown v
   assert.equal(evaluate('missing == false'), UNKNOWN);
   assert.equal(calls, 0);
 });
+
+test('relational comparisons preserve primitive semantics without invoking business coercion', () => {
+  let calls = 0;
+  const object = { valueOf() { calls++; throw new Error('business code'); } };
+  for (const source of ['object > 0', 'object < 0', 'object >= 0', 'object <= 0']) assert.equal(evaluate(source, { object }), UNKNOWN);
+  for (const [source, expected] of [['null < 1', true], ['undefined < 1', false], ['false <= 0', true], ['"10" < "2"', true], ['"10" < 2', false]] as const) assert.equal(evaluate(source), expected, source);
+  assert.equal(evaluate('left < right', { left: 1n, right: '1.5' }), false);
+  assert.equal(calls, 0);
+});

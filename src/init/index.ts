@@ -1,10 +1,11 @@
+import type * as t from '@babel/types';
 import { mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { evaluate, UNKNOWN } from '../compiler/expression.js';
 import { digest } from '../compiler/styles.js';
 import { projectFromConfig, syncProject } from '../generator.js';
 import type { SkeletonConfig } from '../types.js';
-import { applyEdits, objectConfig, parseCode, type Ast } from './ast.js';
+import { applyEdits, startOf, endOf, nodeName, objectConfig, parseCode, type Ast } from './ast.js';
 import { analyzeReact } from './react.js';
 import { inferredRoute, isPageFile, relativePath, resolveSource, scanProject } from './scan.js';
 import { analyzeVue } from './vue.js';
@@ -13,22 +14,22 @@ import type { InitChange, InitOptions, InitReport } from './types.js';
 export type { InitChange, InitDiagnostic, InitOptions, InitReport } from './types.js';
 
 async function optionalRead(file: string): Promise<string | null> {
-  try { return await readFile(file, 'utf8'); } catch (error: any) { if (error.code === 'ENOENT') return null; throw error; }
+  try { return await readFile(file, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 function hasUnknown(value: unknown): boolean {
   return value === UNKNOWN || value != null && typeof value === 'object' && Object.values(value).some(hasUnknown);
 }
-function literalConfig(code: string): { config: SkeletonConfig; object: Ast; ast: Ast } {
+function literalConfig(code: string): { config: SkeletonConfig; object: t.ObjectExpression; ast: t.File } {
   const ast = parseCode(code), object = objectConfig(ast);
   if (!object) throw new Error('Existing SkelCast config is not a static object; preserve it and integrate targets manually');
   const config = evaluate(object, { code, env: {}, bindings: {} }) as SkeletonConfig;
   if (hasUnknown(config) || !Array.isArray(config.targets)) throw new Error('Existing SkelCast config contains dynamic values; init will not overwrite it');
   return { config, object, ast };
 }
-function insertItems(code: string, node: Ast, items: string[], existing: Ast[]): { start: number; end: number; text: string } {
-  const last = existing.at(-1);
-  const comma = last && !code.slice(last.end, node.end - 1).includes(',') ? ',' : '';
-  return { start: node.end - 1, end: node.end - 1, text: `${comma}\n${items.join(',\n')}\n` };
+function insertItems(code: string, node: Ast, items: string[], existing: (Ast | null)[]): { start: number; end: number; text: string } {
+  const last = existing.filter((node): node is Ast => node != null).at(-1);
+  const comma = last && !code.slice(endOf(last), endOf(node) - 1).includes(',') ? ',' : '';
+  return { start: endOf(node) - 1, end: endOf(node) - 1, text: `${comma}\n${items.join(',\n')}\n` };
 }
 export async function initProject(directory = process.cwd(), options: InitOptions = {}): Promise<InitReport> {
   const root = await realpath(path.resolve(directory));
@@ -52,7 +53,7 @@ export async function initProject(directory = process.cwd(), options: InitOption
   }
   const configFile = relativePath(root, path.join(configRoot, 'skelcast.config.mjs'));
   const existingText = await optionalRead(path.join(root, configFile));
-  let existing: SkeletonConfig = { targets: [] }, configObject: Ast;
+  let existing: SkeletonConfig = { targets: [] }, configObject: t.ObjectExpression;
   if (existingText != null) {
     try { const parsed = literalConfig(existingText); existing = parsed.config; configObject = parsed.object; }
     catch (error) { report.diagnostics.push({ code: 'CONFIG_DYNAMIC', file: configFile, message: String(error) }); return report; }
@@ -98,14 +99,16 @@ export async function initProject(directory = process.cwd(), options: InitOption
   } else {
     const edits = [];
     if (report.targets.length) {
-      const targets = configObject!.properties.find((p: Ast) => p.type === 'ObjectProperty' && (p.key.name ?? p.key.value) === 'targets').value;
+      const property = configObject!.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'targets');
+      if (property?.type !== 'ObjectProperty' || property.value.type !== 'ArrayExpression') throw new Error('Static targets array required');
+      const targets = property.value;
       edits.push(insertItems(existingText, targets, report.targets.map(t => JSON.stringify(t, null, 2)), targets.elements));
     }
     const missingAliases = Object.entries(aliases).filter(([key]) => !Object.hasOwn(existing.aliases ?? {}, key));
     if (missingAliases.length) {
-      const prop = configObject!.properties.find((p: Ast) => p.type === 'ObjectProperty' && (p.key.name ?? p.key.value) === 'aliases');
-      if (prop) edits.push(insertItems(existingText, prop.value, missingAliases.map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`), prop.value.properties));
-      else edits.push({ start: configObject!.start + 1, end: configObject!.start + 1, text: `\n  aliases: ${JSON.stringify(Object.fromEntries(missingAliases))},\n` });
+      const prop = configObject!.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'aliases');
+      if (prop?.type === 'ObjectProperty' && prop.value.type === 'ObjectExpression') edits.push(insertItems(existingText, prop.value, missingAliases.map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`), prop.value.properties));
+      else edits.push({ start: startOf(configObject!) + 1, end: startOf(configObject!) + 1, text: `\n  aliases: ${JSON.stringify(Object.fromEntries(missingAliases))},\n` });
     }
     if (edits.length) report.changes.push({ file: configFile, before: existingText, after: applyEdits(existingText, edits), reason: 'Append discovered targets without replacing existing configuration' });
   }

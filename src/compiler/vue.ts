@@ -138,7 +138,7 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
   }
   if (imported?.file && /\.(vue|tsx|jsx|ts|js)$/.test(imported.file)) return this.component(imported.file, imported.exported, props, ctx, node);
   if (componentName(tag) === 'routerlink') return this.element('a', props, await this.vueNodes(node.children, ctx), ctx, node);
-  const presentation = await this.preset(tag, imported, props, node.children, ctx, node, 'vue');
+  const presentation = await this.preset(tag, imported, props, { nodes: node.children, context: ctx, framework: 'vue' }, node);
   if (presentation !== undefined) return presentation;
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   if (nonVisual.has(tag)) return '';

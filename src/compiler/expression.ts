@@ -1,8 +1,10 @@
 import { parseExpression } from '@babel/parser';
+import type * as t from '@babel/types';
+import { nodeName } from './ast.js';
 
 export const UNKNOWN = Symbol('unknown');
 export type Value = unknown;
-export type Ast = any;
+export type { Ast } from './ast.js';
 export interface ExpressionContext {
   code: string;
   env: Record<string, Value>;
@@ -12,7 +14,7 @@ export interface ExpressionContext {
   /** Shared work limit for nested bounded collection operations. */
   budget?: { remaining: number };
 }
-export const expressionText = (node: Ast, ctx: ExpressionContext): string =>
+export const expressionText = (node: t.Node | null | undefined, ctx: ExpressionContext): string =>
   node?.start != null && node?.end != null ? ctx.code.slice(node.start, node.end) : '';
 const denied = new Set(['__proto__', 'prototype', 'constructor']);
 export const safeKey = (key: unknown): key is string => typeof key === 'string' && !denied.has(key);
@@ -35,13 +37,13 @@ function inferredObject(name: string, ctx: ExpressionContext): Value {
 }
 
 // This is an abstract, bounded interpreter. No eval, Function, imports or business calls.
-export function evaluate(node: Ast, ctx: ExpressionContext, depth = 0): Value {
+export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext, depth = 0): Value {
   if (!ctx.budget) ctx = { ...ctx, budget: { remaining: 10000 } };
   if (--ctx.budget!.remaining < 0) return UNKNOWN;
   if (!node || depth > 40) return UNKNOWN;
   const text = expressionText(node, ctx);
   if (Object.hasOwn(ctx.bindings, text)) return ctx.bindings[text];
-  const ev = (n: Ast) => evaluate(n, ctx, depth + 1);
+  const ev = (n: t.Node | null | undefined) => evaluate(n, ctx, depth + 1);
   switch (node.type) {
     case 'TSAsExpression': case 'TSTypeAssertion': case 'TSNonNullExpression': case 'ParenthesizedExpression': return ev(node.expression);
     case 'StringLiteral': case 'NumericLiteral': case 'BooleanLiteral': return node.value;
@@ -51,15 +53,15 @@ export function evaluate(node: Ast, ctx: ExpressionContext, depth = 0): Value {
       const value = Object.hasOwn(ctx.env, node.name) ? ctx.env[node.name] : UNKNOWN;
       return value === UNKNOWN ? inferredObject(node.name, ctx) : value;
     }
-    case 'ArrayExpression': return node.elements.map((n: Ast) => n ? ev(n) : UNKNOWN);
+    case 'ArrayExpression': return node.elements.map(n => n ? ev(n) : UNKNOWN);
     case 'ObjectExpression': {
       const result: Record<string, Value> = Object.create(null);
       for (const p of node.properties) {
         if (p.type === 'SpreadElement') {
           const v = ev(p.argument);
-          if (v && v !== UNKNOWN && typeof v === 'object') for (const k of Object.keys(v)) if (safeKey(k)) result[k] = (v as any)[k];
+          if (v && v !== UNKNOWN && typeof v === 'object') for (const k of Object.keys(v)) if (safeKey(k)) result[k] = (v as Record<string, unknown>)[k];
         } else if (p.type === 'ObjectProperty') {
-          const key = p.computed ? ev(p.key) : p.key.name ?? p.key.value;
+          const key = p.computed ? ev(p.key) : nodeName(p.key);
           if (safeKey(String(key))) result[String(key)] = ev(p.value);
         }
       }
@@ -67,18 +69,20 @@ export function evaluate(node: Ast, ctx: ExpressionContext, depth = 0): Value {
     }
     case 'MemberExpression': case 'OptionalMemberExpression': {
       const obj = ev(node.object);
-      const key = node.computed ? ev(node.property) : node.property.name;
+      const key = node.computed ? ev(node.property) : nodeName(node.property);
       if (key === UNKNOWN || !safeKey(String(key))) return UNKNOWN;
-      if (node.property.name === 'value' && obj !== UNKNOWN && (obj === null || typeof obj !== 'object')) return obj;
-      if (ctx.unwrapRefs && node.property.name === 'value' && obj !== UNKNOWN && obj != null && !Object.hasOwn(Object(obj), 'value')) return obj;
+      if (nodeName(node.property) === 'value' && obj !== UNKNOWN && (obj === null || typeof obj !== 'object')) return obj;
+      if (ctx.unwrapRefs && nodeName(node.property) === 'value' && obj !== UNKNOWN && obj != null && !Object.hasOwn(Object(obj), 'value')) return obj;
       if (obj === UNKNOWN || obj == null) return UNKNOWN;
-      if (node.object.type === 'Identifier' && node.object.name === '$slots') return Object.hasOwn(obj, key as any) ? (obj as any)[key as any] : undefined;
-      return Object.hasOwn(Object(obj), key as any) ? (obj as any)[key as any] : UNKNOWN;
+      const name = String(key);
+      const object = Object(obj) as Record<string, unknown>;
+      if (node.object.type === 'Identifier' && node.object.name === '$slots') return Object.hasOwn(object, name) ? object[name] : undefined;
+      return Object.hasOwn(object, name) ? object[name] : UNKNOWN;
     }
     case 'TemplateLiteral': {
       const values = node.expressions.map(ev);
       if (values.includes(UNKNOWN)) return UNKNOWN;
-      return node.quasis.map((q: Ast, i: number) => q.value.cooked + (i < values.length ? String(values[i]) : '')).join('');
+      return node.quasis.map((q, i) => q.value.cooked + (i < values.length ? String(values[i]) : '')).join('');
     }
     case 'ConditionalExpression': {
       const test = ev(node.test);
@@ -122,42 +126,52 @@ export function evaluate(node: Ast, ctx: ExpressionContext, depth = 0): Value {
         case '-': return typeof a === 'number' && typeof b === 'number' ? a - b : UNKNOWN;
         case '*': return typeof a === 'number' && typeof b === 'number' ? a * b : UNKNOWN;
         case '/': return typeof a === 'number' && typeof b === 'number' && b !== 0 ? a / b : UNKNOWN;
-        case '>': return (a as any) > (b as any); case '<': return (a as any) < (b as any);
-        case '>=': return (a as any) >= (b as any); case '<=': return (a as any) <= (b as any);
+        case '>': case '<': case '>=': case '<=': {
+          // Relational comparisons must not invoke business coercion hooks either.
+          const comparable = (value: unknown): value is string | number | bigint => ['string', 'number', 'bigint'].includes(typeof value);
+          const left = typeof a === 'boolean' || a == null ? Number(a) : a;
+          const right = typeof b === 'boolean' || b == null ? Number(b) : b;
+          if (!comparable(left) || !comparable(right)) return UNKNOWN;
+          if (node.operator === '>') return left > right;
+          if (node.operator === '<') return left < right;
+          if (node.operator === '>=') return left >= right;
+          return left <= right;
+        }
       }
       return UNKNOWN;
     }
     case 'CallExpression': {
-      const name = node.callee.name;
-      if (node.callee.type === 'MemberExpression' && !node.callee.computed && node.callee.property.name === 'trim' && !node.arguments.length) {
+      const name = nodeName(node.callee);
+      const member = node.callee.type === 'MemberExpression' && !node.callee.computed ? nodeName(node.callee.property) : undefined;
+      if (node.callee.type === 'MemberExpression' && !node.callee.computed && nodeName(node.callee.property) === 'trim' && !node.arguments.length) {
         const value = ev(node.callee.object);
         return typeof value === 'string' ? value.trim() : UNKNOWN;
       }
-      if (node.callee.type === 'MemberExpression' && node.callee.object.name === 'Object' && !node.callee.computed && ['keys', 'entries', 'values'].includes(node.callee.property.name) && !Object.hasOwn(ctx.env, 'Object') && !Object.hasOwn(ctx.bindings, 'Object')) {
+      if (node.callee.type === 'MemberExpression' && nodeName(node.callee.object) === 'Object' && !node.callee.computed && ['keys', 'entries', 'values'].includes(member ?? '') && !Object.hasOwn(ctx.env, 'Object') && !Object.hasOwn(ctx.bindings, 'Object')) {
         const value = ev(node.arguments[0]);
-        return value && value !== UNKNOWN && typeof value === 'object' ? node.callee.property.name === 'entries' ? Object.entries(value) : node.callee.property.name === 'values' ? Object.values(value) : Object.keys(value) : UNKNOWN;
+        return value && value !== UNKNOWN && typeof value === 'object' ? nodeName(node.callee.property) === 'entries' ? Object.entries(value) : nodeName(node.callee.property) === 'values' ? Object.values(value) : Object.keys(value) : UNKNOWN;
       }
-      if (node.callee.type === 'MemberExpression' && !node.callee.computed && ['map', 'find'].includes(node.callee.property.name)) {
+      if (node.callee.type === 'MemberExpression' && !node.callee.computed && ['map', 'find'].includes(member ?? '')) {
         const list = ev(node.callee.object), fn = node.arguments[0];
         if (!Array.isArray(list) || list.length > 256 || fn?.type !== 'ArrowFunctionExpression' || fn.async || node.arguments.length !== 1) return UNKNOWN;
         const result = [];
         for (let index = 0; index < list.length; index++) {
           const value = arrowValue(fn, [list[index], index, list], ctx, depth + 1);
-          if (node.callee.property.name === 'find') {
+          if (nodeName(node.callee.property) === 'find') {
             if (value === UNKNOWN) return UNKNOWN;
             if (value) return list[index];
           } else result.push(value);
           if (ctx.budget!.remaining < 0) return UNKNOWN;
         }
-        return node.callee.property.name === 'find' ? undefined : result;
+        return nodeName(node.callee.property) === 'find' ? undefined : result;
       }
       // Recognize source-level wrappers; never invoke the actual implementation.
-      if (['ref', 'shallowRef', 'reactive', 'readonly'].includes(name)) return node.arguments.length ? ev(node.arguments[0]) : ['ref', 'shallowRef'].includes(name) ? undefined : UNKNOWN;
+      if (['ref', 'shallowRef', 'reactive', 'readonly'].includes(name ?? '')) return node.arguments.length ? ev(node.arguments[0]) : ['ref', 'shallowRef'].includes(name ?? '') ? undefined : UNKNOWN;
       if (name === 'useVModel') {
         const props = ev(node.arguments[0]), key = node.arguments[1] ? ev(node.arguments[1]) : 'modelValue';
-        return props && props !== UNKNOWN && typeof props === 'object' && safeKey(key) && Object.hasOwn(props, key) ? (props as any)[key] : UNKNOWN;
+        return props && props !== UNKNOWN && typeof props === 'object' && safeKey(key) && Object.hasOwn(props, key) ? (props as Record<string, unknown>)[key] : UNKNOWN;
       }
-      if (['computed', 'useMemo'].includes(name)) {
+      if (['computed', 'useMemo'].includes(name ?? '')) {
         const fn = node.arguments[0];
         if (fn?.type === 'ArrowFunctionExpression' && !fn.async) return arrowValue(fn, [], ctx, depth + 1);
       }
@@ -167,13 +181,13 @@ export function evaluate(node: Ast, ctx: ExpressionContext, depth = 0): Value {
   return UNKNOWN;
 }
 
-function arrowValue(fn: Ast, args: Value[], ctx: ExpressionContext, depth: number): Value {
+function arrowValue(fn: t.ArrowFunctionExpression, args: Value[], ctx: ExpressionContext, depth: number): Value {
   if (depth > 40) return UNKNOWN;
   const local = { ...ctx, env: { ...ctx.env } };
-  fn.params.forEach((param: Ast, index: number) => bindPattern(param, args[index], local.env));
-  const ev = (node: Ast) => evaluate(node, local, depth + 1);
+  fn.params.forEach((param, index) => bindPattern(param, args[index], local.env));
+  const ev = (node: t.Node | null | undefined) => evaluate(node, local, depth + 1);
   if (fn.body.type !== 'BlockStatement') return ev(fn.body);
-  const statements = (body: Ast[]): { value: Value } | undefined => {
+  const statements = (body: t.Statement[]): { value: Value } | undefined => {
     for (const statement of body) {
       if (--local.budget!.remaining < 0) return { value: UNKNOWN };
       if (statement.type === 'ReturnStatement') return { value: statement.argument ? ev(statement.argument) : undefined };
@@ -199,14 +213,14 @@ export function evaluateString(text: string, ctx: ExpressionContext): Value {
   catch { return UNKNOWN; }
 }
 
-export function bindPattern(pattern: Ast, value: Value, env: Record<string, Value>): void {
+export function bindPattern(pattern: t.Node | null | undefined, value: Value, env: Record<string, Value>): void {
   if (!pattern) return;
   if (pattern.type === 'Identifier') env[pattern.name] = value;
   else if (pattern.type === 'AssignmentPattern') bindPattern(pattern.left, value, env);
   else if (pattern.type === 'ObjectPattern') {
     for (const p of pattern.properties) if (p.type === 'ObjectProperty') {
-      const key = p.key.name ?? p.key.value;
-      bindPattern(p.value, value && value !== UNKNOWN && typeof value === 'object' && Object.hasOwn(value, key) ? (value as any)[key] : UNKNOWN, env);
+      const key = nodeName(p.key);
+      bindPattern(p.value, value && value !== UNKNOWN && typeof value === 'object' && key != null && Object.hasOwn(value, key) ? (value as Record<string, unknown>)[key!] : UNKNOWN, env);
     }
-  } else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((p: Ast, i: number) => bindPattern(p, Array.isArray(value) ? value[i] : UNKNOWN, env));
+  } else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((p, i) => bindPattern(p, Array.isArray(value) ? value[i] : UNKNOWN, env));
 }

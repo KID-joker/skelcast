@@ -1,0 +1,1 @@
+{"name":"acceptance-react-admin","private":true,"type":"module","dependencies":{"react":">=18","react-dom":">=18","skelcast":"0.1.0"},"devDependencies":{"vite":">=6","@vitejs/plugin-react":"*"}}

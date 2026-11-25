@@ -1,0 +1,44 @@
+import { test, expect } from '@playwright/test';
+
+test('inspector keeps per-target drafts, caret, disclosure and focus through status updates and failed saves', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5174/?__sk=products.list');
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click();
+  await expect(page.locator('[data-sk-boundary="products.page"]')).toHaveAttribute('aria-busy', 'false');
+  const toolbar = page.locator('#skelcast-devtools');
+  await toolbar.getByRole('button', { name: 'More', exact: true }).click();
+  const hints = toolbar.locator('details[data-ui-key="hints"]');
+  await hints.locator('summary').click();
+  await toolbar.getByLabel('Repeat count').fill('17');
+  const bindings = toolbar.locator('#bindings');
+  await bindings.fill('{"unfinished": ');
+  const original = await bindings.elementHandle();
+  await bindings.evaluate(element => {
+    const input = element as HTMLTextAreaElement;
+    input.setSelectionRange(3, 8);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await expect(bindings).toHaveValue('{"unfinished": ');
+  expect(await original!.evaluate(element => element === (element.getRootNode() as ShadowRoot).querySelector('#bindings'))).toBe(true);
+  expect(await bindings.evaluate(element => ({ focused: element.getRootNode() instanceof ShadowRoot && (element.getRootNode() as ShadowRoot).activeElement === element, start: (element as HTMLTextAreaElement).selectionStart, end: (element as HTMLTextAreaElement).selectionEnd }))).toEqual({ focused: true, start: 3, end: 8 });
+  await toolbar.getByLabel('Highlight fallbacks').check();
+  await expect(toolbar.getByLabel('Repeat count')).toHaveValue('17');
+  await expect(hints).toHaveAttribute('open', '');
+  await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption('products.page');
+  await toolbar.getByLabel('Repeat count').fill('9');
+  await toolbar.getByRole('combobox', { name: 'Loading region' }).selectOption('products.list');
+  await expect(toolbar.getByLabel('Repeat count')).toHaveValue('17');
+  await expect(bindings).toHaveValue('{"unfinished": ');
+  await toolbar.getByRole('button', { name: 'Collapse', exact: true }).click();
+  await toolbar.getByRole('button', { name: 'More', exact: true }).click();
+  await expect(hints).toHaveAttribute('open', '');
+  await expect(bindings).toHaveValue('{"unfinished": ');
+  await toolbar.getByRole('button', { name: 'Save and generate' }).click();
+  await expect(toolbar.getByRole('status')).toContainText('Invalid hints');
+  await expect(bindings).toHaveValue('{"unfinished": ');
+  await bindings.fill('{}');
+  await page.route('**/__skelcast/hints', route => route.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"Generation failed"}' }));
+  await toolbar.getByRole('button', { name: 'Save and generate' }).click();
+  await expect(toolbar.getByRole('status')).toContainText('Generation failed');
+  await expect(toolbar.getByLabel('Repeat count')).toHaveValue('17');
+  await expect(hints).toHaveAttribute('open', '');
+});

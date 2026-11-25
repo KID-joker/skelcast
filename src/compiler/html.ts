@@ -1,4 +1,4 @@
-import { UNKNOWN, type Ast } from './expression.js';
+import { UNKNOWN } from './expression.js';
 
 export const escapeHTML = (v: unknown) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 export const voids = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
@@ -18,12 +18,4 @@ export function classString(value: unknown): string {
   if (typeof value === 'object') return Object.entries(value).filter(([, v]) => v !== UNKNOWN && !!v).map(([k]) => k).join(' ');
   return '';
 }
-export function visit(node: unknown, fn: (node: Ast) => void): void {
-  if (!node || typeof node !== 'object') return;
-  if ('type' in node && typeof node.type === 'string') fn(node);
-  for (const [key, value] of Object.entries(node)) {
-    if (['loc', 'tokens', 'comments', 'leadingComments', 'trailingComments'].includes(key)) continue;
-    if (Array.isArray(value)) value.forEach(v => visit(v, fn));
-    else if (value && typeof value === 'object') visit(value, fn);
-  }
-}
+export { walk as visit } from './ast.js';
