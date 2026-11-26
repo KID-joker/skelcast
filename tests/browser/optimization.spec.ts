@@ -50,7 +50,7 @@ for (const framework of ['react', 'vue'] as const) test(`${framework}: optimized
       if (optimize) {
         expect(html).not.toContain('data-sk-node');
         expect(js).not.toContain('data-sk-node');
-        expect(js.match(/@keyframes skelcast-base-pulse-v1/g)).toHaveLength(1);
+        expect(js).not.toContain('@keyframes skelcast-base-pulse-v1');
       } else expect(html).toContain('data-sk-node');
       const server = await preview({ root, configFile: false, logLevel: 'silent', build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
       try {

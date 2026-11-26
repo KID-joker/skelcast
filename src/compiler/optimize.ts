@@ -60,10 +60,14 @@ export function createArtifactOptimizer(warn: (message: string) => void = () => 
   });
   return {
     artifact,
-    module(input: SkeletonArtifact, sharedModule: (css: string) => string): string {
+    module(input: SkeletonArtifact, sharedModule: (css: string) => string, initialModule?: string): string {
       const optimized = artifact(input);
       const imports = new Map<string, { name: string; id: string }>();
       const variants = Object.entries(optimized.variants).map(([name, view]) => {
+        if (initialModule && name === optimized.defaultVariant) {
+          const properties = Object.entries(view).map(([key, value]) => `${JSON.stringify(key)}:${key === 'html' || key === 'css' ? `initialView.${key}` : JSON.stringify(value)}`);
+          return `${JSON.stringify(name)}:{${properties.join(',')}}`;
+        }
         const index = view.css.indexOf(separator);
         let css = JSON.stringify(view.css);
         if (index >= 0) {
@@ -79,12 +83,13 @@ export function createArtifactOptimizer(warn: (message: string) => void = () => 
         return `${JSON.stringify(name)}:{${properties.join(',')}}`;
       });
       const properties = Object.entries(optimized).map(([key, value]) => `${JSON.stringify(key)}:${key === 'variants' ? `{${variants.join(',')}}` : JSON.stringify(value)}`);
-      return [...imports.values()].map(entry => `import ${entry.name} from ${JSON.stringify(entry.id)};`).join('\n') + `\nexport default {${properties.join(',')}};`;
+      return (initialModule ? `import initialView from ${JSON.stringify(initialModule)};\n` : '') + [...imports.values()].map(entry => `import ${entry.name} from ${JSON.stringify(entry.id)};`).join('\n') + `\nexport default {${properties.join(',')}};`;
     },
   };
 }
 
 /** A function keeps bundlers from folding the shared string back into every view. */
-export function sharedStyleModule(css: string): string {
+export function sharedStyleModule(css: string, initialModule?: string): string {
+  if (initialModule) return `import initialView from ${JSON.stringify(initialModule)};export default function(css){return css+${JSON.stringify(separator)}+initialView.baseCSS};`;
   return `export default function(css){return css+${JSON.stringify(separator + css)}};`;
 }

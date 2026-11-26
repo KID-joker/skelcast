@@ -67,3 +67,30 @@ test('invalid CSS is preserved with one warning instead of being dropped', () =>
   assert.match(result.variants.grid.html, /data-sk-node/);
   assert.equal(warnings.length, 1);
 });
+
+test('initial reuse omits the default HTML/CSS literals while retaining metadata and other variants', async () => {
+  const optimizer = createArtifactOptimizer();
+  const input = artifact();
+  input.kind = 'page';
+  input.variants.grid.html = '<main data-sk-artifact="cards">Default-only-markup</main>';
+  input.variants.list.html = '<main data-sk-artifact="cards">Other-variant-markup</main>';
+  const expected = optimizer.artifact(input);
+  const initial = { ...expected.variants.grid, baseCSS: 'shared-from-initial' };
+  const initialURL = 'data:text/javascript;base64,' + Buffer.from(`export default ${JSON.stringify(initial)}`).toString('base64');
+  const module = optimizer.module(input, css => 'data:text/javascript;base64,' + Buffer.from(sharedStyleModule(css)).toString('base64'), initialURL);
+  // The initial module URL holds the fixture; inspect only the artifact expression.
+  const expression = module.slice(module.indexOf('\nexport default'));
+  assert.doesNotMatch(expression, /Default-only-markup/);
+  assert.match(expression, /initialView\.html/);
+  assert.match(expression, /Other-variant-markup/);
+  const loaded = await import('data:text/javascript;base64,' + Buffer.from(module).toString('base64'));
+  assert.deepEqual(loaded.default, expected);
+});
+
+test('shared base modules can reuse the initial CSS without embedding another copy', async () => {
+  const initialURL = 'data:text/javascript;base64,' + Buffer.from('export default {baseCSS:"from-shell"}').toString('base64');
+  const module = sharedStyleModule('should-not-be-embedded', initialURL);
+  assert.doesNotMatch(module, /should-not-be-embedded/);
+  const loaded = await import('data:text/javascript;base64,' + Buffer.from(module).toString('base64'));
+  assert.equal(loaded.default('.local{}'), '.local{}' + separator + 'from-shell');
+});
