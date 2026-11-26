@@ -29,6 +29,7 @@ import { pruneCSS } from './prune-css.js';
 import {tableWrapper} from './table-wrapper.js';
 import {VueRegion,bindSlotArgument,bindSlotInitial,projectSelectedSlots} from './regions.js';
 import{presentationInputs}from'./initial-state.js';
+import { SourceFiles } from './source-files.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -41,7 +42,7 @@ export class SourceCompiler extends SourceModules {
   selectVueNode(node:VueNode,ctx:RenderContext){return this.region?.mode(node,ctx);}
   captureVueRegion(render:()=>Promise<string>){return this.region?this.region.capture(render):render();}
   hasSelectedSlot(slot:SourceSlot){return !!this.region?.active&&this.region.carries(slot);}
-  constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}) { super(root, hints, aliases, options); }
+  constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}, files?: SourceFiles) { super(root, hints, aliases, options, files); }
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string) {
     const line = this.sourceLine(ctx, node);
     this.diagnostics.push({ code, message, file: this.relative(ctx.module.file), line, node: id ?? (node ? this.nodeId(ctx, node) : undefined), ...diagnosticDetails(ctx, node) });
@@ -375,8 +376,9 @@ export async function compileTarget(root: string, target: SkeletonTarget, aliase
   let dependencies: Record<string, string> = {};
   const diagnostics = new Map<string, Diagnostic>();
   const evidence = new Map<string, Evidence>();
+  const files = new SourceFiles();
   for (const [name, hints] of Object.entries(variants)) {
-    const compiler = new SourceCompiler(root, target, { ...target.hints, ...hints, bindings: { ...target.hints?.bindings, ...hints.bindings } }, aliases, options);
+    const compiler = new SourceCompiler(root, target, { ...target.hints, ...hints, bindings: { ...target.hints?.bindings, ...hints.bindings } }, aliases, options, files);
     const result = await compiler.compile();
     artifact.variants[name] = result.view;
     dependencies = { ...dependencies, ...result.dependencies };

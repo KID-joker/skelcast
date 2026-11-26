@@ -2,9 +2,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import type { ConfigEnv, Plugin, UserConfig, UserConfigExport, ViteDevServer } from 'vite';
-import { checkProject, loadProject, readArtifact, syncProject, type Project } from './generator.js';
+import { checkProject, loadProject, readArtifact, readProjectState, syncProject, type Project } from './generator.js';
 import type { SkeletonArtifact, SkeletonTarget } from './types.js';
-import { withProjectLock } from './storage.js';
 import { createArtifactOptimizer, sharedStyleModule } from './compiler/optimize.js';
 import { digest } from './compiler/styles.js';
 import { parse, type ElementNode, type RootNode } from '@vue/compiler-dom';
@@ -197,14 +196,9 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
           try {
             if (req.method === 'GET' && url.pathname === '/__skelcast/state') {
               await refreshProject();
-              const { statuses, artifacts } = await withProjectLock(project.outDir, async () => {
-                const statuses = await checkProject(project);
-                const available = project.config.targets.filter(t => !statuses.some(status => status.id === t.id && ['missing', 'corrupt'].includes(status.state)));
-                return {
-                  statuses,
-                  artifacts: await Promise.all(available.map(async t => previewArtifact(await readArtifact(project, t.id)))),
-                };
-              });
+              const state = await readProjectState(project);
+              const statuses = state.statuses;
+              const artifacts = [...state.artifacts.values()].map(previewArtifact);
               res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
               res.end(JSON.stringify({ artifacts, statuses })); return;
             }

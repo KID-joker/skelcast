@@ -1,9 +1,8 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, parseSource, unwrapExpression } from './ast.js';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { isRenderFunction, nodeName, unwrapExpression } from './ast.js';
+import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { parse as parseSFC } from '@vue/compiler-sfc';
 import type { Diagnostic, SkeletonConfig, SkeletonHints } from '../types.js';
 import { UNKNOWN, CLASS_HELPER, bindPattern, evaluate, type Ast } from './expression.js';
 import { digest, loadStyle, bindStyleVariables } from './styles.js';
@@ -17,15 +16,9 @@ import { StaticValues } from './static-values.js';
 import { identityArgument } from './identity-wrapper.js';
 import { vueOptions } from './vue-render.js';
 import { resolutionCandidates } from './resolution.js';
+import { SourceFiles } from './source-files.js';
 
 export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'>;
-
-/** Keep script AST locations aligned with their original SFC source. */
-function vueScriptSource(descriptor: NonNullable<ModuleInfo['descriptor']>): string {
-  let code = descriptor.source.replace(/[^\r\n]/g, ' ');
-  for (const script of [descriptor.script, descriptor.scriptSetup]) if (script) code = code.slice(0, script.loc.start.offset) + script.content + code.slice(script.loc.end.offset);
-  return code;
-}
 
 export class SourceModules {
   dependencies: Record<string, string> = {};
@@ -40,19 +33,17 @@ export class SourceModules {
   private helperModule(request:string){let result=this.helperPackages.get(request);if(!result){result=this.packageModule(request,false);this.helperPackages.set(request,result);}return result;}
   private entryScripts=new Set<string>();
   protected moduleValues(mod:ModuleInfo) { return this.staticValues.environment(mod); }
-  constructor(readonly root: string, readonly hints: SkeletonHints, protected aliases: Record<string, string> = {}, readonly options: CompilerOptions = {}) {}
+  constructor(readonly root: string, readonly hints: SkeletonHints, protected aliases: Record<string, string> = {}, readonly options: CompilerOptions = {}, protected files = new SourceFiles()) {}
   relative(file: string) { return path.relative(this.root, file).split(path.sep).join('/'); }
   async read(file: string): Promise<string> {
-    file = await realpath(file);
-    const bytes = await readFile(file);
-    this.dependencies[this.relative(file)] = digest(bytes);
-    return bytes.toString('utf8');
+    const source = await this.files.read(file);
+    this.dependencies[this.relative(source.file)] = source.hash;
+    return source.bytes.toString('utf8');
   }
   async readAsset(file: string): Promise<Uint8Array> {
-    file = await realpath(file);
-    const bytes = await readFile(file);
-    this.dependencies[this.relative(file)] = digest(bytes);
-    return bytes;
+    const source = await this.files.read(file);
+    this.dependencies[this.relative(source.file)] = source.hash;
+    return source.bytes;
   }
   protected styleSource(): StyleSource {
     const read = async (file: string) => {
@@ -97,7 +88,7 @@ export class SourceModules {
       const file = path.resolve(this.root, url.split(/[?#]/)[0].replace(/^\//,''));
       const code = await io.read(file);
       this.entryScripts.add(file);
-      const ast = parseSource(code, file);
+      const ast = this.files.ast(file, code);
       for (const statement of ast.program.body) if (statement.type === 'ImportDeclaration' && /\.(?:css|less|scss|sass)(?:[?#].*)?$/.test(statement.source.value)) {
         const request = statement.source.value.split(/[?#]/)[0];
         const dep = await resolveStylesheet(request.startsWith('/') ? path.join(this.root,request) : request, file, io);
@@ -202,15 +193,10 @@ export class SourceModules {
     const text = await this.read(file);
     if (/\.(css|less|scss|sass)$/.test(file)) { this.css.set(file, (await this.readStyle(file)).css); return; }
     // Conservative import graph: include helpers even when not expanded in the render tree.
-    let code = text;
-    let jsx: boolean | undefined;
-    if (file.endsWith('.vue')) {
-      const { descriptor } = parseSFC(text, { filename: file });
-      code = vueScriptSource(descriptor);
-      jsx = [descriptor.script?.lang, descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx');
-    }
+    const { code, sfc } = this.files.script(file, text);
+    const jsx = sfc ? [sfc.descriptor.script?.lang, sfc.descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx') : undefined;
     try {
-      const ast = parseSource(code, file, jsx);
+      const ast = this.files.ast(file, code, jsx);
       const requests: string[] = [];
       visit(ast, n => { if ((n.type === 'ImportDeclaration' || n.type === 'ExportNamedDeclaration' || n.type === 'ExportAllDeclaration') && n.source) requests.push(n.source.value); });
       for (const request of requests) { const dep = await this.resolve(file, request); if (dep) await this.scan(dep); }
@@ -225,15 +211,10 @@ export class SourceModules {
   }
   protected async loadModule(file: string): Promise<ModuleInfo> {
     const raw = await this.read(file);
-    let descriptor: ModuleInfo['descriptor'];
-    let code = raw;
-    if (file.endsWith('.vue')) {
-      const parsed = parseSFC(raw, { filename: file });
-      if (parsed.errors.length) throw new Error(String(parsed.errors[0]));
-      descriptor = parsed.descriptor;
-      code = vueScriptSource(descriptor);
-    }
-    const ast = parseSource(code, file, descriptor ? [descriptor.script?.lang, descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx') : undefined);
+    const { code, sfc } = this.files.script(file, raw);
+    if (sfc?.errors.length) throw new Error(String(sfc.errors[0]));
+    const descriptor = sfc?.descriptor;
+    const ast = this.files.ast(file, code, descriptor ? [descriptor.script?.lang, descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx') : undefined);
     const classHelpers = new Set<string>();
     for (const statement of ast.program.body) if (statement.type === 'ImportDeclaration' && ['clsx', 'classnames'].includes(statement.source.value) && statement.importKind !== 'type') {
       for (const specifier of statement.specifiers) if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && ['clsx', 'default'].includes(nodeName(specifier.imported) ?? '')) classHelpers.add(specifier.local.name);

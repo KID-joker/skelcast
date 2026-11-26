@@ -1,8 +1,7 @@
 import { parse, type RootNode, type TemplateChildNode, type SimpleExpressionNode } from '@vue/compiler-dom';
 import type { SkeletonArtifact } from './types.js';
-import { checkProject, readArtifact, type Project } from './generator.js';
+import { readProjectState, type Project } from './generator.js';
 import { digest } from './compiler/styles.js';
-import { withProjectLock } from './storage.js';
 
 export interface VariantQuality {
   nodes: number;
@@ -87,12 +86,10 @@ export function compareQualityBaseline(rows: QualityRow[], baseline: QualityBase
 }
 
 export async function qualityProject(project: Project, id?: string) {
-  return withProjectLock(project.outDir, async () => {
-    const statuses = await checkProject(project, id);
-    return Promise.all(statuses.map(async status => {
-      if (status.state === 'missing' || status.state === 'corrupt') return { id: status.id, state: status.state, needsReview: true, reason: status.reason };
-      const quality = analyzeQuality(await readArtifact(project, status.id));
-      return { ...quality, state: status.state, needsReview: quality.needsReview || status.state !== 'ready', reason: status.reason };
-    }));
+  const { statuses, artifacts } = await readProjectState(project, id);
+  return statuses.map(status => {
+    if (status.state === 'missing' || status.state === 'corrupt') return { id: status.id, state: status.state, needsReview: true, reason: status.reason };
+    const quality = analyzeQuality(artifacts.get(status.id)!);
+    return { ...quality, state: status.state, needsReview: quality.needsReview || status.state !== 'ready', reason: status.reason };
   });
 }

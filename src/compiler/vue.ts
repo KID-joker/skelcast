@@ -4,11 +4,12 @@ import { nonVisual, unknownGeometry, styleString } from './html.js';
 import { type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
 import { parseExpression } from '@babel/parser';
-import { parse as parseDOM, type TemplateChildNode as VueNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
+import { parserOptions, type ElementNode, type TemplateChildNode as VueNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import { componentName } from './components.js';
 import { boundaryContentContext, hasStateBinding } from './branches.js';
-import {collectionRoot,loadingPresence,projectsCollection,repeatCapacity,collectionEmpty,exclusiveChoice} from './loading-state.js';
+import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty,exclusiveChoice} from './loading-state.js';
 import{initialString}from'./initial-state.js';
+import { planCollection } from './collections.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -66,14 +67,15 @@ export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: Re
   }
   return html;
 }
-export async function renderVueNode(this: RenderHost, node: VueNode, ctx: RenderContext, skipFor = false): Promise<string> {
-  const selection=this.selectVueNode(node,ctx);
+export async function renderVueNode(this: RenderHost, source: VueNode, ctx: RenderContext, skipFor = false): Promise<string> {
+  const selection=this.selectVueNode(source,ctx);
   if(selection==='skip')return'';
-  const exhausted = this.budget(ctx, node);
+  const exhausted = this.budget(ctx, source);
   if (exhausted !== undefined) return exhausted;
-  if (node.type === 2) return node.content.trim() ? this.contentText(node.content, ctx, node) : '';
-  if (node.type === 5) { this.record('text', expression(node.content) ?? '', 'Resolve content policy for interpolation', ctx, node); return this.contentText(evaluateString(expression(node.content) ?? '', ctx), ctx, node); }
-  if (node.type !== 1) return '';
+  if (source.type === 2) return source.content.trim() ? this.contentText(source.content, ctx, source) : '';
+  if (source.type === 5) { this.record('text', expression(source.content) ?? '', 'Resolve content policy for interpolation', ctx, source); return this.contentText(evaluateString(expression(source.content) ?? '', ctx), ctx, source); }
+  if (source.type !== 1) return '';
+  let node: ElementNode = source;
   const loop = directive(node, ['for']);
   if (loop && !skipFor) {
     const match = expression(loop.exp)?.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
@@ -89,12 +91,8 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
     const list = evaluateString(match[2], ctx);
     const bound=sourceCapacity(list);
     const entries = Array.isArray(list) ? list.map((value, index) => [value, index]) : bound==null&&list && list !== UNKNOWN && typeof list === 'object' ? Object.entries(list).map(([key, value]) => [value, key]) : undefined;
-    const projected=collectionEmpty(match[2],ctx)&&!hasStateBinding(match[2],ctx)&&projectsCollection(collectionRoot(match[2]),ctx);
-    const count = this.hints.repeat ?? (projected?repeatCapacity(match[2],ctx):bound!=null?Math.min(24,bound):entries ? Math.min(entries.length, 24) : typeof list === 'number' && Number.isFinite(list) ? Math.min(Math.max(0, Math.floor(list)), 24) : 4);
-    if(bound!=null)this.diagnose('LOADING_PROJECTION','Use a representative source collection bound; later mutations, result count and item values remain unknown',ctx,node);
-    if(projected)this.diagnose('LOADING_PROJECTION',`Render ${count} masked source items; this is loading capacity, not a predicted response`,ctx,node);
-    if (this.target.kind === 'request' && this.hints.state!=='source' && count === 0 && !hasStateBinding(match[2], ctx)) this.diagnose('EMPTY_STATE', 'Source-default collection is empty; declare a finite populated/empty variant when needed', ctx, node);
-    this.record('repeat', match[2], `Generate ${count} placeholders`, ctx, node);
+    const length = entries?.length ?? (typeof list === 'number' && Number.isFinite(list) ? Math.max(0, Math.floor(list)) : undefined);
+    const { count, projected } = planCollection(this, match[2], list, ctx, node, length, 'predicted response');
     let html = '';
     for (let i = 0; i < count; i++) {
       const local: RenderContext = { ...ctx, env: { ...ctx.env } };
@@ -115,32 +113,47 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
     const policy=Object.fromEntries(node.props.flatMap(p=>p.type===6&&['data-sk-preserve','data-sk-mask'].includes(p.name)?[[p.name,p.value?.content??true]]:[]));
     return this.vueNodes(node.children,this.contentContext(ctx,policy));
   }
-  const props: Record<string, Value> = Object.create(null);
+  let props: Record<string, Value> = Object.create(null);
+  // A dynamic tag reuses evaluated attribute values; resolving its tag must not
+  // parse synthetic markup or revisit loop/region and expression evaluation.
+  type Prop = ElementNode['props'][number];
+  const values = node.tag === 'component' ? new Map<Prop, { key?: string; value: Value }>() : undefined;
+  const initialProps = values ? new Map<Prop, Value>() : undefined;
+  const notes = new Map<Prop, { code: string; message: string }[]>();
+  const diagnose = (prop: Prop, code: string, message: string) => {
+    this.diagnose(code, message, ctx, node);
+    if (values) notes.set(prop, [...notes.get(prop) ?? [], { code, message }]);
+  };
+  const assign = (prop: Prop, key: string | undefined, value: Value) => {
+    values?.set(prop, { key, value });
+    if (key != null) props[key] = prop.type === 7 && prop.name === 'bind' && key === 'class' && props.class != null ? [props.class, value] : value;
+    else if (value && value !== UNKNOWN && typeof value === 'object' && !Array.isArray(value)) Object.assign(props, value);
+  };
   let unknownLayout = false;
   let htmlContent: string | undefined, textContent = false;
   let textValue: Value = UNKNOWN;
   for (const p of node.props) {
-    if (p.type === 6) props[p.name] = p.value?.content ?? true;
+    if (p.type === 6) assign(p, p.name, p.value?.content ?? true);
     else if (p.name === 'bind' && !p.arg) {
       const spread = evaluateString(expression(p.exp) ?? '', ctx);
-      if (spread && spread !== UNKNOWN && typeof spread === 'object' && !Array.isArray(spread)) Object.assign(props, spread);
-      else this.diagnose('SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings', ctx, node);
+      assign(p, undefined, spread);
+      if (!spread || spread === UNKNOWN || typeof spread !== 'object' || Array.isArray(spread)) diagnose(p, 'SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings');
     }
     else if (p.name === 'bind' && p.arg?.type === 4 && p.arg.isStatic) {
       const key = p.arg.content;
       let value = evaluateString(expression(p.exp) ?? key, ctx);
       if(value===UNKNOWN&&ctx.loading&&node.tagType===1&&!['class','style'].includes(key)){
         const initial=initialString(expression(p.exp)??key,ctx);
-        if(initial!==UNKNOWN){value={[SOURCE_INITIAL]:initial};this.diagnose('LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown',ctx,node);}
+        if(initial!==UNKNOWN){initialProps?.set(p,value);value={[SOURCE_INITIAL]:initial};diagnose(p,'LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
       }
       if (value === UNKNOWN && ['class', 'style', 'width', 'height'].includes(key)) {
         value = evaluateString(expression(p.exp) ?? key, { ...ctx, defaultBranches: true });
-        this.diagnose('LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`, ctx, node);
+        diagnose(p, 'LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`);
         if (value === UNKNOWN) unknownLayout = true;
       }
-      props[key] = key === 'class' && props.class != null ? [props.class, value] : value;
+      assign(p, key, value);
     } else if (p.name === 'model') {
-      if (!p.arg || p.arg.type === 4 && p.arg.isStatic) props[p.arg?.content ?? 'modelValue'] = evaluateString(expression(p.exp) ?? '', ctx);
+      if (!p.arg || p.arg.type === 4 && p.arg.isStatic) assign(p, p.arg?.content ?? 'modelValue', evaluateString(expression(p.exp) ?? '', ctx));
     } else if (p.name === 'show') {
       const show = evaluateString(expression(p.exp) ?? '', ctx);
       const value=expression(p.exp)??'',presence=hasStateBinding(value,ctx)?undefined:loadingPresence(value,ctx);
@@ -152,7 +165,7 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
       if (typeof value !== 'string' || value.length > 32768) return this.fallback(ctx, node, 'Dynamic v-html content needs an adapter', this.attributes(props));
       htmlContent = value;
     }
-    else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) this.diagnose('DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`, ctx, node);
+    else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose(p, 'DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
   }
   const fallthrough = ctx.fallthrough;
   if (fallthrough && fallthrough.node === node) {
@@ -162,30 +175,64 @@ export async function renderVueNode(this: RenderHost, node: VueNode, ctx: Render
       else props[key] = value;
     }
   }
-  const tag = node.tag;
-  ctx = this.contentContext(ctx, props, tag);
-  if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') {
-    const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');
-    const value = expression(pending?.exp);
-    const content=()=>this.vueNodes(node.children, {...(value ? boundaryContentContext(ctx, value) : ctx),loading:this.hints.state==='loading'||this.hints.state!=='source'&&!!value&&value!=='false'});
-    return content();
-  }
-  if (unknownGeometry(props.style)) unknownLayout = true;
-  if (unknownLayout&&selection!=='ancestor') return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
-  if (['template', 'transition', 'Transition', 'transition-group', 'TransitionGroup', 'KeepAlive', 'keep-alive'].includes(tag)) return this.vueNodes(node.children, ctx);
-  if (tag === 'slot') {
-    const name = typeof props.name === 'string' ? props.name : 'default';
-    const argument={...props};delete argument.name;
-    const initial={...argument};let projected=false;
-    for(const p of node.props)if(p.type===7&&p.name==='bind'&&p.arg?.type===4&&p.arg.isStatic){const value=initialString(expression(p.exp)??p.arg.content,ctx);if(value!==UNKNOWN){initial[p.arg.content]=value;projected=true;}}
-    return ctx.slots?.[name] ? this.renderSlot(ctx.slots[name], ctx,argument,projected?initial:UNKNOWN) : node.children.length ? this.vueNodes(node.children, ctx) : '';
-  }
-  if (tag === 'component') {
-    if (typeof props.is !== 'string' || !/^[a-zA-Z][\w-]*$/.test(props.is)) return this.fallback(ctx, node, 'Dynamic component requires a finite adapter', this.attributes(props));
-    this.record('component', expression(node.props.find((p): p is DirectiveNode => p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is')?.exp) ?? 'is', `Select static component ${props.is}`, ctx, node);
-    const selected = parseDOM(`<${props.is}/>`).children[0];
-    if (selected?.type !== 1) return this.fallback(ctx, node, 'Unsupported dynamic component');
-    return this.vueNode({ ...selected, children: node.children, loc: node.loc, props: node.props.filter((p) => p.name !== 'is' && !(p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is') && p.name !== 'for') }, ctx, true);
+  let tag = node.tag;
+  for (;;) {
+    ctx = this.contentContext(ctx, props, tag);
+    if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') {
+      const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');
+      const value = expression(pending?.exp);
+      const content=()=>this.vueNodes(node.children, {...(value ? boundaryContentContext(ctx, value) : ctx),loading:this.hints.state==='loading'||this.hints.state!=='source'&&!!value&&value!=='false'});
+      return content();
+    }
+    if (unknownGeometry(props.style)) unknownLayout = true;
+    if (unknownLayout&&selection!=='ancestor') return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
+    if (['template', 'transition', 'Transition', 'transition-group', 'TransitionGroup', 'KeepAlive', 'keep-alive'].includes(tag)) return this.vueNodes(node.children, ctx);
+    if (tag === 'slot') {
+      const name = typeof props.name === 'string' ? props.name : 'default';
+      const argument={...props};delete argument.name;
+      const initial={...argument};let projected=false;
+      for(const p of node.props)if(p.type===7&&p.name==='bind'&&p.arg?.type===4&&p.arg.isStatic){const value=initialString(expression(p.exp)??p.arg.content,ctx);if(value!==UNKNOWN){initial[p.arg.content]=value;projected=true;}}
+      return ctx.slots?.[name] ? this.renderSlot(ctx.slots[name], ctx,argument,projected?initial:UNKNOWN) : node.children.length ? this.vueNodes(node.children, ctx) : '';
+    }
+    if (tag === 'component') {
+      if (typeof props.is !== 'string' || !/^[a-zA-Z][\w-]*$/.test(props.is)) return this.fallback(ctx, node, 'Dynamic component requires a finite adapter', this.attributes(props));
+      this.record('component', expression(node.props.find((p): p is DirectiveNode => p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is')?.exp) ?? 'is', `Select static component ${props.is}`, ctx, node);
+      tag = props.is;
+      let tagType: ElementNode['tagType'] = 0;
+      if (tag === 'slot') tagType = 2;
+      else if (!parserOptions.isNativeTag!(tag)) tagType = 1;
+      node = { ...node, tag, tagType, props: node.props.filter(p => p.name !== 'is' && !(p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is') && p.name !== 'for') } as ElementNode;
+      if (this.selectVueNode(node, ctx) === 'skip') return '';
+      const exhausted = this.budget(ctx, node);
+      if (exhausted !== undefined) return exhausted;
+      props = Object.create(null);
+      for (const prop of node.props) {
+        for (const note of notes.get(prop) ?? []) if (note.code !== 'LOADING_PROJECTION' || tagType === 1) this.diagnose(note.code, note.message, ctx, node);
+        const entry = values!.get(prop);
+        if (!entry) continue;
+        const { key } = entry;
+        let { value } = entry;
+        if (prop.type === 7) {
+          if (tagType !== 1 && initialProps?.has(prop)) {
+            value = initialProps.get(prop);
+            if (key === 'width' || key === 'height') {
+              value = evaluateString(expression(prop.exp) ?? key, { ...ctx, defaultBranches: true });
+              this.diagnose('LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`, ctx, node);
+              if (value === UNKNOWN) unknownLayout = true;
+            }
+          }
+          // A self-selecting spread has no finite component target. Keep the
+          // existing unresolved-spread fallback without recursive stack growth.
+          if (tag === 'component' && key == null && value && typeof value === 'object' && 'is' in value && value.is === tag) {
+            value = UNKNOWN;
+            this.diagnose('SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings', ctx, node);
+          }
+        }
+        assign(prop, key, value);
+      }
+      continue;
+    }
+    break;
   }
   const imported = await this.componentReference(tag, ctx);
   if (node.tagType === 1 || imported?.file) this.record('component', tag, 'Resolve source component or adapter', ctx, node);

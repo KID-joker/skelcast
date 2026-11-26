@@ -19,6 +19,32 @@ const naiveDeclarations = `declare module 'vue' { interface GlobalComponents { $
 
 const target: SkeletonTarget = { id: 'test.list', source: 'View.tsx' };
 
+test('dynamic Vue tags retain native controls, source slots, spread order and component-scoped diagnostics', async () => {
+  await fixture({
+    'Child.vue': `<script setup>defineProps(['title'])</script><template><section><h2>{{title}}</h2><slot/><slot name="extra"/></section></template>`,
+    'View.vue': `<script setup>import Child from './Child.vue'</script><template><component :is="tag" v-for="i in 2" v-bind="attrs" :class="'local'" title="Heading"><span>Default</span><template #extra><b>Extra</b></template></component></template>`,
+    'Opaque.vue': `<template><component is="Child" v-bind="unknown"/></template>`,
+    'Cycle.vue': `<template><component v-bind="{is:'component'}"/></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, {
+      id: 'dynamic', source: 'View.vue', variants: Object.fromEntries(['button', 'input', 'Child'].map(tag => [tag, { bindings: { tag, attrs: { class: 'spread', 'data-layout': 'grid' } } }])),
+    });
+    assert.equal((artifact.variants.button.html.match(/<button /g) ?? []).length, 2);
+    assert.match(artifact.variants.button.html, /class="spread local"/);
+    assert.match(artifact.variants.button.html, /data-sk-control/);
+    assert.equal((artifact.variants.input.html.match(/<input /g) ?? []).length, 2);
+    const child = artifact.variants.Child.html;
+    assert.equal((child.match(/<section /g) ?? []).length, 2);
+    for (const text of ['Heading', 'Default', 'Extra']) assert.match(child, new RegExp(`data-sk-text-content="${text}"`));
+    assert.deepEqual(artifact.diagnostics, []);
+    const opaque = await compileTarget(root, { id: 'opaque', source: 'Opaque.vue' });
+    assert.deepEqual(opaque.artifact.diagnostics.filter(d => d.code === 'SPREAD_UNKNOWN').map(d => d.component), [undefined, 'Child']);
+    const cycle = await compileTarget(root, { id: 'cycle', source: 'Cycle.vue' });
+    assert.match(cycle.artifact.variants.default.html, /data-sk-fallback/);
+    assert.deepEqual(cycle.artifact.diagnostics.map(d => d.code), ['SPREAD_UNKNOWN', 'FALLBACK']);
+  });
+});
+
 test('known text keeps font-shaped layout, paragraphs and finite bindings while unknown text accepts local widths', async () => {
   await fixture({
     'View.tsx': `const title='Known & <text>';export default function View(){return <main><h1>{title}</h1><p>A paragraph with <strong>mixed</strong> content and 中文。</p><section data-sk-text-width="18ch">{unknown}</section><aside>{unknown}</aside><b>{0}</b></main>}`,

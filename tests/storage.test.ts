@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, stat, rm } from 'node:fs/
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -53,6 +55,31 @@ test('sync reuses legacy manifests while dropping unused metadata', async () => 
   assert.equal(Object.hasOwn(manifest, 'configHash'), false);
   for (const entry of Object.values(manifest.targets)) assert.equal(Object.hasOwn(entry as object, 'file'), false);
   assert.ok((await checkProject(project)).every(row => row.state === 'ready'));
+}));
+
+test('checks and inspection share reads within an operation and refresh binary dependencies on the next operation', async t => fixture(async root => {
+  await writeFile(path.join(root, 'shared.js'), `import './asset.bin';export const title='Shared'`);
+  await writeFile(path.join(root, 'asset.bin'), Buffer.from([0xff, 0x00, 0x80]));
+  for (const source of ['One.jsx', 'Two.jsx']) await writeFile(path.join(root, source), `import {title} from './shared.js';export default()=> <section>{title}</section>`);
+  const project = await loadProject(root);
+  await syncProject(project);
+  const reads = t.mock.method(fs, 'readFile');
+  syncBuiltinESMExports();
+  try {
+    for (const operation of [() => checkProject(project), () => qualityProject(project), () => diagnoseProject(project, 'one'), () => syncProject(project)]) {
+      reads.mock.resetCalls();
+      await operation();
+      for (const file of [path.join(project.root, 'shared.js'), path.join(project.root, 'asset.bin'), path.join(project.outDir, 'one.mjs')]) {
+        assert.equal(reads.mock.calls.filter(call => call.arguments[0] === file).length, 1, `read ${file} once per operation`);
+      }
+    }
+    // Both byte sequences decode to the same UTF-8 text; fingerprints must use bytes.
+    await writeFile(path.join(root, 'asset.bin'), Buffer.from([0xfe, 0x00, 0x80]));
+    const statuses = await checkProject(project);
+    assert.ok(statuses.every(status => status.state === 'stale' && status.reason === 'asset.bin changed'));
+    await syncProject(project);
+    assert.ok((await checkProject(project)).every(status => status.state === 'ready'));
+  } finally { reads.mock.restore(); syncBuiltinESMExports(); }
 }));
 
 test('a later compilation failure preserves every previous output and the manifest', async () => fixture(async root => {

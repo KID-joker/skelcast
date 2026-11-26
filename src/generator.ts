@@ -83,39 +83,78 @@ async function readManifest(project: Project): Promise<Manifest | undefined> {
 }
 export const artifactFilename = (id: string) => `${id}.mjs`;
 const targetHash = (target: SkeletonTarget, config: SkeletonConfig) => digest(JSON.stringify({ target, aliases: config.aliases, components: config.components, componentBindings: config.componentBindings, componentDeclarations: config.componentDeclarations, componentPresets: config.componentPresets, styles: config.styles }));
-async function entryStatus(project: Project, target: SkeletonTarget, entry?: ManifestEntry, version?: string): Promise<TargetStatus> {
+/** One locked operation shares file reads, including concurrent target checks.
+ * A later operation always observes files again. */
+class ProjectFiles {
+  private contents = new Map<string, Promise<{ bytes: Buffer; hash: string }>>();
+  private files = new Map<string, Promise<boolean>>();
+  read(file: string) {
+    let result = this.contents.get(file);
+    if (!result) {
+      result = readFile(file).then(bytes => ({ bytes, hash: digest(bytes) }));
+      this.contents.set(file, result);
+    }
+    return result;
+  }
+  isFile(file: string) {
+    let result = this.files.get(file);
+    if (!result) {
+      result = stat(file).then(info => info.isFile());
+      this.files.set(file, result);
+    }
+    return result;
+  }
+}
+async function entryStatus(project: Project, target: SkeletonTarget, files: ProjectFiles, entry?: ManifestEntry, version?: string): Promise<TargetStatus> {
   if (!entry) return { id: target.id, state: 'missing', reason: 'No generated artifact' };
   if (version !== GENERATOR_VERSION || entry.hash !== targetHash(target, project.config)) return { id: target.id, state: 'stale', reason: 'Config, hints or generator changed' };
   for (const [file, hash] of Object.entries(entry.dependencies)) {
     if (hash === '!missing') {
       // Resolution candidates can be directories, or have a non-directory parent.
-      try { if ((await stat(path.resolve(project.root, file))).isFile()) return { id: target.id, state: 'stale', reason: `${file} created` }; }
+      try { if (await files.isFile(path.resolve(project.root, file))) return { id: target.id, state: 'stale', reason: `${file} created` }; }
       catch (error: any) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) return { id: target.id, state: 'stale', reason: `${file} unavailable` }; }
       continue;
     }
-    try { if (digest(await readFile(path.resolve(project.root, file))) !== hash) return { id: target.id, state: 'stale', reason: `${file} changed` }; }
+    try { if ((await files.read(path.resolve(project.root, file))).hash !== hash) return { id: target.id, state: 'stale', reason: `${file} changed` }; }
     catch { return { id: target.id, state: 'stale', reason: `${file} missing` }; }
   }
   try {
-    const content = await readFile(path.join(project.outDir, artifactFilename(target.id)), 'utf8');
-    if (digest(content) !== entry.outputHash) return { id: target.id, state: 'corrupt', reason: 'Artifact was modified or corrupted' };
+    const content = await files.read(path.join(project.outDir, artifactFilename(target.id)));
+    if (content.hash !== entry.outputHash) return { id: target.id, state: 'corrupt', reason: 'Artifact was modified or corrupted' };
   } catch { return { id: target.id, state: 'missing', reason: 'Artifact missing' }; }
   return { id: target.id, state: 'ready' };
 }
 export async function checkProject(project: Project, id?: string): Promise<TargetStatus[]> {
+  const targets = selectedTargets(project, id);
+  return withProjectLock(project.outDir, () => checkProjectUnlocked(project, new ProjectFiles(), targets));
+}
+function selectedTargets(project: Project, id?: string): SkeletonTarget[] {
   const targets = id ? project.config.targets.filter(target => target.id === id) : project.config.targets;
   if (id && !targets.length) throw new Error(`Unknown skeleton ${id}`);
+  return targets;
+}
+async function checkProjectUnlocked(project: Project, files: ProjectFiles, targets: SkeletonTarget[]): Promise<TargetStatus[]> {
+  const manifest = await readManifest(project);
+  return Promise.all(targets.map(t => entryStatus(project, t, files, manifest?.targets[t.id], manifest?.version)));
+}
+/** Read freshness and inspection data from the same verified output bytes. */
+export async function readProjectState(project: Project, id?: string) {
+  const targets = selectedTargets(project, id);
   return withProjectLock(project.outDir, async () => {
-    const manifest = await readManifest(project);
-    return Promise.all(targets.map(t => entryStatus(project, t, manifest?.targets[t.id], manifest?.version)));
+    const files = new ProjectFiles();
+    const statuses = await checkProjectUnlocked(project, files, targets);
+    const entries = await Promise.all(statuses.filter(status => status.state !== 'missing' && status.state !== 'corrupt').map(async status =>
+      [status.id, await readArtifactUnlocked(project, status.id, files)] as const));
+    return { statuses, artifacts: new Map(entries) };
   });
 }
 export async function readArtifact(project: Project, id: string): Promise<SkeletonArtifact> {
   return withProjectLock(project.outDir, () => readArtifactUnlocked(project, id));
 }
-async function readArtifactUnlocked(project: Project, id: string): Promise<SkeletonArtifact> {
+async function readArtifactUnlocked(project: Project, id: string, files = new ProjectFiles()): Promise<SkeletonArtifact> {
   if (!project.config.targets.some(t => t.id === id)) throw new Error(`Unknown skeleton ${id}`);
-  const text = await readFile(path.join(project.outDir, artifactFilename(id)), 'utf8');
+  const { bytes } = await files.read(path.join(project.outDir, artifactFilename(id)));
+  const text = bytes.toString('utf8');
   // Generated modules contain one JSON literal. Reading metadata never executes a module.
   const match = text.match(/^\/\/ Generated by skelcast[^\n]*\nexport default ([\s\S]*);\n$/);
   if (!match) throw new Error(`Invalid generated artifact ${id}`);
@@ -125,16 +164,17 @@ export async function syncProject(project: Project): Promise<{ id: string; state
   return withProjectLock(project.outDir, () => syncProjectUnlocked(project));
 }
 async function syncProjectUnlocked(project: Project): Promise<{ id: string; state: 'generated' | 'reused'; diagnostics: number }[]> {
+  const files = new ProjectFiles();
   const old = await readManifest(project);
   const manifest: Manifest = { version: GENERATOR_VERSION, targets: {} };
   const result: { id: string; state: 'generated' | 'reused'; diagnostics: number }[] = [];
   const updates = new Map<string, string | null>();
   for (const target of project.config.targets) {
     const previous = old?.targets[target.id];
-    if ((await entryStatus(project, target, previous, old?.version)).state === 'ready') {
+    if ((await entryStatus(project, target, files, previous, old?.version)).state === 'ready') {
       const { hash, outputHash, dependencies } = previous!;
       manifest.targets[target.id] = { hash, outputHash, dependencies };
-      result.push({ id: target.id, state: 'reused', diagnostics: (await readArtifactUnlocked(project, target.id)).diagnostics.length });
+      result.push({ id: target.id, state: 'reused', diagnostics: (await readArtifactUnlocked(project, target.id, files)).diagnostics.length });
       continue;
     }
     const { artifact, dependencies } = await compileTarget(project.root, target, project.config.aliases, project.config);

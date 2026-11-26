@@ -1,14 +1,15 @@
 import { nodeName } from './ast.js';
 import path from 'node:path';
-import { UNKNOWN, bindPattern, evaluate, expressionText, sourceCapacity, type Ast, type Value } from './expression.js';
+import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
 import { boundaryContentContext, hasStateBinding } from './branches.js';
 import { walk } from './ast.js';
-import {collectionRoot,loadingPresence,projectsCollection,repeatCapacity,collectionEmpty} from './loading-state.js';
+import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty} from './loading-state.js';
 import {renderLocalCall,vueHelper} from './vue-render.js';
 import {renderSlotCall} from './regions.js';
+import { planCollection } from './collections.js';
 
 function repeatedContent(node: Ast): boolean {
   let found = false;
@@ -51,13 +52,8 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
     const fn = node.arguments[0];
     if (fn?.type !== 'ArrowFunctionExpression' && fn?.type !== 'FunctionExpression') return this.fallback(ctx, node, 'Unsupported map callback');
     const list = evaluate(node.callee.object, ctx);
-    const text=expressionText(node.callee.object,ctx),projected=collectionEmpty(text,ctx)&&!hasStateBinding(text,ctx)&&projectsCollection(collectionRoot(text),ctx);
-    const bound=sourceCapacity(list);
-    const count = this.hints.repeat ?? (projected?repeatCapacity(text,ctx):bound!=null?Math.min(24,bound):Array.isArray(list) ? Math.min(list.length, 24) : 4);
-    if(bound!=null)this.diagnose('LOADING_PROJECTION','Use a representative source collection bound; later mutations, result count and item values remain unknown',ctx,node);
-    if(projected)this.diagnose('LOADING_PROJECTION',`Render ${count} masked source items; this is loading capacity, not a response count`,ctx,node);
-    if (this.target.kind === 'request' && this.hints.state!=='source' && count === 0 && !hasStateBinding(expressionText(node.callee.object, ctx), ctx)) this.diagnose('EMPTY_STATE', 'Source-default collection is empty; declare a finite populated/empty variant when needed', ctx, node);
-    this.record('repeat', expressionText(node.callee.object, ctx), `Generate ${count} placeholders`, ctx, node);
+    const text = expressionText(node.callee.object, ctx);
+    const { count, projected } = planCollection(this, text, list, ctx, node);
     let html = '';
     for (let i = 0; i < count; i++) {
       const local = { ...ctx, env: { ...ctx.env } };
