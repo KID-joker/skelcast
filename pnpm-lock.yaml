@@ -32,6 +32,9 @@ importers:
       less:
         specifier: 4.9.1
         version: 4.9.1
+      lightningcss:
+        specifier: 1.33.0
+        version: 1.33.0
       postcss:
         specifier: ^8.5.33
         version: 8.5.33

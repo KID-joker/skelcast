@@ -4,9 +4,12 @@ import type { ConfigEnv, Plugin, UserConfig, UserConfigExport, ViteDevServer } f
 import { checkProject, loadProject, readArtifact, syncProject, type Project } from './generator.js';
 import type { SkeletonArtifact, SkeletonTarget } from './types.js';
 import { withProjectLock } from './storage.js';
+import { createArtifactOptimizer, sharedStyleModule } from './compiler/optimize.js';
+import { digest } from './compiler/styles.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
+const sharedPrefix = 'virtual:skelcast-css/';
 const transientPatterns = ['**/.skelcast-lock/**', '**/.skelcast-lock-recovery/**', '**/.skelcast-stage-*/**', '**/.skelcast-transaction.json'];
 const transientFile = (file: string) => file.split(/[\\/]/).some(part => /^\.skelcast-(?:lock(?:-recovery)?|stage-.+|transaction\.json)$/.test(part)) || file.endsWith('.tmp');
 const previewArtifact = (artifact: SkeletonArtifact): SkeletonArtifact => ({ ...artifact, diagnostics: [], evidence: [], sources: {}, source: '' });
@@ -51,13 +54,21 @@ const firstScreen = (artifact: SkeletonArtifact) => {
   return `<div data-sk-initial="${escapeAttribute(artifact.id)}" aria-hidden="true" style="position:fixed;inset:0;z-index:9990;overflow:auto;background:var(--skeleton-page-background,#f5f7fa)">${artifact.render === 'shadow' ? `<template shadowrootmode="open">${content}</template>` : content}</div>`;
 };
 
-export function skelcastPlugin(): Plugin {
+export interface SkelcastPluginOptions {
+  /** Minify skeleton CSS, share base CSS and remove unused source markers in production. Defaults on. */
+  optimize?: boolean;
+}
+
+export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
   let project: Project;
   let dev = false;
   let server: ViteDevServer | undefined;
   let mutation = Promise.resolve();
   const requests = new Set<Promise<void>>();
   let closing = false;
+  let optimizer = createArtifactOptimizer();
+  const sharedStyles = new Map<string, string>();
+  const optimize = () => !dev && options.optimize !== false;
   const refreshProject = async () => { project = await loadProject(project.root); };
   const sendUpdate = () => server?.ws.send({ type: 'custom', event: 'skelcast:update', data: {} });
   return {
@@ -78,16 +89,29 @@ export function skelcastPlugin(): Plugin {
       dev = config.command === 'serve';
     },
     async buildStart() {
+      sharedStyles.clear();
+      optimizer = createArtifactOptimizer(message => this.warn(message));
       const statuses = await checkProject(project);
       const invalid = statuses.filter(s => dev ? ['missing', 'corrupt'].includes(s.state) : s.state !== 'ready');
       if (invalid.length) this.error(`Skeleton artifacts need sync: ${invalid.map(s => `${s.id}: ${s.reason}`).join(', ')}. Run pnpm exec skelcast sync.`);
     },
     resolveId(id) {
+      if (id.startsWith(sharedPrefix)) return id;
       if (id.startsWith(modulePrefix)) return `${internalPrefix}${id.slice(modulePrefix.length)}`;
     },
     async load(id) {
+      if (id.startsWith(sharedPrefix)) {
+        const css = sharedStyles.get(id);
+        if (css === undefined) this.error(`Unknown SkelCast shared stylesheet: ${id}`);
+        return sharedStyleModule(css);
+      }
       if (!id.startsWith(internalPrefix)) return;
       const artifact = previewArtifact(await readArtifact(project, id.slice(internalPrefix.length)));
+      if (optimize()) return optimizer.module(artifact, css => {
+        const id = sharedPrefix + digest(css);
+        sharedStyles.set(id, css);
+        return id;
+      });
       return `export default ${JSON.stringify(artifact)};`;
     },
     transformIndexHtml: {
@@ -97,7 +121,10 @@ export function skelcastPlugin(): Plugin {
         const pathname = rawPath === '/index.html' ? '/' : rawPath;
         const target = selectPageTarget(project.config.targets, pathname);
         const tags: any[] = [];
-        if (target) tags.push({ tag: 'div', attrs: { 'data-sk-initial-container': '' }, children: firstScreen(await readArtifact(project, target.id)), injectTo: 'body-prepend' });
+        if (target) {
+          const artifact = await readArtifact(project, target.id);
+          tags.push({ tag: 'div', attrs: { 'data-sk-initial-container': '' }, children: firstScreen(optimize() ? optimizer.artifact(artifact) : artifact), injectTo: 'body-prepend' });
+        }
         if (dev) tags.push({ tag: 'script', attrs: { type: 'module', src: `/@fs/${fileURLToPath(new URL('./client.js', import.meta.url))}` }, injectTo: 'head-prepend' });
         return tags;
       },
