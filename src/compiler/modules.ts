@@ -16,9 +16,9 @@ import { parse as parseDOM } from '@vue/compiler-dom';
 import { StaticValues } from './static-values.js';
 import { identityArgument } from './identity-wrapper.js';
 import { vueOptions } from './vue-render.js';
+import { resolutionCandidates } from './resolution.js';
 
 export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'>;
-const extensions = ['', '.tsx', '.jsx', '.vue', '.ts', '.js', '.mjs', '.css', '.module.css', '/index.tsx', '/index.vue', '/index.ts', '/index.js'];
 
 /** Keep script AST locations aligned with their original SFC source. */
 function vueScriptSource(descriptor: NonNullable<ModuleInfo['descriptor']>): string {
@@ -113,15 +113,7 @@ export class SourceModules {
     }
   }
   async resolve(from: string, request: string): Promise<string | undefined> {
-    let base: string;
-    if (request.startsWith('.')) base = path.resolve(path.dirname(from), request.split('?')[0]);
-    else {
-      const alias = Object.keys(this.aliases).sort((a, b) => b.length - a.length).find(a => request === a || request.startsWith(`${a}/`));
-      if (!alias) return;
-      base = path.resolve(this.root, this.aliases[alias], `.${request.slice(alias.length)}`.split('?')[0]);
-    }
-    for (const ext of extensions) {
-      const candidate = base + ext;
+    for (const candidate of resolutionCandidates(this.root, from, request, this.aliases, true)) {
       try { if ((await stat(candidate)).isFile()) return candidate; }
       catch (error: any) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
       // Earlier candidates also matter: creating one can change which file wins.

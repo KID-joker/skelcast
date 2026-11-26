@@ -6,6 +6,107 @@ import { createServer } from 'vite';
 import reactPlugin from '@vitejs/plugin-react';
 import vuePlugin from '@vitejs/plugin-vue';
 
+test('Vue batches skeleton DOM updates while preserving preview, replacements and subscription changes', async ({ page }) => {
+  const repo = process.cwd();
+  const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-vue-updates-'));
+  let server: Awaited<ReturnType<typeof createServer>> | undefined;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await mkdir(path.join(root, 'node_modules'));
+    await symlink(path.join(repo, 'node_modules/vue'), path.join(root, 'node_modules/vue'), 'dir');
+    await writeFile(path.join(root, 'package.json'), '{"type":"module"}');
+    await writeFile(path.join(root, 'index.html'), '<div id="root"></div><script type="module" src="/main.js"></script>');
+    await writeFile(path.join(root, 'main.js'), `
+      import {createApp,h,shallowRef,ref,nextTick} from 'vue';
+      import {LoadingBoundary} from '/@fs/${repo}/src/adapters/vue.ts';
+      import {setPreview,replaceArtifacts,listBoundaries} from '/@fs/${repo}/src/runtime/core.ts';
+      const makeArtifact=(id,kind='request',text='Default')=>({id,kind,render:'light',defaultVariant:'default',source:'',sources:{},diagnostics:[],evidence:[],variants:{
+        default:{html:'<div data-sk-artifact="'+id+'"><article>'+text+'</article></div>',css:'article{height:73px}'},
+        alternate:{html:'<div data-sk-artifact="'+id+'"><article>Alternate</article></div>',css:'article{height:91px}'}}});
+      const pending=ref(false),variant=ref('default'),artifact=shallowRef(makeArtifact('first'));
+      const app=createApp({render:()=>h(LoadingBoundary,{artifact:artifact.value,pending:pending.value,variant:variant.value},{default:()=>h('input',{'aria-label':'Draft'})})});
+      app.mount('#root');
+      const fixture=window.fixture={pending,variant,artifact,setPreview,replaceArtifacts,listBoundaries,makeArtifact,nextTick,app,writes:0};
+      const original=CSSStyleDeclaration.prototype.setProperty;
+      CSSStyleDeclaration.prototype.setProperty=function(name,value,priority){
+        if(this===document.querySelector('[data-sk-skeleton]')?.style&&name==='display'&&priority==='important')fixture.writes++;
+        return original.call(this,name,value,priority);
+      };
+    `);
+    server = await createServer({ root, configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: ['vue'] },
+      server: { watch: null, host: '127.0.0.1', port: 0, fs: { allow: [repo, root] } } });
+    await server.listen();
+    const { port } = server.httpServer!.address() as { port: number };
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await expect(page.getByRole('textbox', { name: 'Draft' })).toBeVisible();
+    await page.getByRole('textbox', { name: 'Draft' }).fill('Keep my draft');
+    const content = page.locator('[data-sk-content]');
+    const article = page.locator('[data-sk-artifact] article');
+    const update = async (action: string) => {
+      const writes = await page.evaluate(async action => {
+        const f = (window as any).fixture;
+        f.writes = 0;
+        if (action === 'pending') f.pending.value = true;
+        if (action === 'ready') f.pending.value = false;
+        if (action === 'preview') f.setPreview({ target: 'first' });
+        if (action === 'variant') f.variant.value = 'alternate';
+        if (action === 'overlay') f.setPreview({ comparison: 'overlay', opacity: 0.5 });
+        if (action === 'side-by-side') f.setPreview({ comparison: 'side-by-side' });
+        if (action === 'switch-content') f.setPreview({ comparison: 'switch', comparisonView: 'content' });
+        if (action === 'switch-skeleton') f.setPreview({ comparisonView: 'skeleton' });
+        if (action === 'replacement') f.replaceArtifacts([f.makeArtifact('first', 'request', 'Updated')]);
+        if (action === 'identity') { f.artifact.value = f.makeArtifact('second'); f.variant.value = 'default'; }
+        if (action === 'second-preview') f.setPreview({ target: 'second' });
+        if (action === 'kind') f.artifact.value = f.makeArtifact('second', 'page');
+        if (action === 'page-preview') f.setPreview({ target: 'page' });
+        if (action === 'release') f.setPreview({ target: null, comparison: 'off' });
+        await f.nextTick();
+        return f.writes;
+      }, action);
+      expect(writes, action).toBe(1);
+    };
+    await update('pending');
+    await expect(content).toBeHidden();
+    await expect(content).toHaveAttribute('inert');
+    await expect(content).not.toHaveAttribute('hidden');
+    await update('ready');
+    await expect(page.getByRole('textbox', { name: 'Draft' })).toHaveValue('Keep my draft');
+    await update('preview');
+    await expect(article).toHaveText('Default');
+    await update('replacement');
+    await expect(article).toHaveText('Updated');
+    await update('variant');
+    await expect(article).toHaveText('Alternate');
+    await update('overlay');
+    await expect(content).toBeVisible();
+    await expect(page.locator('[data-sk-skeleton]')).toHaveCSS('opacity', '0.5');
+    await update('side-by-side');
+    await expect(content).toBeVisible();
+    await expect(article).toBeVisible();
+    await update('switch-content');
+    await expect(content).toBeVisible();
+    await expect(article).toBeHidden();
+    await update('switch-skeleton');
+    await expect(content).toBeHidden();
+    await expect(article).toBeVisible();
+    await update('identity');
+    await expect(content).toBeVisible();
+    await update('second-preview');
+    await expect(article).toHaveText('Default');
+    await update('kind');
+    await update('release');
+    await expect(content).toBeVisible();
+    await update('page-preview');
+    await expect(content).toBeHidden();
+    await update('release');
+    await expect(page.getByRole('textbox', { name: 'Draft' })).toHaveValue('Keep my draft');
+    expect(await page.evaluate(() => { const f = (window as any).fixture; f.app.unmount(); return f.listBoundaries().length; })).toBe(0);
+    await expect(page.locator('style[data-sk-style]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally { await server?.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 for (const framework of ['react', 'vue'] as const) for (const fallback of [false, true]) test(`${framework}: lazy skeletons retain DOM and share styles until unmounted (${fallback ? 'style fallback' : 'constructed sheets'})`, async ({ page }) => {
   const repo = process.cwd();
   const root = await mkdtemp(path.join(os.tmpdir(), `skelcast-runtime-${framework}-`));

@@ -11,8 +11,7 @@ export function boundaryPresentation(id: string, kind: string, pending: boolean)
   const rootStyle: Record<string, string | number> = { minWidth: 0 };
   const skeletonStyle: Record<string, string | number> = { display: skeletonVisible ? 'block' : 'none', minWidth: 0 };
   const contentStyle: Record<string, string | number> = { display: contentVisible ? 'block' : 'none', minWidth: 0 };
-  const contentMeasurable=!contentVisible;
-  if(contentMeasurable){
+  if(!contentVisible){
     // Keep the source's intrinsic inline size during pending and preview. The
     // zero-height host precedes the skeleton, preserving its mount position
     // without adding height, leaking margins or removing it from width sizing.
@@ -27,7 +26,7 @@ export function boundaryPresentation(id: string, kind: string, pending: boolean)
     Object.assign(contentStyle, { gridArea: '1 / 1', alignSelf: 'start' });
     Object.assign(skeletonStyle, { gridArea: '1 / 1', alignSelf: 'start', zIndex: 1, opacity: preview.opacity, pointerEvents: 'none' });
   }
-  return { comparison, skeletonVisible, contentVisible, contentMeasurable, rootStyle, skeletonStyle, contentStyle };
+  return { comparison, skeletonVisible, contentVisible, rootStyle, skeletonStyle, contentStyle };
 }
 
 /** Preserve visibility even when application CSS uses display: block !important. */

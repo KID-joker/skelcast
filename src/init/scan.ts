@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import { evaluate } from '../compiler/expression.js';
+import { resolutionCandidates } from '../compiler/resolution.js';
 import { nodeName, parseCode, unwrap, walk, type Ast } from './ast.js';
 import { reactComponents } from './react.js';
 import type { InitDiagnostic } from './types.js';
@@ -13,15 +14,8 @@ export interface ScanResult { files: SourceFile[]; routes: Map<string, Set<strin
 export const relativePath = (root: string, file: string) => path.relative(root, file).split(path.sep).join('/');
 async function exists(file: string) { try { return (await stat(file)).isFile(); } catch { return false; } }
 export async function resolveSource(root: string, from: string, request: string, aliases: Record<string, string>): Promise<string | undefined> {
-  let base: string;
-  if (request.startsWith('.')) base = path.resolve(path.dirname(path.join(root, from)), request);
-  else {
-    const alias = Object.keys(aliases).sort((a, b) => b.length - a.length).find(a => request === a || request.startsWith(`${a}/`));
-    if (!alias) return;
-    base = path.resolve(root, aliases[alias], `.${request.slice(alias.length)}`);
-  }
-  for (const ext of ['', '.tsx', '.jsx', '.vue', '.ts', '.js', '/index.tsx', '/index.jsx', '/index.vue', '/index.ts', '/index.js']) {
-    if (await exists(base + ext)) return relativePath(root, base + ext);
+  for (const candidate of resolutionCandidates(root, path.resolve(root, from), request, aliases)) {
+    if (await exists(candidate)) return relativePath(root, candidate);
   }
 }
 async function discover(root: string, directory = root): Promise<string[]> {

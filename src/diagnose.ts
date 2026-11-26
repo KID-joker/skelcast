@@ -12,7 +12,7 @@ export async function diagnoseProject(project: Project, id: string, options: Dia
   if (!target) throw new Error(`Unknown skeleton ${id}`);
   if (options.variant && !Object.hasOwn(target.variants ?? { default: {} }, options.variant)) throw new Error(`Unknown variant ${options.variant} for ${id}`);
   return withProjectLock(project.outDir, async () => {
-    const status = (await checkProject(project)).find(status => status.id === id)!;
+    const [status] = await checkProject(project, id);
     const context = { ...status, configFile: project.configFile, hintsFile: project.hintsFile, target };
     if (status.state === 'missing' || status.state === 'corrupt') {
       if (options.node) throw new Error(`Cannot select a node in a ${status.state} artifact; run skelcast sync first`);

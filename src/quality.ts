@@ -87,9 +87,8 @@ export function compareQualityBaseline(rows: QualityRow[], baseline: QualityBase
 }
 
 export async function qualityProject(project: Project, id?: string) {
-  if (id && !project.config.targets.some(target => target.id === id)) throw new Error(`Unknown skeleton ${id}`);
   return withProjectLock(project.outDir, async () => {
-    const statuses = (await checkProject(project)).filter(status => !id || status.id === id);
+    const statuses = await checkProject(project, id);
     return Promise.all(statuses.map(async status => {
       if (status.state === 'missing' || status.state === 'corrupt') return { id: status.id, state: status.state, needsReview: true, reason: status.reason };
       const quality = analyzeQuality(await readArtifact(project, status.id));

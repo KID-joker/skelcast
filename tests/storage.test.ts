@@ -9,6 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { checkProject, loadProject, saveHints, syncProject } from '../src/generator.js';
 import { withProjectLock } from '../src/storage.js';
+import { qualityProject } from '../src/quality.js';
+import { diagnoseProject } from '../src/diagnose.js';
 
 const execute = promisify(execFile);
 async function fixture(run: (root: string) => Promise<void>) {
@@ -20,6 +22,38 @@ async function fixture(run: (root: string) => Promise<void>) {
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('single-target checks, quality and diagnosis do not inspect unrelated target inputs', async () => fixture(async root => {
+  const project = await loadProject(root);
+  await syncProject(project);
+  let unrelatedReads = 0;
+  Object.defineProperty(project.config.targets[1], 'source', { enumerable: true, get: () => { unrelatedReads++; return 'Two.jsx'; } });
+  assert.deepEqual(await checkProject(project, 'one'), [{ id: 'one', state: 'ready' }]);
+  assert.deepEqual((await qualityProject(project, 'one')).map(row => row.id), ['one']);
+  assert.equal((await diagnoseProject(project, 'one')).state, 'ready');
+  assert.equal(unrelatedReads, 0);
+  assert.equal((await checkProject(project)).length, 2);
+  assert.ok(unrelatedReads > 0, 'full-project checks still inspect every target');
+  await assert.rejects(checkProject(project, 'unknown'), /Unknown skeleton unknown/);
+  await assert.rejects(qualityProject(project, 'unknown'), /Unknown skeleton unknown/);
+}));
+
+test('sync reuses legacy manifests while dropping unused metadata', async () => fixture(async root => {
+  const project = await loadProject(root);
+  await syncProject(project);
+  const manifestFile = path.join(project.outDir, 'manifest.json');
+  const legacy = JSON.parse(await readFile(manifestFile, 'utf8'));
+  legacy.configHash = 'unused legacy hash';
+  for (const [id, entry] of Object.entries(legacy.targets)) (entry as Record<string, unknown>).file = `${id}.mjs`;
+  await writeFile(manifestFile, JSON.stringify(legacy));
+  const before = (await stat(path.join(project.outDir, 'one.mjs'))).mtimeMs;
+  assert.ok((await syncProject(project)).every(row => row.state === 'reused'));
+  assert.equal((await stat(path.join(project.outDir, 'one.mjs'))).mtimeMs, before);
+  const manifest = JSON.parse(await readFile(manifestFile, 'utf8'));
+  assert.equal(Object.hasOwn(manifest, 'configHash'), false);
+  for (const entry of Object.values(manifest.targets)) assert.equal(Object.hasOwn(entry as object, 'file'), false);
+  assert.ok((await checkProject(project)).every(row => row.state === 'ready'));
+}));
 
 test('a later compilation failure preserves every previous output and the manifest', async () => fixture(async root => {
   const project = await loadProject(root);

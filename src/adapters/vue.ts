@@ -26,7 +26,7 @@ export const LoadingBoundary = defineComponent({
     };
     const connect = () => {
       unsubscribe?.();
-      unsubscribe = subscribeBoundary(props.artifact.id, props.artifact.kind, () => { revision.value++; updateSkeleton(); });
+      unsubscribe = subscribeBoundary(props.artifact.id, props.artifact.kind, () => { revision.value++; });
     };
     onMounted(() => {
       connect();
@@ -35,7 +35,7 @@ export const LoadingBoundary = defineComponent({
     });
     onUpdated(updateSkeleton);
     watch(() => [props.artifact.id, props.artifact.kind], () => { if (registration) connect(); });
-    watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact }); updateSkeleton(); });
+    watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact }); });
     onBeforeUnmount(() => { unsubscribe?.(); registration?.dispose(); mount.dispose(); });
     return () => {
       void revision.value;
@@ -43,7 +43,7 @@ export const LoadingBoundary = defineComponent({
       const presentation = boundaryPresentation(artifact.id, artifact.kind, props.pending);
       const show = presentation.skeletonVisible;
       return h('div', { ref: root, style: presentation.rootStyle, 'data-sk-comparison': presentation.comparison, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
-        h('div', { hidden: !presentation.contentVisible&&!presentation.contentMeasurable, 'aria-hidden':!presentation.contentVisible||undefined, style: presentation.contentStyle, inert: !presentation.contentVisible || undefined, 'data-sk-content': '' }, slots.default?.()),
+        h('div', { 'aria-hidden':!presentation.contentVisible||undefined, style: presentation.contentStyle, inert: !presentation.contentVisible || undefined, 'data-sk-content': '' }, slots.default?.()),
         h('div', { ref: skeleton, hidden: !show, style: presentation.skeletonStyle, 'aria-hidden': 'true', 'data-sk-skeleton': '' }),
       ]);
     };

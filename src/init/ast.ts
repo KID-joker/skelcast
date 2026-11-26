@@ -1,8 +1,8 @@
 import { parseExpression } from '@babel/parser';
 import type * as t from '@babel/types';
-import { endOf, isRenderFunction, nodeName, parseSource, startOf, walk } from '../compiler/ast.js';
+import { endOf, isRenderFunction, nodeName, parseSource, startOf, unwrapExpression as unwrap, walk } from '../compiler/ast.js';
 
-export { endOf, nodeName, startOf, walk };
+export { endOf, nodeName, startOf, unwrap, walk };
 export type Ast = t.Node;
 export interface Edit { start: number; end: number; text: string }
 export function parseCode(code: string, filename?: string, jsx?: boolean) { return parseSource(code, filename, jsx); }
@@ -37,14 +37,6 @@ export function sameCondition(left: string, right: string): boolean {
   const key = (code: string) => JSON.stringify(parseExpression(code, { plugins: ['typescript'] }), (name, value: unknown) =>
     ['start', 'end', 'loc', 'extra', 'leadingComments', 'trailingComments', 'innerComments', 'comments'].includes(name) ? undefined : value);
   try { return key(left) === key(right); } catch { return false; }
-}
-export function unwrap(node: t.Node | null | undefined): t.Node | undefined {
-  while (node) {
-    switch (node.type) {
-      case 'TSAsExpression': case 'TSSatisfiesExpression': case 'TSNonNullExpression': case 'ParenthesizedExpression': node = node.expression; break;
-      default: return node;
-    }
-  }
 }
 export function objectConfig(ast: t.File): t.ObjectExpression | undefined {
   const declaration = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration');

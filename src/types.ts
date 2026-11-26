@@ -88,11 +88,10 @@ export interface SkeletonArtifact {
   source: string;
 }
 export interface ManifestEntry {
-  file: string;
   hash: string;
   outputHash: string;
   dependencies: Record<string, string>;
 }
-export interface Manifest { version: string; configHash: string; targets: Record<string, ManifestEntry> }
+export interface Manifest { version: string; targets: Record<string, ManifestEntry> }
 
 export function defineSkelCastConfig(config: SkeletonConfig): SkeletonConfig { return config; }
