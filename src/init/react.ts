@@ -41,7 +41,7 @@ interface EarlyLoader { guard: t.IfStatement; returned: t.ReturnStatement }
 interface Region { node: Ast; pending: string; content: string; bindings: Record<string, boolean>; early?: EarlyLoader[] }
 export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
-  const code = ctx.source, ast = parseCode(code);
+  const code = ctx.source, ast = parseCode(code, ctx.file);
   const components = reactComponents(ast);
   const boundaryNames = boundaryImports(ast, 'react');
   const boundary = [...boundaryNames][0] ?? uniqueName(code, '__SkelCastBoundary');
@@ -165,7 +165,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   if (result.targets.length) {
     const offset = importOffset(ast);
     result.edits.push({ start: offset, end: offset, text: `\n${boundaryNames.size ? '' : `import { LoadingBoundary as ${boundary} } from 'skelcast/react';\n`}${imports.join('\n')}\n` });
-    parseCode(applyEdits(code, result.edits));
+    parseCode(applyEdits(code, result.edits), ctx.file);
   }
   return result;
 }

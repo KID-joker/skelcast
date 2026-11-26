@@ -48,7 +48,7 @@ test('browser layout check catches bad geometry and hidden placeholders and rest
     return auditBoundaryLayout(document.querySelector('[data-sk-boundary="products.list"]'));
   }, browserModule) as Promise<BoundaryLayoutReport>;
   await boundary.evaluate(element => {
-    const root = element.firstElementChild!.firstElementChild!.shadowRoot!;
+    const root = element.querySelector(':scope > [data-sk-skeleton]')!.firstElementChild!.shadowRoot!;
     const style = document.createElement('style');
     style.textContent = '[data-sk-artifact]{height:1000px!important;min-width:1800px!important}[data-sk-artifact][data-sk-artifact] [data-sk-leaf]{background:transparent!important}';
     root.append(style);

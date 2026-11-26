@@ -8,6 +8,9 @@ import { compileStyleAsync } from '@vue/compiler-sfc';
 import type { StyleOptions } from '../types.js';
 import { embedStyleAssets, namespaceGlobals } from './css-resources.js';
 import { escapeHTML } from './html.js';
+import { fallbackConstraints } from './fallback.js';
+import { compileSass } from './sass.js';
+import type { StyleSource } from './stylesheet-source.js';
 
 export const digest = (text: string | Uint8Array): string => createHash('sha256').update(text).digest('hex');
 export const sourceIdAttribute = 'data-sk-source-id';
@@ -39,9 +42,15 @@ export function bindStyleVariables(source: string, file: string): { css: string;
   }
   return { css: css + source.slice(previous), bindings };
 }
-export async function loadStyle(file: string, read: (file: string) => Promise<string>, scopedId?: string, inline?: string, options?: StyleOptions, lang?: string, readAsset?: (file: string) => Promise<Uint8Array>) {
+export async function loadStyle(file: string, read: (file: string) => Promise<string>, scopedId?: string, inline?: string, options?: StyleOptions, lang?: string, readAsset?: (file: string) => Promise<Uint8Array>, resolve?: (request: string, from: string) => Promise<string | undefined>, io: StyleSource = { root: path.dirname(file), aliases: {}, read }) {
   let mapping: Record<string, string> = {};
   let source = inline ?? await read(file);
+  let sourceMap: Awaited<ReturnType<typeof compileSass>>['map'];
+  if (lang === 'scss' || lang === 'sass' || /\.(?:scss|sass)$/.test(file)) {
+    if (options?.sass === false) throw new Error(`styles.sass is disabled for ${file}`);
+    const result = await compileSass(source, file, lang ?? path.extname(file).slice(1), io);
+    source = result.css; sourceMap = result.map;
+  }
   if (lang === 'less' || file.endsWith('.less')) {
     if (!options?.less) throw new Error(`Enable styles.less to compile ${file}`);
     const { default: less } = await import('less');
@@ -52,7 +61,7 @@ export async function loadStyle(file: string, read: (file: string) => Promise<st
         if (/^(?:[a-z]+:|\/\/)/i.test(filename)) throw new Error('Remote Less imports are not supported');
         let lastError: unknown;
         for (const candidate of [filename, `${filename}.less`]) {
-          const resolved = path.resolve(directory, candidate);
+          const resolved = await resolve?.(candidate, path.join(directory, '__style.less')) ?? path.resolve(directory, candidate);
           try { return { contents: await read(resolved), filename: resolved }; }
           catch (error: any) { if (error.code !== 'ENOENT') throw error; lastError = error; }
         }
@@ -67,14 +76,27 @@ export async function loadStyle(file: string, read: (file: string) => Promise<st
     } as Less.Options);
     source = output.css;
   }
+  const imports = async (source: string, from: string) => {
+    if (!resolve) return source;
+    const root = postcss.parse(source, { from });
+    const rules: import('postcss').AtRule[] = [];
+    root.walkAtRules(/^(?:import|reference)$/, rule => { rules.push(rule); });
+    for (const rule of rules) {
+      const match = rule.params.match(/^(?:url\(\s*)?(["'])([^"']+)\1\s*\)?/);
+      if (!match || /^(?:[a-z][\w+.-]*:|\/\/)/i.test(match[2])) continue;
+      const resolved = await resolve(match[2], from);
+      if (resolved) rule.params = JSON.stringify(resolved) + (rule.params.slice(match[0].length).trim() ? ` ${rule.params.slice(match[0].length).trim()}` : '');
+    }
+    return root.toString();
+  };
   const processed = await postcss([
-    postcssImport({ load: async (f) => read(f) }),
+    postcssImport({ load: async (f) => imports(await read(f), f) }),
     ...(file.includes('.module.') ? [modules({
       generateScopedName: (name: string, filename: string) => `sk_${digest(path.basename(filename) + source).slice(0, 8)}_${name}`,
       getJSON: (_: string, json: Record<string, string>) => { mapping = json; },
     })] : []),
-  ]).process(source, { from: file });
-  await embedStyleAssets(processed.root, file, readAsset);
+  ]).process(await imports(source, file), { from: file, map: sourceMap ? { prev: sourceMap, inline: false, annotation: false } : false });
+  await embedStyleAssets(processed.root, file, readAsset, resolve);
   let css = processed.root.toString();
   if (scopedId) {
     const result = await compileStyleAsync({ source: css, filename: file, id: scopedId, scoped: true });
@@ -109,7 +131,7 @@ export function scopeCSS(css: string, id: string): string {
 }
 export function scopeArtifactStyles(css: string, html: string, id: string): { css: string; html: string } {
   const scope = `[data-sk-artifact="${id}"]`;
-  const root = postcss.parse(css);
+  const root = postcss.parse(fallbackConstraints(css));
   const inline: postcss.Root[] = [];
   for (const match of html.matchAll(/ style="([^"]*)"/g)) {
     const value = match[1];
@@ -157,13 +179,14 @@ export const baseCSS = `
 [data-sk-artifact] { color: transparent; pointer-events: none; }
 [data-sk-artifact] [data-sk-control] { color: var(--skeleton-control-color, #606266); }
 [data-sk-artifact] [data-sk-control] [data-sk-image]:not([data-sk-leaf]) { outline:1px solid currentColor;outline-offset:-1px;border-radius:2px; }
-[data-sk-artifact] *, [data-sk-artifact] *::before, [data-sk-artifact] *::after { box-sizing: border-box; }
+[data-sk-artifact] [data-sk-layout] { box-sizing: border-box; }
 [data-sk-artifact] [data-sk-leaf] { color: transparent !important; background-color: var(--skeleton-color, #e5e9ef) !important; border-color: transparent !important; border-radius: var(--skeleton-radius, 6px); }
 [data-sk-artifact] [data-sk-text] { display: inline-block; width: var(--skeleton-text-width, min(100%, 12ch)); min-width: 3ch; height: .85em; vertical-align: middle; }
 [data-sk-artifact] [data-sk-measured] { display: inline; width: auto; min-width: 0; height: auto; vertical-align: baseline; font: inherit; letter-spacing: inherit; text-transform: inherit; text-shadow: none !important; -webkit-text-fill-color: transparent !important; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 [data-sk-artifact] [data-sk-measured]::before { content: attr(data-sk-text-content); }
 [data-sk-artifact] :where([data-sk-image]) { aspect-ratio: var(--skeleton-image-ratio, auto); }
-[data-sk-artifact] [data-sk-fallback] { display: block; width: 100%; min-height: var(--skeleton-min-height, 96px); }
+:where([data-sk-artifact] :is(span,a,button,label,i,em,strong,small,sup,sub)) { --sk-inline-footprint: 1em; }
+:where([data-sk-artifact] [data-sk-fallback]) { display: block; width: var(--sk-inline-footprint, 100%); height: var(--sk-fallback-height, var(--sk-inline-footprint, var(--sk-available-height, var(--skeleton-min-height, 96px)))); }
 [data-sk-artifact] [data-sk-multiline] { display: block; width: 100%; }
 [data-sk-artifact] [data-sk-multiline] > span { display: block; height: .85em; margin-block: .35em; background: var(--skeleton-color, #e5e9ef); border-radius: 4px; }
 [data-sk-artifact] [data-sk-multiline] > span:last-child { width: 72%; }

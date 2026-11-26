@@ -1,5 +1,7 @@
 export type RenderMode = 'light' | 'shadow';
 export interface SkeletonHints {
+  /** Loading projects proven collection guards; source preserves source-default state. */
+  state?: 'loading' | 'source';
   repeat?: number;
   lines?: number;
   minHeight?: number;
@@ -36,7 +38,13 @@ export interface SkeletonConfig {
   hintsFile?: string;
 }
 export interface StyleOptions {
+  /** Keep only statically possible class selectors. Defaults on. */
+  prune?: boolean;
   less?: boolean;
+  /** SCSS/Sass data compilation defaults on; no application JS importers run. */
+  sass?: boolean;
+  /** Tailwind 4 CSS directives are detected automatically; JS plugins/configs never run. */
+  tailwind?: boolean;
   /** Mini + Attributify utilities. Configuration is data, not application config execution. */
   unocss?: boolean | {
     theme?: Record<string, unknown>;
@@ -67,7 +75,7 @@ export interface Evidence {
   variants?: string[];
 }
 export interface SourceLocation { file: string; line: number }
-export interface SkeletonView { html: string; css: string }
+export interface SkeletonView { html: string; css: string; sourceIds?:string[] }
 export interface SkeletonArtifact {
   id: string;
   kind: 'page' | 'request';

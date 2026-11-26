@@ -13,7 +13,8 @@ export interface Project { root: string; config: SkeletonConfig; configFile: str
 export interface TargetStatus { id: string; state: 'ready' | 'stale' | 'missing' | 'corrupt'; reason?: string }
 export function validateHints(hints: SkeletonHints): void {
   if (!hints || typeof hints !== 'object' || Array.isArray(hints)) throw new Error('Hints must be an object');
-  const allowed = new Set(['repeat', 'lines', 'minHeight', 'bindings']);
+  const allowed = new Set(['state', 'repeat', 'lines', 'minHeight', 'bindings']);
+  if(hints.state!=null&&!['loading','source'].includes(hints.state))throw new Error('state must be loading or source');
   for (const key of Object.keys(hints)) if (!allowed.has(key)) throw new Error(`Unknown hint: ${key}`);
   for (const [key, min, max] of [['repeat', 1, 24], ['lines', 1, 8], ['minHeight', 16, 2000]] as const) {
     const value = hints[key];
@@ -42,6 +43,7 @@ export async function projectFromConfig(root: string, input: SkeletonConfig): Pr
   if (config.styles) {
     if (typeof config.styles !== 'object' || Array.isArray(config.styles)) throw new Error('styles must be an object');
     if (config.styles.less != null && typeof config.styles.less !== 'boolean') throw new Error('styles.less must be a boolean');
+    for (const name of ['sass','tailwind','prune'] as const) if (config.styles[name] != null && typeof config.styles[name] !== 'boolean') throw new Error(`styles.${name} must be a boolean`);
     const uno = config.styles.unocss;
     if (uno != null && typeof uno !== 'boolean') {
       if (typeof uno !== 'object' || Array.isArray(uno)) throw new Error('styles.unocss must be a boolean or configuration object');

@@ -1,0 +1,16 @@
+import {defineComponent, createVNode as node, mergeProps, toRefs, unref, onMounted, nextTick, getCurrentInstance} from 'vue';
+import {ElTable as Grid, ElTableColumn as Column} from 'element-plus';
+export default defineComponent({setup(props) {
+  const {columns: fields, autoFill: enabled, fit: options} = toRefs(props);
+  const vm = getCurrentInstance();
+  const getTable = () => vm.proxy.$refs['grid-view'];
+  const getRefs = () => getTable().$refs;
+  const fitViewport = () => {
+    const element = getRefs().tableWrapper, gap = unref(options).gap ?? 57;
+    element.style.height = window.innerHeight - element.getBoundingClientRect().top - gap + 'px';
+  };
+  onMounted(() => nextTick(() => { if (unref(enabled)) fitViewport(); }));
+  const column = value => node(Column, value);
+  const render = () => node(Grid, mergeProps(props, {ref: 'grid-view'}), {default: () => unref(fields).map(column)});
+  return () => render();
+}});

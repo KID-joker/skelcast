@@ -55,7 +55,7 @@ test('Element Plus keeps controls and masks only table data, with import-identit
       assert.ok(table);
       assert.equal(elements(table.loc.source).filter((n) => n.tag === 'th').length, 3);
       assert.equal(elements(table.loc.source).filter((n) => n.tag === 'td').length, 12);
-      assert.match(html, />Name<\/th>/);
+      assert.match(html, />Name<\/div><\/th>/);
       const actions=elements(table.loc.source).filter(n=>n.tag==='button');
       assert.equal(actions.length,4);
       assert.ok(actions.every(n=>!has(n,'data-sk-leaf')&&n.loc.source.includes('Delete')));

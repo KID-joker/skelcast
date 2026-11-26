@@ -56,7 +56,7 @@ for (const framework of ['react', 'vue'] as const) for (const fallback of [false
     const original = await article.first().elementHandle();
     if (fallback) await expect(page.locator('style[data-sk-style]')).toHaveCount(3);
     else expect(await page.locator('[data-sk-boundary="cached-shadow"]').evaluateAll(boundaries => {
-      const roots = boundaries.map(boundary => boundary.firstElementChild!.firstElementChild!.shadowRoot!);
+      const roots = boundaries.map(boundary => boundary.querySelector(':scope > [data-sk-skeleton]')!.firstElementChild!.shadowRoot!);
       return roots[0].adoptedStyleSheets[0] === roots[1].adoptedStyleSheets[0];
     })).toBe(true);
     await page.getByRole('button', { name: 'Toggle', exact: true }).click();

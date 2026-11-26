@@ -1,7 +1,21 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName } from './ast.js';
+import { isRenderFunction, nodeName, walk } from './ast.js';
 import { UNKNOWN, bindPattern, evaluate, type ExpressionContext, type Value } from './expression.js';
 import { parseExpression } from '@babel/parser';
+
+/** Explicit state bindings also count when they name an input to a condition. */
+export function hasStateBinding(text: string, context: ExpressionContext): boolean {
+  if (Object.hasOwn(context.bindings, text)) return true;
+  let found = false;
+  try {
+    walk(parseExpression(text, { plugins: ['typescript'] }), (node, ancestors) => {
+      const parent = ancestors.at(-1);
+      if (node.type === 'Identifier' && parent?.type === 'MemberExpression' && !parent.computed && parent.property === node) return;
+      if (node.type === 'Identifier' || node.type === 'MemberExpression') if (Object.hasOwn(context.bindings, text.slice(node.start!, node.end!))) found = true;
+    });
+  } catch { /* Opaque expressions require an exact binding. */ }
+  return found;
+}
 
 /** Nested boundaries contribute their content branch to a page skeleton, even
  * when newly added guards are absent from that page's original hints. */

@@ -7,6 +7,8 @@ import { withProjectLock } from './storage.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
+const transientPatterns = ['**/.skelcast-lock/**', '**/.skelcast-lock-recovery/**', '**/.skelcast-stage-*/**', '**/.skelcast-transaction.json'];
+const transientFile = (file: string) => file.split(/[\\/]/).some(part => /^\.skelcast-(?:lock(?:-recovery)?|stage-.+|transaction\.json)$/.test(part)) || file.endsWith('.tmp');
 const previewArtifact = (artifact: SkeletonArtifact): SkeletonArtifact => ({ ...artifact, diagnostics: [], evidence: [], sources: {}, source: '' });
 const escapeStyle = (s: string) => s.replace(/<\/style/gi, '<\\/style');
 const escapeAttribute = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -61,6 +63,12 @@ export function skelcastPlugin(): Plugin {
   return {
     name: 'skelcast',
     enforce: 'pre',
+    config(config) {
+      // Ignore storage bookkeeping in Vite itself, before its HTML/HMR handlers.
+      // Filtering only our notification listener still allows full-page reloads.
+      if (config.server?.watch === null) return;
+      return { server: { watch: { ignored: transientPatterns } } };
+    },
     async closeBundle() {
       closing = true;
       await Promise.allSettled([...requests]);
@@ -142,12 +150,13 @@ export function skelcastPlugin(): Plugin {
       let timer: ReturnType<typeof setTimeout>;
       server.watcher.on('all', (_event, file) => {
         if (!file.startsWith(project.root) || file.includes(`${path.sep}node_modules${path.sep}`)) return;
-        if (file.split(path.sep).some(part => part.startsWith('.skelcast-')) || file.endsWith('.tmp')) return;
+        if (transientFile(file)) return;
         clearTimeout(timer); timer = setTimeout(sendUpdate, 100);
       });
       server.httpServer?.once('close', () => clearTimeout(timer));
     },
     async handleHotUpdate(context) {
+      if (transientFile(context.file)) return [];
       if (context.file.startsWith(project.outDir)) {
         for (const mod of context.server.moduleGraph.idToModuleMap.values()) if (mod.id?.startsWith(internalPrefix)) context.server.moduleGraph.invalidateModule(mod);
         sendUpdate();

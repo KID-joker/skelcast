@@ -28,6 +28,6 @@ export interface ComponentPreset {
     children: string,
     text: string,
     hints?: SkeletonHints,
-    policy?: { mask: boolean },
+    policy?: { mask: boolean; slots?: Record<string, string> },
   ) => Presentation | undefined;
 }

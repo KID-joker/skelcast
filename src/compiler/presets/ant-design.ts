@@ -127,7 +127,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
     resolve: (ref) => libraryExport(ref, id, deep),
     role,
     slots: (name) => (name === 'table.column' || name === 'tablecolumn' ? ['default'] : name === 'calendar' ? ['header'] : ['default', 'header', 'footer', 'title', 'extra']),
-    present(name, props, children, text, hints) {
+    present(name, props, children, text, hints, policy) {
       if (name === 'button') return button(children, props);
       if (['input', 'inputnumber', 'input.textarea', 'select', 'datepicker', 'timepicker'].includes(name))
         return input(name === 'input.textarea' ? { ...props, type: 'textarea' } : props);
@@ -148,7 +148,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           };border:1px solid #d9d9d9;border-radius:4px`,
           children,
         };
-      if (name === 'table') return table(props, children, text, hints);
+      if (name === 'table') return table(props, children, text, hints,false,policy?.mask??true);
       if (name === 'table.column' || name === 'tablecolumn') return column(props, children);
       if (name === 'card') return card(children, props.title, text, '24px');
       if (name === 'card.meta' || name === 'cardmeta')

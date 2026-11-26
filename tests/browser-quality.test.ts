@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compareLayouts, type LayoutSnapshot } from '../src/browser.js';
+test('source overflow is recorded as baseline while additional skeleton overflow still fails',()=>{
+ const content:LayoutSnapshot={box:{x:0,y:0,width:300,height:200},visible:true,overflowX:8,placeholders:0,visiblePlaceholders:0};
+ assert.equal(compareLayouts(content,{...content,placeholders:1,visiblePlaceholders:1}).needsReview,false);
+ assert.ok(compareLayouts(content,{...content,overflowX:12}).issues.some(i=>i.code==='HORIZONTAL_OVERFLOW'));
+});
 
 const content: LayoutSnapshot = { box: { x: 20, y: 30, width: 400, height: 200 }, visible: true, overflowX: 0, placeholders: 0, visiblePlaceholders: 0 };
 test('visual geometry reports height drift, displaced following content and invisible overflowing placeholders', () => {
@@ -25,4 +30,11 @@ test('equal outer boxes cannot hide internal column drift or missing repeated an
   assert.equal(result.delta.height, 0);
   assert.deepEqual(result.anchors, { compared: 2, mismatched: 2, missing: 1 });
   assert.deepEqual(result.issues.map(issue => issue.code), ['ANCHOR_MISMATCH', 'ANCHOR_MISMATCH', 'ANCHOR_MISSING']);
+});
+
+test('matching outer geometry cannot hide missing native table columns or headers',()=>{
+ const real={...content,tables:[{columns:11,headerRows:1}]},generated={...content,tables:[{columns:3,headerRows:1}]};
+ assert.deepEqual(compareLayouts(real,generated).issues.map(issue=>issue.code),['TABLE_STRUCTURE_MISMATCH']);
+ assert.ok(compareLayouts(real,{...content,tables:[]}).needsReview);
+ assert.equal(compareLayouts(real,{...content,tables:[{columns:11,headerRows:1}]}).needsReview,false);
 });

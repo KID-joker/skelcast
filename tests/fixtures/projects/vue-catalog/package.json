@@ -1,0 +1,1 @@
+{"name":"acceptance-vue-catalog","private":true,"type":"module","dependencies":{"vue":">=3.3","skelcast":"0.1.0"},"devDependencies":{"vite":">=6","@vitejs/plugin-vue":"*"}}

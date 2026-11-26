@@ -35,7 +35,7 @@ test('CSS imports, Less imports and inline styles embed relative binary assets a
     await writeFile(path.join(root, 'styles/main.less'), `@import './nested/theme.less';`);
     await writeFile(path.join(root, 'View.jsx'), `import './styles/main.css';import './styles/main.less';import tile from './tile.png';export default ()=> <div className="box less" style={{backgroundImage:"url('./tile.png')"}}><img src={tile}/></div>`);
     await writeFile(path.join(root, 'skelcast.config.mjs'), `export default {styles:{less:true},targets:[{id:'assets',source:'View.jsx'}]}`);
-    const { artifact, dependencies } = await compileTarget(root, { id: 'assets', source: 'View.jsx' }, {}, { styles: { less: true } });
+    const { artifact, dependencies } = await compileTarget(root, { id: 'assets', source: 'View.jsx' }, {}, { styles: { less: true,prune:false } });
     const data = `data:image/png;base64,${(await readFile(path.join(root, 'tile.png'))).toString('base64')}`;
     assert.ok(artifact.variants.default.css.includes(data));
     assert.ok(artifact.variants.default.html.includes(data));
@@ -61,4 +61,31 @@ test('font and animation names retain their namespace through CSS variable chain
   assert.ok(result.css.includes(`var(--theme-face, "${font}")`));
   assert.ok(result.html.includes(`var(--other-motion, ${animation} 1s)`));
   assert.ok(result.html.includes(`var(--face, &quot;${font}&quot;)`));
+});
+
+test('CSS and Less aliases resolve nested imports and assets through the project resolver', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-style-alias-'));
+  try {
+    await mkdir(path.join(root, 'src/styles'), { recursive: true });
+    await mkdir(path.join(root, 'src/assets'), { recursive: true });
+    await writeFile(path.join(root, 'src/assets/tile.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff]));
+    await writeFile(path.join(root, 'src/styles/base.css'), `@import url('@app/styles/nested.css') layer(layout);.box{background:url('@app/assets/tile.png')}`);
+    await writeFile(path.join(root, 'src/styles/nested.css'), `.box{padding:21px}`);
+    await writeFile(path.join(root, 'src/styles/theme.less'), `@import '@app/styles/tokens.less';.box{gap:@space}`);
+    await writeFile(path.join(root, 'src/styles/tokens.less'), '@space:13px;');
+    await writeFile(path.join(root, 'View.vue'), `<template><section class="box">Data</section></template><style>@import '@app/styles/base.css';</style><style lang="less">@import '@app/styles/theme.less';</style>`);
+    const config = { aliases: { '@app': 'src' }, styles: { less: true }, targets: [{ id: 'alias', source: 'View.vue' }] };
+    await writeFile(path.join(root, 'skelcast.config.mjs'), `export default ${JSON.stringify(config)}`);
+    const project = await loadProject(root);
+    await syncProject(project);
+    const { artifact, dependencies } = await compileTarget(root, config.targets[0], config.aliases, { styles: config.styles });
+    assert.match(artifact.variants.default.css, /@layer layout/);
+    assert.match(artifact.variants.default.css, /padding:21px/);
+    assert.match(artifact.variants.default.css, /gap: 13px/);
+    assert.match(artifact.variants.default.css, /data:image\/png;base64/);
+    for (const file of ['src/styles/base.css', 'src/styles/nested.css', 'src/styles/theme.less', 'src/styles/tokens.less', 'src/assets/tile.png']) assert.ok(dependencies[file]);
+    assert.deepEqual(artifact.diagnostics, []);
+    await writeFile(path.join(root, 'src/styles/nested.css'), '.box{padding:33px}');
+    assert.equal((await checkProject(project))[0].state, 'stale');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

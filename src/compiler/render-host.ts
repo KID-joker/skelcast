@@ -25,10 +25,14 @@ export interface RenderHost {
   staticHTML(source: string, ctx: RenderContext, origin: SourceNode): string;
   image(props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string>;
   jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string>;
+  vueExpression(node: Ast | null | undefined, ctx: RenderContext): Promise<string>;
   jsxNodes(nodes: (Ast | null)[], ctx: RenderContext): Promise<string>;
   vueNode(node: VueNode, ctx: RenderContext, skipFor?: boolean): Promise<string>;
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string>;
-  renderSlot(slot: SourceSlot, ctx: RenderContext): Promise<string>;
+  renderSlot(slot: SourceSlot, ctx: RenderContext, argument?:Value,initial?:Value): Promise<string>;
+  selectVueNode(node:VueNode,ctx:RenderContext):'skip'|'ancestor'|'target'|undefined;
+  captureVueRegion(render:()=>Promise<string>):Promise<string>;
+  hasSelectedSlot(slot:SourceSlot):boolean;
   scan(file: string): Promise<void>;
   component(file: string, exported: string, props?: Record<string, Value>, parent?: RenderContext, node?: SourceNode): Promise<string>;
   componentReference(tag: string, ctx: RenderContext): Promise<ComponentReference | undefined>;

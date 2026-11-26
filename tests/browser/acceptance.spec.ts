@@ -6,7 +6,7 @@ import { build, createServer } from 'vite';
 import type { BoundaryLayoutReport } from '../../src/browser.js';
 import type { SkeletonConfig } from '../../src/types.js';
 
-for (const fixture of ['react-admin', 'vue-workspace'] as const) test(`project acceptance: ${fixture} integrates aliased lazy routes and verifies real/skeleton geometry`, async ({ page }) => {
+for (const fixture of ['react-admin', 'vue-workspace', 'vue-catalog'] as const) test(`project acceptance: ${fixture} integrates aliased lazy routes and verifies real/skeleton geometry`, async ({ page }) => {
   const repo = process.cwd();
   const root = await mkdtemp(path.join(os.tmpdir(), `skelcast-acceptance-${fixture}-`));
   const framework = fixture.startsWith('react') ? 'react' : 'vue';
@@ -43,7 +43,7 @@ for (const fixture of ['react-admin', 'vue-workspace'] as const) test(`project a
     await page.goto(`http://127.0.0.1:${address.port}/`);
     const boundary = page.locator(`[data-sk-boundary="${region.id}"]`);
     await expect(boundary).toHaveAttribute('aria-busy', 'false');
-    const filter = page.getByRole('textbox', { name: framework === 'react' ? 'Project filter' : 'Activity filter' });
+    const filter = page.getByRole('textbox', { name: framework === 'react' ? 'Project filter' : fixture === 'vue-catalog' ? 'Catalog filter' : 'Activity filter' });
     await filter.fill('Keep this filter');
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });

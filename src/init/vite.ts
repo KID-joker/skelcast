@@ -23,7 +23,7 @@ export async function integrateVite(root: string, manifest: { scripts?: Record<s
     else diagnostics.push({ code: 'BUNDLER_UNSUPPORTED', file: 'package.json', message: 'No supported Vite config found; framework/bundler adapter required' });
     return { changes, diagnostics };
   }
-  const ast = parseCode(code);
+  const ast = parseCode(code, file);
   const declaration = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration')?.declaration;
   if (!declaration) return { changes, diagnostics: [{ code: 'VITE_CONFIG_UNSUPPORTED', file, message: 'Vite config has no ESM default export' }] };
   let configRoot = root;

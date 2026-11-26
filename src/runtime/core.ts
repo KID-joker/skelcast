@@ -1,5 +1,6 @@
 import type { SkeletonArtifact, SkeletonView } from '../types.js';
 import { acquireStyle } from './styles.js';
+import{acquireLayoutConstraints}from'./layout.js';
 
 export interface BoundaryInfo {
   id: string;
@@ -108,8 +109,9 @@ export function mountSkeleton(host: HTMLElement, artifact: SkeletonArtifact, var
   const template = host.ownerDocument.createElement('template'); template.innerHTML = view.html;
   root.replaceChildren(template.content);
   const releaseStyle = acquireStyle(root instanceof ShadowRoot ? root : host.ownerDocument, `${root instanceof ShadowRoot ? ':host{display:block}' : ''}${view.css}`);
+  const releaseLayout=acquireLayoutConstraints(root);
   if (preview.highlight) root.querySelector('[data-sk-artifact]')?.setAttribute('data-sk-highlight', '');
-  return () => { releaseStyle(); host.replaceChildren(); };
+  return () => { releaseLayout();releaseStyle(); host.replaceChildren(); };
 }
 
 /** Mount on first display and retain the tree while hidden. Artifact/variant changes

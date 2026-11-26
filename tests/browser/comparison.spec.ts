@@ -17,7 +17,7 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
     await expect(boundary).toHaveAttribute('data-sk-comparison', 'overlay');
     const comparison = toolbar.getByRole('combobox', { name: 'Comparison mode' });
     const content = boundary.locator(':scope > [data-sk-content]');
-    const skeleton = boundary.locator(':scope > div').first();
+    const skeleton = boundary.locator(':scope > [data-sk-skeleton]');
     const card = await content.getByRole('heading', { name: 'Workspace design system' }).elementHandle();
     const search = page.getByRole('textbox', { name: 'Search assets' });
     await search.fill('Keep my draft');
@@ -111,7 +111,7 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
     const toolbar = page.locator('#skelcast-devtools');
     await expect(boundary).toHaveAttribute('aria-busy', 'false');
     await expect(boundary).toHaveAttribute('data-sk-comparison', 'overlay');
-    await expect(boundary.locator(':scope > div').first()).toHaveCSS('opacity', '0.25');
+    await expect(boundary.locator(':scope > [data-sk-skeleton]')).toHaveCSS('opacity', '0.25');
     await page.reload();
     await expect(boundary).toHaveAttribute('data-sk-comparison', 'overlay');
     await expect(toolbar.getByRole('slider', { name: 'Opacity' })).toHaveValue('25');

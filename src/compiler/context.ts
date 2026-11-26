@@ -15,6 +15,7 @@ export interface ModuleInfo {
   reexports: Map<string, ComponentReference>;
   exportAll: ComponentReference[];
   env: Record<string, Value>;
+  sourceValues?:Record<string,Value>;
   descriptor?: ReturnType<typeof parseSFC>['descriptor'];
   scopes: string[];
   boundaries: Set<string>;
@@ -25,10 +26,11 @@ export interface ModuleInfo {
 }
 export interface ResolvedComponent { module: ModuleInfo; fn?: Ast }
 export const ambiguousExport = Symbol('ambiguous-export');
-export type SourceSlot =
+export type SourceSlot = (
   | { nodes: Ast[]; context: RenderContext; framework: 'jsx' }
-  | { nodes: TemplateChildNode[]; context: RenderContext; framework: 'vue' };
+  | { nodes: Ast[]; context: RenderContext; framework: 'render'; slots?: Record<string, SourceSlot> }
+  | { nodes: TemplateChildNode[]; context: RenderContext; framework: 'vue' }) & { parameter?:Ast;renderFunction?:Ast };
 /** Only source positions cross the Babel/Vue frontend boundary. */
 export interface SourceNode { start?: number | null; end?: number | null; loc?: { start: { line: number; offset?: number }; end?: { line?: number; offset?: number } } | null }
 export const slotValue = Symbol('source-slot');
-export interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; textWidth?: string; fallthrough?: { node: ElementNode; props: Record<string, Value> } }
+export interface RenderContext extends ExpressionContext { module: ModuleInfo; scopes: string[]; depth: number; slots?: Record<string, SourceSlot>; initialValues?:Record<string,Value>; mode?: 'auto' | 'preserve' | 'mask'; control?: boolean; textWidth?: string; loading?:boolean; projectedCollections?:Set<string>; fallthrough?: { node: ElementNode; props: Record<string, Value> } }

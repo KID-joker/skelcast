@@ -1,8 +1,19 @@
 import { VISITOR_KEYS } from '@babel/types';
+import { parse } from '@babel/parser';
 import type * as t from '@babel/types';
 
 export type Ast = t.Node;
 export type RenderFunction = t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression;
+
+/** Plain TypeScript permits angle assertions; TSX interprets them as JSX. */
+export function parseSource(code: string, filename = '', jsx = !/\.(?:[cm]?ts|vue)$/.test(filename)) {
+  return parse(code, { sourceType: 'module', plugins: [...(jsx ? ['jsx' as const] : []), 'typescript'] });
+}
+
+export function unwrapExpression(node: t.Node | null | undefined): t.Node | undefined {
+  while (node && ['TSAsExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'TSNonNullExpression', 'ParenthesizedExpression'].includes(node.type) && 'expression' in node) node = node.expression as t.Node;
+  return node ?? undefined;
+}
 
 export function nodeName(node?: t.Node | null): string | undefined {
   if (!node) return;

@@ -97,12 +97,14 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
     try {
       const code = await readFile(path.join(root, file), 'utf8');
       let script = code;
+      let jsx: boolean | undefined;
       if (file.endsWith('.vue')) {
         const parsed = parseSFC(code, { filename: file });
         if (parsed.errors.length) throw new Error(String(parsed.errors[0]));
         script = [parsed.descriptor.script?.content, parsed.descriptor.scriptSetup?.content].filter(Boolean).join('\n');
+        jsx = [parsed.descriptor.script?.lang, parsed.descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx');
       }
-      const ast = parseCode(script), imports = new Map<string, string>();
+      const ast = parseCode(script, file, jsx), imports = new Map<string, string>();
       for (const node of ast.program.body) if (node.type === 'ImportDeclaration') for (const spec of node.specifiers) imports.set(spec.local.name, node.source.value);
       walk(ast, node => {
         if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init?.type === 'CallExpression' && ['lazy', 'defineAsyncComponent'].includes(nodeName(node.init.callee) ?? '')) {

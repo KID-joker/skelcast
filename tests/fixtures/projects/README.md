@@ -8,6 +8,7 @@ real account data; they are not copies of third-party production repositories.
 | --- | --- | --- |
 | `react-admin` | Aliased static lazy routes, query loading guard, CSS Modules, local table component, preserved action controls | Desktop/mobile geometry, intentional horizontal scrolling, filter state, light DOM |
 | `vue-workspace` | Aliased static lazy routes, `v-loading`, named/default local slots, scoped Less, prop-based CSS variables | Desktop/mobile geometry, filter state, Shadow DOM |
+| `vue-catalog` | Cross-file data and reexports, bounded array transforms, source-proven identity wrapper, setup closures with attrs/default/named slots | Three unequal-height items, desktop/mobile grids, following-content position, Shadow DOM |
 
 `tests/browser/acceptance.spec.ts` copies each fixture to a temporary directory,
 links the repository's installed dependencies, verifies init dry-run and repeat

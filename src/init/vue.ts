@@ -16,13 +16,14 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
     result.diagnostics.push({ code: 'VUE_TEMPLATE_UNSUPPORTED', file: ctx.file, message: 'External or preprocessed templates need an adapter' }); return result;
   }
   const scripts = [descriptor.script, descriptor.scriptSetup].filter(Boolean);
+  const scriptAst = (script: NonNullable<typeof descriptor.script>) => parseCode(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx');
   const boundaryNames = new Set<string>();
-  for (const script of scripts) for (const name of boundaryImports(parseCode(script!.content), 'vue')) boundaryNames.add(name);
+  for (const script of scripts) for (const name of boundaryImports(scriptAst(script!), 'vue')) boundaryNames.add(name);
   const normalize = (name: string) => name.replace(/-/g, '').toLowerCase();
   const registeredNames = new Set([...boundaryNames].map(normalize));
   let optionBoundary: string | undefined;
   if (descriptor.script) {
-    const config = objectConfig(parseCode(descriptor.script.content));
+    const config = objectConfig(scriptAst(descriptor.script));
     const components = config?.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'components');
     if (components?.type === 'ObjectProperty' && components.value.type === 'ObjectExpression') {
       for (const prop of components.value.properties) if (prop.type === 'ObjectProperty' && boundaryNames.has(nodeName(prop.value) ?? '')) {
@@ -34,7 +35,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   }
   const isBoundary = (node: ElementNode) => registeredNames.has(normalize(node.tag));
   const flags = new Set<string>();
-  for (const script of scripts) walk(parseCode(script!.content), n => {
+  for (const script of scripts) walk(scriptAst(script!), n => {
     if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern') for (const p of n.id.properties) if (p.type === 'ObjectProperty' && loadingName(nodeName(p.key) ?? '') && p.value.type === 'Identifier') flags.add(p.value.name);
   });
   if (scripts.some(s => s!.src)) { result.diagnostics.push({ code: 'VUE_SCRIPT_EXTERNAL', file: ctx.file, message: 'External scripts need manual boundary registration' }); return result; }
@@ -126,11 +127,11 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const importCode = `\n${reuseImport ? '' : `import { LoadingBoundary as ${boundary} } from 'skelcast/vue';\n`}${imports.join('\n')}\n`;
   if (descriptor.scriptSetup) {
     const script = descriptor.scriptSetup;
-    const offset = script.loc.start.offset + importOffset(parseCode(script.content));
+    const offset = script.loc.start.offset + importOffset(scriptAst(script));
     result.edits.push({ start: offset, end: offset, text: importCode });
   } else if (descriptor.script) {
     const script = descriptor.script;
-    const scriptAST = parseCode(script.content), config = objectConfig(scriptAST);
+    const scriptAST = scriptAst(script), config = objectConfig(scriptAST);
     if (!config) { result.diagnostics.push({ code: 'VUE_OPTIONS_DYNAMIC', file: ctx.file, message: 'Cannot statically register a boundary in this Options API export' }); return { ...result, edits: [], targets: [] }; }
     const components = config.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'components');
     if (components && (components.type !== 'ObjectProperty' || components.value.type !== 'ObjectExpression')) { result.diagnostics.push({ code: 'VUE_COMPONENTS_DYNAMIC', file: ctx.file, message: 'Dynamic components registry needs manual integration' }); return { ...result, edits: [], targets: [] }; }

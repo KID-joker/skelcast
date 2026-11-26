@@ -1,11 +1,11 @@
-import { parse, parseExpression } from '@babel/parser';
+import { parseExpression } from '@babel/parser';
 import type * as t from '@babel/types';
-import { endOf, isRenderFunction, nodeName, startOf, walk } from '../compiler/ast.js';
+import { endOf, isRenderFunction, nodeName, parseSource, startOf, walk } from '../compiler/ast.js';
 
 export { endOf, nodeName, startOf, walk };
 export type Ast = t.Node;
 export interface Edit { start: number; end: number; text: string }
-export function parseCode(code: string) { return parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] }); }
+export function parseCode(code: string, filename?: string, jsx?: boolean) { return parseSource(code, filename, jsx); }
 export const slice = (code: string, node: t.Node) => code.slice(startOf(node), endOf(node));
 export const isFunction = isRenderFunction;
 export function applyEdits(code: string, edits: Edit[]): string {

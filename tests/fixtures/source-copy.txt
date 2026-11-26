@@ -1,0 +1,22 @@
+const typeTag = Object.prototype.toString;
+function ownFields(input, visit) {
+  for (const key in input) Object.hasOwn(input, key) && visit(input[key], key, input);
+}
+function arrayItems(input, visit) { input.forEach(visit); }
+function copyChild(value, deep) { return deep ? duplicate(value, deep) : value; }
+function duplicate(input, deep) {
+  if (input) switch (typeTag.call(input)) {
+    case '[object Object]': {
+      const target = {};
+      ownFields(input, (value, key) => target[key] = copyChild(value, deep));
+      return target;
+    }
+    case '[object Array]': {
+      const target = [];
+      arrayItems(input, value => target.push(copyChild(value, deep)));
+      return target;
+    }
+  }
+  return input;
+}
+export const replicate = value => value && duplicate(value, true);

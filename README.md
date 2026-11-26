@@ -110,6 +110,29 @@ export default {
 
 Point `source` at a presentation component when possible. `export` selects a named React component; the default is its default export. Adapters are also statically analyzed presentation components.
 
+Vue components defined with imported `defineComponent({ props, render })` and
+functional components returning imported `h()` calls can also be expanded without
+executing them. The finite renderer handles literal/default props, `this.$attrs`,
+native elements, imported child components and zero-argument default/named slot
+forwarding. Helper aliases and Vue namespace imports retain their package identity.
+Simple `setup(props, { attrs, slots })` closures returning a zero-argument render
+function also retain defaults and forwarded slots. Imported Vue `useAttrs` and
+`useSlots` are interpreted as source capabilities; setup itself is never called.
+Local component wrappers are transparent only when their available source proves
+an identity return, optionally attaching an `install` callback. Optional extension
+branches must be statically absent; render replacement and unknown branches stay
+opaque. Bounded dependency entry files can supply this proof without importing
+the package. A wrapper name alone does not establish the relationship.
+Direct render closures can retain native structure, typography and finite local
+render helpers even when setup contains lifecycle handlers. Mutable state stays
+unknown and the partial shell keeps a diagnostic; those handlers never run.
+Selected Vue regions retain enclosing loop and scoped-slot contexts. Slot
+arguments, destructuring aliases and defaults can pass through template, JSX and
+finite `h()` wrappers. Surrounding UI is traversed for context without becoming
+part of the region; guards inside the selected region retain their normal rules.
+Imperative render bodies, mixins, dynamic component factories and scoped render-slot
+callbacks retain a local fallback. Setup hooks and business functions are not run.
+
 ### Auto-imported Vue components and preprocessed styles
 
 Vue templates use DOM parsing rules, including native void elements such as `<input>`.
@@ -131,6 +154,8 @@ export default {
   componentDeclarations: ['components.d.ts'],
   componentPresets: ['naive-ui'], // Enable only the libraries used by the project.
   styles: {
+    // Sass/SCSS and CSS-first Tailwind 4 are detected automatically.
+    // Set sass: false or tailwind: false to reject those inputs explicitly.
     less: true,
     unocss: {
       theme: { colors: { primary: '#1ea54c' } },
@@ -151,7 +176,7 @@ fallbacks; custom themes and complex layouts can use project-local source adapte
 | Preset | Typical use | Data/layout coverage |
 | --- | --- | --- |
 | `naive-ui` | Vue / `naive-ui` | Cards, grids, code output, statistics, images, tags, data tables |
-| `element-plus` | Vue / `element-plus` | Tables/columns, cards, descriptions, statistics, images, avatars, tags, layout/form containers |
+| `element-plus` | Vue / `element-plus` | Tables/columns, cards, descriptions, statistics/countdowns, progress, images, avatars, tags, layout/form containers |
 | `ant-design-vue` | Vue / `ant-design-vue` | Tables/columns, cards, lists, descriptions, statistics, images, avatars, tags, layout/form containers |
 | `antd` | React / `antd` | The same basic Ant Design shapes, including JSX compound components such as `Table.Column` and `Form.Item` |
 
@@ -164,6 +189,19 @@ precedence. Common `/es`, `/lib` entry points and explicitly listed component de
 imports are supported. Library rendering and slot rules live in separate modules under
 `src/compiler/presets/`; the compiler only dispatches confirmed component identities.
 
+The Element Plus row/column preset retains numeric gutters, alignment and the
+24-column grid's `span`, `offset`, `push` and `pull` fields. Numeric and object
+`xs`/`sm`/`md`/`lg`/`xl` overrides generate viewport media rules; zero spans hide
+columns at the corresponding breakpoint. Nested rows provide their own gutters.
+Unknown grid values retain a `PRESET_LIMIT` diagnostic instead of claiming exact
+responsive geometry.
+
+Element Plus cards retain separate header/body/footer wrappers, body styles and
+classes, and theme padding variables. Statistics and countdowns share finite title,
+value, prefix and suffix structure; timers and formatter callbacks are not run.
+Scrollbar height/max-height and progress stroke/circle dimensions retain explicit
+source props. Vue hyphenated template props are normalized before preset dispatch.
+
 Mask the data that is loading, rather than every element containing text. Buttons,
 form labels, editable inputs, navigation and calendar date-grid frames keep their
 static text/geometry. Data text, images, statistics, table cells and read-only output
@@ -171,13 +209,36 @@ fields receive placeholders. Table headers remain readable and wide tables scrol
 inside their container. A control-only target can legitimately have zero data
 placeholders; `quality` reports `preservedNodes` separately.
 Known arrays determine table row count (up to 24); unknown arrays default to four
-rows. Use `hints.repeat` to request predicted rows, including for an initially empty
+rows. Use `hints.repeat` to request a finite loading capacity, including for an initially empty
 array. Source-visible column slots can retain action buttons alongside data cells.
 React `map` and Vue `v-for` use the same rule: known arrays keep their length up to
 24, known empty arrays stay empty, and unknown collections default to four items.
 An explicit `hints.repeat` overrides those counts.
 Set `--skeleton-control-color` and `--skeleton-control-background` to match preserved
 controls to the application's light/dark theme.
+
+Request loading views can project a source collection template when static writes
+prove that the collection and its count come from the same response scope. Simple
+length/count guards are eligible; permission guards and unrelated conditions are
+preserved. No handler or request runs. A finite slice range supplies an upper
+capacity, otherwise the default is four masked items, capped at 24. Projection
+retains `LOADING_PROJECTION` diagnostics rather than predicting response data.
+In Vue loading templates, sibling strict-equality alternatives for one unknown
+scalar use one representative branch, retaining uncertainty diagnostics rather
+than displaying mutually exclusive icons together. Definite source flex/grid
+containers constrain direct opaque children; explicit child dimensions and
+aspect-ratio defaults retain precedence.
+Use `hints.state: 'source'` (also in a variant) to preserve the source-default
+empty/content view; explicit bindings take precedence. Unproven empty branches
+retain `EMPTY_STATE`. A repeat hint alone does not reopen an arbitrary false guard.
+
+Global Vue registrations are read from entry `app.component` calls and narrowly
+recognized plugin installers. Package source is considered only for an opted-in
+library dependency. A reachable table that forwards source props and columns can
+provide a partial table core; callback cells, surrounding wrapper UI and adaptive
+runtime sizing keep `PRESET_LIMIT`. Component names or a `columns` prop alone are
+not sufficient evidence. Literal table cells retain source text wrapping, column
+minimum widths, explicit heights, header visibility and scroll constraints.
 
 Use `data-sk-preserve` on a static subtree to retain its resolved content, or
 `data-sk-mask` to force placeholders for a data subtree. These attributes work in
@@ -227,6 +288,48 @@ Bounded `computed` bodies and literal-array `map`/`find` callbacks are interpret
 without invoking their implementation. Unsupported calls remain unknown; collection
 operations have size, depth and work limits.
 
+Local JavaScript/TypeScript constants can cross relative/aliased imports, explicit
+reexports and export-star barrels, including default and namespace imports. Export
+conflicts and value cycles remain unknown. Imported object aliases with writes or
+escapes to opaque calls are conservative; this is source analysis, not a live ESM
+snapshot. Static array spreads, `slice`, `concat`, `toReversed`, `Array.of` and finite
+`Array.from` are supported. Mutating `reverse` is interpreted only on an owned
+temporary, such as `items.slice().reverse()`, and never changes the interpreter's
+input array. An unconditional source return object can expose independently
+declared immutable fields such as column configuration without invoking its
+factory or hook. Mutated/escaped fields, conditional returns and async results
+stay unknown. Source-proven `typeof` predicates are finite source expressions.
+Arbitrary function implementations and runtime data sources remain unsupported.
+
+An escaped literal collection or a finite `slice` bound can supply representative
+placeholder capacity, capped at 24. This metadata is not an array value: `.length`
+and item fields remain unknown, and diagnostics distinguish the frame from actual
+result data. Tables can also use source-declared pagination capacity; explicit
+repeat hints take precedence. Reachable library pagination siblings retain their
+literal base spacing, with runtime style overrides still marked for review.
+Masked table cells can reserve wrapping from literal source glyph prototypes
+when a row collection escapes to opaque code. These prototypes remain separate
+from expression values and retain diagnostics: they cannot drive branches,
+attributes, layout bindings, callbacks or preserved content, and do not establish
+the actual result values after a helper runs.
+Bounded structural-copy recipes can also be proved from helper source: fresh
+plain-object/array outputs, own-field iteration and finite recursive child copies.
+Names and package identities alone are insufficient. Input writes, modified
+intrinsics, getters, unsupported shapes and unknown deep-copy inputs keep the
+helper opaque. Function-valued fields carry only a function-type fact and are
+never invoked. Mutable Vue setup state keeps initial presentation facts in a
+separate channel; only loading presentation consumers may use those facts, while
+ordinary expressions and native layout bindings remain unknown.
+
+Source-proven Element Plus table wrappers can retain a viewport-bottom constraint
+when the generated table's ref, own DOM root, height formula, lifecycle activation
+and finite offset are established. Runtime layout measures only the generated
+skeleton, updates it for viewport/ancestor layout changes and releases observers
+on unmount. It does not inspect business data, execute lifecycle handlers during
+generation or infer new skeleton markup. Unknown offsets/activation and unrelated
+refs keep the existing finite fallback. Pagination retains declared control groups
+and intrinsic wrapping; unknown totals and localized labels use neutral frames.
+
 The Naive preset also preserves configuration-provider children, code-output lines,
 vertical dividers and numeric/responsive grids. Grid breakpoints follow the container
 by default or the viewport with `responsive="screen"`. Code with unknown content uses
@@ -243,8 +346,33 @@ user's persisted content.
 
 CSS keyframes and locally declared font families receive artifact/content-specific names, including references in inline styles and finite CSS variable chains/fallbacks. Local relative CSS `url(...)` resources are embedded as data URLs and their binary bytes are fingerprinted, including resources in CSS/Less imports and resolved inline styles. This keeps resource paths valid on nested routes and in production without copying assets. Public-root, fragment, remote and existing data URLs retain their original semantics. Embedding resources increases artifact size; use public-root resources when embedding large assets is undesirable. CSS custom properties carrying opaque animation/font names still require an explicit static presentation value.
 
+Sass/SCSS is compiled automatically before scoped CSS and CSS Modules processing,
+including `@use`, `@forward`, partials, indented syntax and static project aliases.
+Every loaded file and missing resolution alternative participates in invalidation.
+Local assets in Sass partials retain their original directory through source maps.
+Application Sass importers, functions and JavaScript modules are never executed.
+
+Local stylesheets linked from `index.html` and direct stylesheet imports in its
+module entry scripts are read statically. Entry scripts themselves are not run;
+styles imported only through other application modules may still need target `styles`.
+
+Tailwind 4 CSS directives are detected automatically. CSS themes, custom utilities,
+variants, `@apply` and inline safelists compile against the generated markup's class
+tokens. Application JavaScript `@config` and `@plugin` modules are rejected rather
+than executed. External `@source` paths are not scanned and receive a diagnostic.
+Runtime-built class names and JavaScript plugin utilities require supplied CSS.
+
 Less is compiled before scoped CSS and CSS Modules processing. Imported Less files
 are fingerprinted. JavaScript, `@plugin` and remote Less imports are disabled.
+CSS/Less/Sass imports and local asset URLs use the same project aliases as component
+imports, including nested stylesheets. Resolved style and asset dependencies are
+fingerprinted so subsequent edits invalidate their artifacts.
+Static CSS pruning defaults on. Positive class selectors that cannot match the
+artifact and provably unreferenced font resources are removed; unknown pseudos,
+negative selectors, theme alternatives, variable-dependent fonts and keyframes
+remain conservative. Set `styles.prune: false` for full CSS inspection, including
+unused safelisted utilities. Source native nodes retain their box model. Only
+generated preset layout nodes receive SkelCast's border-box default.
 CSS `v-bind()` expressions are resolved from each component instance's props,
 defaults, aliases, bounded computed expressions and explicit bindings. Values are
 written as component-scoped CSS variables on its roots, so two instances can keep
@@ -287,7 +415,7 @@ pnpm exec skelcast check
 
 Commit `.skelcast/*.mjs`, its manifest, and `skelcast.hints.json` alongside your source. The manifest records dependency fingerprints and artifact paths, not a second layout tree. Unchanged inputs reuse existing outputs. Generation stages all changed artifacts before replacing any output; a failed target leaves the previous generation intact. CLI, init, development-server mutations and artifact readers share an output-directory lock. Interrupted output commits are recovered from a local journal on the next operation. `check` exits with a nonzero status for stale, missing, or modified artifacts and can run in CI.
 
-Opaque components and unknown render calls produce local fallback blocks with source diagnostics. The toolbar is for preview and visual acceptance; coding agents own diagnosis, source/hint/adapter changes, and automated verification.
+Opaque components and unknown render calls produce local fallback blocks with source diagnostics. Caller classes, scopes and explicit width/height are retained; source height, min-height and aspect-ratio rules override the generic footprint. Unknown children in source-visible inline contexts use a font-relative footprint, while ordinary blocks default to 96px. These remain estimates, not inferred widget internals. The toolbar is for preview and visual acceptance; coding agents own diagnosis, source/hint/adapter changes, and automated verification.
 
 `diagnose --id <target> --json` returns artifact freshness, effective target configuration, config/hints paths, and per-variant structural quality, diagnostics, source expressions, evidence, and repair examples grouped by source node. It reads generated metadata without executing business code or applying examples. It excludes the raw HTML/CSS; `inspect --id <target> --json` retains the original raw-artifact output when that detail is needed. Omit `--variant` to inspect every generated variant:
 
@@ -373,6 +501,10 @@ also support custom browser fixtures and stored geometry snapshots.
 
 This is a geometry snapshot, not pixel similarity or the browser's CLS metric.
 Equal outer dimensions do not prove matching internal layout, colors or content.
+Native tables with visible headers are also checked for table count, column count
+and header-row structure, including grouped headers and columns inside horizontal
+scroll containers. Placeholder row counts can describe loading capacity, so they
+are not compared with a server result count.
 Use screenshots/overlays for those checks. `skelcast quality` remains a separate,
 source-only structural check and never launches or signs into the application.
 Source IDs are paired automatically with generated `data-sk-source-id` nodes. Add `data-sk-anchor="summary"` to a native presentation container for an explicit internal layout checkpoint (React and Vue). Repeated anchors are matched in DOM order; open Shadow DOM is traversed. Reports include compared/missing/mismatched anchors and detect column-width or position differences even when the region has identical outer dimensions. Unmarked internal content still needs visual review.
@@ -414,6 +546,11 @@ Add the virtual module declaration to your project's `env.d.ts`:
 
 The development plugin injects the preview toolbar and consumes existing artifacts. Source edits mark artifacts out of date. The CLI, your coding agent, or **Update skeletons** performs deterministic regeneration. Production builds require current artifacts and exclude the toolbar, development endpoints, and URL preview controls.
 
+Transient generation locks and staging journals are excluded from Vite's watcher,
+including under custom output directories. Reading development state does not
+invalidate artifacts or reload the application. Existing user watcher exclusions
+are preserved.
+
 ### Connect real loading state
 
 React:
@@ -442,11 +579,17 @@ import skeleton from 'virtual:skelcast/products.list';
 </template>
 ```
 
-Skeleton markup is mounted on its first display and reused while hidden. Repeated light DOM instances share styles; Shadow DOM instances share constructed stylesheets when available. Boundary updates notify only the affected preview or artifact subscribers.
+Skeleton markup is mounted on its first display and reused while hidden. Repeated light DOM instances share styles; different generated artifacts also share the common base sheet, retaining its cascade position and releasing the final reference. Shadow DOM instances share constructed stylesheets when available. Boundary updates notify only the affected preview or artifact subscribers.
 
 Boundaries preserve mounted content when switching forced preview, so form state is retained. Application code must still guard data that has not arrived. Initial requests, background refreshes, errors, and retries remain under your application's control; SkelCast does not intercept `fetch`.
 
 Exiting preview resumes the real loading state. Hidden content is inert, `aria-busy` reflects real pending state, and skeletons are hidden from assistive technology.
+During pending state and forced preview, hidden content is clipped to zero height
+while retaining its intrinsic inline size and measurable viewport position. Flex
+siblings keep their source widths, and hidden content stays inert. React
+layout effects and Vue mount hooks can initialize responsive widgets without
+reading zero-sized `display:none` ancestors. Loading completion restores normal
+flow without remounting the content.
 
 ### Show a skeleton before application JavaScript
 
@@ -530,7 +673,8 @@ The compatibility matrix separates source generation from automatic onboarding:
 | Vite React / Vue 3 project onboarding | Static page/loading patterns, aliases and lazy route imports | Verify inferred routes and dynamic relationships | Other bundlers, dynamic configs, Vue 2 |
 | Conditions, repeated lists, finite variants | Bounded expressions and known arrays | `bindings`, `repeat`, explicit `variants` for unknown state | Business helper execution is not supported |
 | Local CSS, CSS Modules, scoped CSS, media/container queries | Static CSS and imports | Ancestor styles may need target `styles` or light DOM | Runtime-generated styles require a source adapter or supplied CSS |
-| Less / UnoCSS Mini + Attributify | After explicitly enabling the matching style option | Copy serializable theme/shortcut data | Sass/Pug and arbitrary UnoCSS plugins/transformers |
+| Sass/SCSS / Tailwind 4 CSS | Automatic stylesheet compilation and finite markup candidates | Explicit stylesheet roots for styles outside entry/target imports | Application JS plugins, runtime classes and external Tailwind source scans |
+| Less / UnoCSS Mini + Attributify | After explicitly enabling the matching style option | Copy serializable theme/shortcut data | Pug and arbitrary UnoCSS plugins/transformers |
 | Local default/named slots and React children | Source-visible content | Bind finite slot-presence/prop values where supported | Scoped slot parameters, render props and arbitrary callbacks |
 | Naive UI / Element Plus / Ant Design | Listed finite primitives after enabling the preset | Local adapters for custom themes or unsupported components | Full library behavior is not executed |
 | CSS-in-JS, Canvas and imperative widgets | Opaque source container only | Explicit dimensions can describe the footprint | Local presentation adapter; widget internals are not inferred |
@@ -545,7 +689,15 @@ These are representative reproducible fixtures, not a claim of compatibility wit
 arbitrary production applications. Real adopters should run the same checks on
 their own authenticated pages and component libraries.
 
-Full type-system inference, arbitrary function evaluation, runtime CSS-in-JS, Sass/Pug compilation, arbitrary dynamic components, Canvas, and complete third-party design-system adapters are not included. Dynamic aliases and complex path mappings need manual configuration. Vue Options API dynamic values need bindings or adapters. Review ancestor-dependent styles, intrinsic asset dimensions, and complex scoped slots in the real page.
+Layout audits use compiler-recorded source IDs and explicit `data-sk-anchor`
+markers. Runtime-only IDs created by widget internals are not source anchors;
+legacy/manual artifacts without ID provenance retain the previous full-ID check.
+Uncontained overflow remains in both raw snapshots. Only an increase beyond the
+source baseline fails the comparison; pre-existing source overflow is not a
+generator regression. Missing declared anchors and displaced repeated anchors
+still fail independently of matching outer dimensions.
+
+Full type-system inference, arbitrary function evaluation, runtime CSS-in-JS, Pug compilation, arbitrary dynamic components, Canvas, and complete third-party design-system adapters are not included. Dynamic aliases and complex path mappings need manual configuration. Vue Options API dynamic values need bindings or adapters. Review ancestor-dependent styles, intrinsic asset dimensions, and complex scoped slots in the real page.
 
 Boundaries use block containers with `min-width: 0` so the additional wrapper can shrink inside flex and grid parents. Wide content must still provide its intended scroll container. Place boundaries around suitable block regions rather than directly inside table rows or layouts that require specific direct children. Shadow DOM isolates selectors but still needs a known style context; choose light DOM when application ancestor selectors are essential.
 

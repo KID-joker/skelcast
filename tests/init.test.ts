@@ -332,3 +332,17 @@ for (const framework of ['react', 'vue'] as const) test(`${framework}: increment
     assert.equal((await initProject(root)).changes.length, 0);
   });
 });
+
+test('source discovery parses plain TypeScript assertions separately from TSX and Vue script languages', async () => {
+  await fixture({
+    'src/rules.ts': `type Rules={name:string};export const rules=<Rules>{name:'required'};`,
+    'src/App.vue': `<script setup lang="ts">type Item={title:string};const item=<Item>{title:'Data'}</script><template><main>{{item.title}}</main></template>`,
+    'src/Extra.tsx': `export const Extra=()=> <aside>Extra</aside>`,
+  }, async root => {
+    const report = await initProject(root);
+    assert.equal(report.scanned, 3);
+    assert.deepEqual(report.diagnostics.filter(d => d.code === 'SOURCE_PARSE'), []);
+    const project = await loadProject(root);
+    assert.ok((await readArtifact(project, report.targets.find(t => t.source === 'src/App.vue')!.id)).variants.default.html.includes('Data'));
+  });
+});

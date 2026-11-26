@@ -1,0 +1,124 @@
+import type * as t from '@babel/types';
+import type {ElementNode,TemplateChildNode} from '@vue/compiler-dom';
+import {VISITOR_KEYS} from '@babel/types';
+import {isRenderFunction,nodeName} from './ast.js';
+import {UNKNOWN,SOURCE_RENDER,evaluate,safeKey,type Value} from './expression.js';
+import {slotValue,type SourceSlot,type RenderContext} from './context.js';
+import type {RenderHost} from './render-host.js';
+import{initialExpression,patternNames}from'./initial-state.js';
+import{vueHelper}from'./vue-render.js';
+
+/** A region is compiled in its lexical slot/loop context, without rendering its
+ * surrounding application UI. Selection never changes guards inside the region. */
+export class VueRegion {
+ result:string|undefined;
+ private suspended=0;
+ constructor(readonly file:string,readonly node:ElementNode){}
+ private contains(node:TemplateChildNode):boolean{return node===this.node||node.type===1&&node.children.some(child=>this.contains(child));}
+ carries(slot:SourceSlot,seen=new Set<SourceSlot>()):boolean{
+  if(seen.has(slot)||seen.size>32)return false;const next=new Set(seen).add(slot);
+  if(slot.context.module.file===this.file)return slot.framework==='vue'&&slot.nodes.some(node=>this.contains(node));
+  return Object.values(slot.context.slots??{}).some(other=>this.carries(other,next));
+ }
+ mode(node:TemplateChildNode,ctx:RenderContext):'skip'|'ancestor'|'target'|undefined{
+  if(this.suspended)return;
+  if(this.result!==undefined)return'skip';
+  if(ctx.module.file===this.file)return node===this.node?'target':this.contains(node)?'ancestor':'skip';
+  return Object.values(ctx.slots??{}).some(slot=>this.carries(slot))?'ancestor':'skip';
+ }
+ async capture(render:()=>Promise<string>){
+  if(this.result!==undefined)return'';
+  this.suspended++;try{this.result=await render();}finally{this.suspended--;}
+  return'';
+ }
+ get active(){return!this.suspended;}
+}
+
+/** Slot arguments have their own lexical bindings, including aliases/defaults. */
+export function bindSlotArgument(pattern:t.Node,value:Value,ctx:RenderContext):void{
+ if(pattern.type==='Identifier'){
+  ctx.env[pattern.name]=value;
+  for(const key of Object.keys(ctx.initialValues??{}))if(key===pattern.name||key.startsWith(pattern.name+'.'))delete ctx.initialValues![key];
+  return;
+ }
+ if(pattern.type==='AssignmentPattern'){bindSlotArgument(pattern.left,value===undefined?evaluate(pattern.right,ctx):value,ctx);return;}
+ if(pattern.type==='ArrayPattern'){pattern.elements.forEach((p,i)=>{if(p)bindSlotArgument(p,Array.isArray(value)?value[i]:UNKNOWN,ctx);});return;}
+ if(pattern.type!=='ObjectPattern')return;
+ const omitted=new Set<string>();
+ for(const property of pattern.properties){
+  if(property.type==='RestElement'){
+   const rest=value&&value!==UNKNOWN&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([key])=>safeKey(key)&&!omitted.has(key))):UNKNOWN;
+   bindSlotArgument(property.argument,rest,ctx);continue;
+  }
+  const key=property.computed?evaluate(property.key,ctx):nodeName(property.key);
+  if(!safeKey(key)){bindSlotArgument(property.value,UNKNOWN,ctx);continue;}
+  omitted.add(key);
+  const field=value&&value!==UNKNOWN&&typeof value==='object'?Object.hasOwn(value,key)?(value as Record<string,Value>)[key]:undefined:UNKNOWN;
+  bindSlotArgument(property.value,field,ctx);
+ }
+}
+export function bindSlotInitial(pattern:t.Node,initial:Value,ctx:RenderContext){
+ if(initial===UNKNOWN)return;
+ const local={...ctx,env:{...ctx.env},initialValues:undefined};bindSlotArgument(pattern,initial,local);
+ ctx.initialValues??={};for(const name of patternNames(pattern))if(local.env[name]!==UNKNOWN)ctx.initialValues[name]=local.env[name];
+}
+
+export async function renderSlotCall(host:RenderHost,node:t.CallExpression|t.OptionalCallExpression,ctx:RenderContext):Promise<string|undefined>{
+ const value=evaluate(node.callee,ctx);
+ if(!value||typeof value!=='object'||!Object.hasOwn(value,slotValue))return;
+ if(node.arguments.length>1||node.arguments.some(argument=>argument.type==='SpreadElement'))return host.fallback(ctx,node,'Scoped slot arguments need one finite source object');
+ const argument=node.arguments[0]?evaluate(node.arguments[0],ctx):{};
+ return host.renderSlot((value as {[slotValue]:SourceSlot})[slotValue],ctx,argument,node.arguments[0]?initialExpression(node.arguments[0],ctx):UNKNOWN);
+}
+
+/** Read reachable slot invocations from a returned presentation tree. Event
+ * handlers, lifecycle callbacks and arbitrary application functions stay opaque. */
+export async function projectSelectedSlots(host:RenderHost,body:t.Node,ctx:RenderContext):Promise<void>{
+ let remaining=4000;
+ const visit=async(node:t.Node,context:RenderContext,depth:number):Promise<void>=>{
+  if(--remaining<0||depth>32)return;
+  if(isRenderFunction(node)||node.type==='ObjectMethod'||node.type==='ClassMethod')return;
+  if(node.type==='JSXAttribute')return;
+  if(node.type==='ConditionalExpression'){
+   const test=evaluate(node.test,context);
+   if(test===UNKNOWN)host.diagnose('BRANCH_DEFAULT','Select source slot contexts from an unresolved render branch; runtime state remains unknown',context,node);
+   if(test===UNKNOWN||test)await visit(node.consequent,context,depth+1);
+   if(test===UNKNOWN||!test)await visit(node.alternate,context,depth+1);
+   return;
+  }
+  if(node.type==='LogicalExpression'){
+   const left=evaluate(node.left,context);
+   await visit(node.left,context,depth+1);
+   if(left===UNKNOWN||node.operator==='&&'&&!!left||node.operator==='||'&&!left||node.operator==='??'&&left==null)await visit(node.right,context,depth+1);
+   return;
+  }
+  if(node.type==='CallExpression'||node.type==='OptionalCallExpression'){
+   const callee=evaluate(node.callee,context);
+   if(callee&&typeof callee==='object'&&Object.hasOwn(callee,slotValue)){
+    const slot=(callee as {[slotValue]:SourceSlot})[slotValue];
+    if(host.hasSelectedSlot(slot)){
+     const argument=node.arguments.length===0?{}:node.arguments.length===1&&node.arguments[0].type!=='SpreadElement'?evaluate(node.arguments[0],context):UNKNOWN;
+     await host.renderSlot(slot,context,argument,node.arguments[0]?initialExpression(node.arguments[0],context):UNKNOWN);
+    }
+    return;
+   }
+   if(callee&&typeof callee==='object'&&Object.hasOwn(callee,SOURCE_RENDER)){
+    const fn=(callee as {[SOURCE_RENDER]:t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression})[SOURCE_RENDER];
+    const local={...context,env:{...context.env},depth:context.depth+1};
+    fn.params.forEach((parameter,i)=>bindSlotArgument(parameter,node.arguments[i]?evaluate(node.arguments[i],context):undefined,local));
+    const value=host.prepareFunction({...fn,params:[]},local,{});if(value)await visit(value,local,depth+1);
+    return;
+   }
+   if(node.type==='CallExpression'&&vueHelper(context.module,node.callee,'h')&&node.arguments[0]?.type==='Identifier'){
+    const reference=await host.componentReference(node.arguments[0].name,context);
+    if(reference?.file){await host.vueExpression(node,context);return;}
+   }
+  }
+  for(const key of VISITOR_KEYS[node.type]??[]){
+   const child=(node as unknown as Record<string,unknown>)[key];
+   if(Array.isArray(child)){for(const item of child)if(item&&typeof item==='object'&&'type'in item)await visit(item as t.Node,context,depth+1);}
+   else if(child&&typeof child==='object'&&'type'in child)await visit(child as t.Node,context,depth+1);
+  }
+ };
+ await visit(body,ctx,0);
+}

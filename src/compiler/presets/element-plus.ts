@@ -1,9 +1,11 @@
 import type { ComponentPreset, ComponentRole } from './types.js';
+import { elementRow, elementColumn } from './element-grid.js';
+import { elementCard, elementStatistic, elementScrollbar, elementTimeline } from './element-geometry.js';
+import{elementPagination}from'./element-pagination.js';
 import {
   button,
   input,
   calendar,
-  card,
   column,
   table,
   libraryExport,
@@ -30,8 +32,9 @@ const controls = new Set([
   'calendar',
   'link',
   'icon',
+  'dropdown',
 ]);
-const data = new Set(['table', 'image', 'avatar', 'statistic', 'tag', 'progress', 'text']);
+const data = new Set(['table', 'image', 'avatar', 'statistic', 'countdown', 'tag', 'progress', 'text']);
 const layouts = new Set([
   'card',
   'tablecolumn',
@@ -50,6 +53,8 @@ const layouts = new Set([
   'configprovider',
   'descriptions',
   'descriptionsitem',
+  'timeline',
+  'timelineitem',
 ]);
 const all = [...controls, ...data, ...layouts];
 const deep = Object.fromEntries(
@@ -64,6 +69,7 @@ const deep = Object.fromEntries(
         tablecolumn: 'table-column',
         formitem: 'form-item',
         descriptionsitem: 'descriptions-item',
+        timelineitem: 'timeline-item',
       }[name] ?? name),
     'El' + name,
   ]),
@@ -85,10 +91,12 @@ export const elementPlusPreset: ComponentPreset = {
   package: 'element-plus',
   resolve: (ref) => libraryExport(ref, 'element-plus', deep),
   role,
-  slots: (name) => (name === 'eltablecolumn' ? ['default'] : name === 'elcalendar' ? ['header'] : ['default', 'header', 'footer', 'prefix', 'suffix']),
-  present(name, props, children, text, hints) {
+  slots: (name) => (['eltablecolumn','eldropdown'].includes(name) ? ['default'] : name === 'elcalendar' ? ['header'] : ['default', 'header', 'footer', 'prefix', 'suffix', 'title']),
+  present(name, props, children, text, hints, policy) {
     const n = name.replace(/^el/, '');
-    if (n === 'button' || n === 'link') return button(children, props);
+    if (n === 'button') return button(children, props);
+    if (n === 'dropdown') return {tag:'div',className:'el-dropdown',style:'display:inline-flex;align-items:center;vertical-align:top',children};
+    if (n === 'link') return {tag:'a',className:'el-link',children:`<span class="el-link__inner">${children}</span>`,css:':where(.el-link){display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;position:relative;text-decoration:none;outline:none;padding:0;font-size:var(--el-link-font-size,14px);font-weight:500}'};
     if (['input', 'inputnumber', 'select', 'datepicker', 'timepicker'].includes(n)) return input(props);
     if (n === 'option')
       return { tag: 'option', children: children || escape(scalar(props.label ?? props.value)) };
@@ -99,7 +107,8 @@ export const elementPlusPreset: ComponentPreset = {
         style: 'display:inline-flex;align-items:center;gap:6px',
         children: `<input type="${n}" disabled tabindex="-1">${children}`,
       };
-    if (n === 'switch' || n === 'slider' || n === 'pagination')
+    if (n === 'pagination')return elementPagination(props,children);
+    if (n === 'switch' || n === 'slider')
       return {
         tag: 'div',
         style: `min-height:24px;min-width:${
@@ -113,8 +122,8 @@ export const elementPlusPreset: ComponentPreset = {
         style: 'display:inline-block;width:1em;height:1em;border:1px solid currentColor;border-radius:2px',
         children: '',
       };
-    if (n === 'card') return card(children, props.header, text);
-    if (n === 'table') return table(props, children, text, hints);
+    if (n === 'card') return elementCard(props, policy?.slots ?? {default:children}, text);
+    if (n === 'table') return table(props, children, text, hints,true,policy?.mask??true);
     if (n === 'tablecolumn') return column(props, children);
     if (n === 'image' || n === 'avatar')
       return {
@@ -126,29 +135,25 @@ export const elementPlusPreset: ComponentPreset = {
         )};height:${dimension(props.size, n === 'avatar' ? '40px' : '120px')};flex-shrink:0`,
         children: '',
       };
-    if (n === 'statistic')
-      return {
-        tag: 'div',
-        style: 'min-height:60px',
-        children: (props.title ? `<div>${escape(scalar(props.title))}</div>` : '') + text,
-      };
+    // Countdown delegates its public layout and title/prefix/suffix slots to
+    // Statistic. Timer/date functions do not affect that static structure.
+    if (n === 'statistic' || n === 'countdown') return elementStatistic(props,policy?.slots ?? {},text);
     if (n === 'tag' || n === 'text')
       return {
         tag: 'span',
-        style: n === 'tag' ? 'display:inline-block;padding:2px 8px' : '',
+        className:n==='tag'?'el-tag':undefined,
+        style: n === 'tag' ? 'display:inline-flex;align-items:center;justify-content:center;height:24px;padding:0 9px;line-height:1;font-size:12px' : '',
         children: children || text,
       };
-    if (n === 'progress') return { tag: 'div', style: 'height:16px;width:100%', leaf: true, children: '' };
-    if (n === 'row' || n === 'space' || n === 'buttongroup')
+    if (n === 'progress') {
+      const round = props.type === 'circle' || props.type === 'dashboard';
+      const size = dimension(props.width,'126px');
+      return {tag:'div',className:`el-progress el-progress--${round ? 'circle' : 'line'}`,style:round ? `display:inline-block;width:${size};height:${size}` : `height:${dimension(props.strokeWidth,'6px')};width:100%`,leaf:true,children:''};
+    }
+    if (n === 'row') return elementRow(props, children);
+    if (n === 'col') return elementColumn(props, children);
+    if (n === 'space' || n === 'buttongroup')
       return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children };
-    if (n === 'col')
-      return {
-        tag: 'div',
-        style: `min-width:0;flex:0 1 ${
-          typeof props.span === 'number' ? (Math.max(1, Math.min(24, props.span)) / 24) * 100 : 100
-        }%`,
-        children,
-      };
     if (n === 'formitem')
       return {
         tag: 'div',
@@ -170,7 +175,8 @@ export const elementPlusPreset: ComponentPreset = {
           `<span style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</span>` +
           children,
       };
-    if (n === 'scrollbar') return { tag: 'div', style: 'min-width:0;max-width:100%;overflow:auto', children };
+    if (n === 'scrollbar') return elementScrollbar(props,children);
+    if(n==='timeline'||n==='timelineitem')return elementTimeline(n,props,children,text);
     if (n === 'container') return { tag: 'section', style: 'display:flex;min-width:0;flex:1', children };
     if (n === 'aside')
       return { tag: 'aside', style: `flex-shrink:0;width:${dimension(props.width, '200px')}`, children };

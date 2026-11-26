@@ -1,9 +1,38 @@
 import { parseExpression } from '@babel/parser';
 import type * as t from '@babel/types';
-import { nodeName } from './ast.js';
+import { nodeName, unwrapExpression } from './ast.js';
+import type {CopyRecipe} from './copy-recipe.js';
 
 export const UNKNOWN = Symbol('unknown');
 export const CLASS_HELPER = Symbol('static-class-helper');
+export const SOURCE_ACCESSOR = Symbol('source-accessor');
+/** A field summary read from a source return object, never a callable function. */
+export const SOURCE_PROJECTION = Symbol('source-projection');
+export const SOURCE_INITIAL = Symbol('source-initial-state');
+export const SOURCE_RENDER = Symbol('source-render-body');
+export const SOURCE_TYPE_TEST = Symbol('source-type-test');
+export const SOURCE_COLLECTION = Symbol('source-collection-capacity');
+export const SOURCE_CELL_GLYPHS = Symbol('source-declared-cell-glyphs');
+export const SOURCE_COPY = Symbol('source-copy-recipe');
+export const SOURCE_FUNCTION = Symbol('source-function-type');
+export const SOURCE_VUE = Symbol('source-vue-helper');
+export function sourceCapacity(value:Value):number|undefined{return value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_COLLECTION)?(value as {[SOURCE_COLLECTION]:number})[SOURCE_COLLECTION]:undefined;}
+export function sourceCellGlyphs(value:Value):unknown[]|undefined{return value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_CELL_GLYPHS)?(value as {[SOURCE_CELL_GLYPHS]:unknown[]})[SOURCE_CELL_GLYPHS]:undefined;}
+const SOURCE_CLOSED = Symbol('source-complete-object');
+const functionType=(value:Value)=>!!value&&typeof value==='object'&&[SOURCE_FUNCTION,SOURCE_COPY,SOURCE_PROJECTION,SOURCE_TYPE_TEST,SOURCE_RENDER,SOURCE_ACCESSOR,SOURCE_VUE].some(key=>Object.hasOwn(value,key));
+function copyValue(value:Value,deep:boolean,budget:{remaining:number},depth=0):Value{
+ if(--budget.remaining<0||depth>32||value===UNKNOWN)return UNKNOWN;
+ if(functionType(value))return value;
+ if(value==null||['string','number','boolean','undefined'].includes(typeof value))return value;
+ if(Array.isArray(value)){
+  if(value.length>256||Object.hasOwn(value,'forEach'))return UNKNOWN;
+  const result:Value[]=[];for(const item of value){const next=deep?copyValue(item,true,budget,depth+1):item;if(next===UNKNOWN)return UNKNOWN;result.push(next);}return result;
+ }
+ if(typeof value!=='object'||!Object.hasOwn(value,SOURCE_CLOSED)||Object.hasOwn(value,'hasOwnProperty'))return UNKNOWN;
+ const result:Record<string,Value>=Object.create(null);
+ for(const[key,item]of Object.entries(value)){if(!safeKey(key))return UNKNOWN;const next=deep?copyValue(item,true,budget,depth+1):item;if(next===UNKNOWN)return UNKNOWN;result[key]=next;}
+ Object.defineProperty(result,SOURCE_CLOSED,{value:true});return result;
+}
 export type Value = unknown;
 export type { Ast } from './ast.js';
 export interface ExpressionContext {
@@ -18,6 +47,13 @@ export interface ExpressionContext {
 export const expressionText = (node: t.Node | null | undefined, ctx: ExpressionContext): string =>
   node?.start != null && node?.end != null ? ctx.code.slice(node.start, node.end) : '';
 const denied = new Set(['__proto__', 'prototype', 'constructor']);
+function ownedArray(node:t.Node):boolean{
+  const value=unwrapExpression(node);
+  if(value?.type==='ArrayExpression')return true;
+  if(value?.type!=='CallExpression'||value.callee.type!=='MemberExpression'||value.callee.computed)return false;
+  const member=nodeName(value.callee.property);
+  return ['slice','map','concat','toReversed'].includes(member??'')||nodeName(value.callee.object)==='Array'&&['from','of'].includes(member??'')||member==='reverse'&&ownedArray(value.callee.object);
+}
 export const safeKey = (key: unknown): key is string => typeof key === 'string' && !denied.has(key);
 function inferredObject(name: string, ctx: ExpressionContext): Value {
   const result: Record<string, unknown> = Object.create(null);
@@ -46,26 +82,53 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
   if (Object.hasOwn(ctx.bindings, text)) return ctx.bindings[text];
   const ev = (n: t.Node | null | undefined) => evaluate(n, ctx, depth + 1);
   switch (node.type) {
-    case 'TSAsExpression': case 'TSTypeAssertion': case 'TSNonNullExpression': case 'ParenthesizedExpression': return ev(node.expression);
+    case 'TSAsExpression': case 'TSTypeAssertion': case 'TSSatisfiesExpression': case 'TSNonNullExpression': case 'ParenthesizedExpression': return ev(node.expression);
     case 'StringLiteral': case 'NumericLiteral': case 'BooleanLiteral': return node.value;
     case 'NullLiteral': return null;
+    case 'ArrowFunctionExpression': case 'FunctionExpression': return {[SOURCE_FUNCTION]:true};
+    case 'ThisExpression': return ctx.env.this ?? UNKNOWN;
     case 'Identifier': {
       if (node.name === 'undefined' && !Object.hasOwn(ctx.env, node.name)) return undefined;
       const value = Object.hasOwn(ctx.env, node.name) ? ctx.env[node.name] : UNKNOWN;
       return value === UNKNOWN ? inferredObject(node.name, ctx) : value;
     }
-    case 'ArrayExpression': return node.elements.map(n => n ? ev(n) : UNKNOWN);
+    case 'ArrayExpression': {
+      const values:Value[]=[];
+      for(const item of node.elements){
+        if(item?.type==='SpreadElement'){const spread=ev(item.argument);if(!Array.isArray(spread)||spread.length+values.length>256)return UNKNOWN;values.push(...spread);}
+        else values.push(item?ev(item):UNKNOWN);
+        if(values.length>256)return UNKNOWN;
+      }
+      return values;
+    }
     case 'ObjectExpression': {
       const result: Record<string, Value> = Object.create(null);
+      let complete=true;
       for (const p of node.properties) {
         if (p.type === 'SpreadElement') {
           const v = ev(p.argument);
-          if (v && v !== UNKNOWN && typeof v === 'object') for (const k of Object.keys(v)) if (safeKey(k)) result[k] = (v as Record<string, unknown>)[k];
+          if (v && v !== UNKNOWN && typeof v === 'object') {
+            for (const k of Object.keys(v)) if (safeKey(k)) result[k] = (v as Record<string, unknown>)[k];
+            if(Object.hasOwn(v,SOURCE_INITIAL)){
+              const previous=(v as {[SOURCE_INITIAL]:Record<string,Value>})[SOURCE_INITIAL],initial={...previous};
+              if(previous&&typeof previous==='object'&&Object.hasOwn(previous,SOURCE_CLOSED))Object.defineProperty(initial,SOURCE_CLOSED,{value:true});
+              Object.defineProperty(result,SOURCE_INITIAL,{value:initial,configurable:true});
+            }
+            else if(!Object.hasOwn(v,SOURCE_CLOSED))delete (result as {[SOURCE_INITIAL]?:Value})[SOURCE_INITIAL];
+            if(!Object.hasOwn(v,SOURCE_CLOSED))complete=false;
+          }
+          else {complete=false;delete (result as {[SOURCE_INITIAL]?:Value})[SOURCE_INITIAL];}
         } else if (p.type === 'ObjectProperty') {
           const key = p.computed ? ev(p.key) : nodeName(p.key);
-          if (safeKey(String(key))) result[String(key)] = ev(p.value);
-        }
+          if(key===UNKNOWN){complete=false;delete (result as {[SOURCE_INITIAL]?:Value})[SOURCE_INITIAL];continue;}
+          if (safeKey(String(key))) {
+            result[String(key)] = ev(p.value);
+            const initial=(result as {[SOURCE_INITIAL]?:Record<string,Value>})[SOURCE_INITIAL];if(initial)initial[String(key)]=result[String(key)];
+          }else complete=false;
+        }else if(p.type==='ObjectMethod'&&p.kind==='method'&&!p.computed&&safeKey(nodeName(p.key)))result[nodeName(p.key)!]={[SOURCE_FUNCTION]:true};
+        else complete=false;
       }
+      if(complete)Object.defineProperty(result,SOURCE_CLOSED,{value:true});
       return result;
     }
     case 'MemberExpression': case 'OptionalMemberExpression': {
@@ -77,12 +140,12 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
       if (obj === UNKNOWN || obj == null) return UNKNOWN;
       const name = String(key);
       const object = Object(obj) as Record<string, unknown>;
-      if (node.object.type === 'Identifier' && node.object.name === '$slots') return Object.hasOwn(object, name) ? object[name] : undefined;
-      return Object.hasOwn(object, name) ? object[name] : UNKNOWN;
+      if (node.object.type === 'Identifier' && node.object.name === '$slots' || node.object.type === 'MemberExpression' && node.object.object.type === 'ThisExpression' && nodeName(node.object.property) === '$slots') return Object.hasOwn(object, name) ? object[name] : undefined;
+      return Object.hasOwn(object, name) ? object[name] : Object.hasOwn(object,SOURCE_CLOSED)?undefined:UNKNOWN;
     }
     case 'TemplateLiteral': {
       const values = node.expressions.map(ev);
-      if (values.includes(UNKNOWN)) return UNKNOWN;
+      if (values.some(value=>value===UNKNOWN||value!==null&&['object','function'].includes(typeof value))) return UNKNOWN;
       return node.quasis.map((q, i) => q.value.cooked + (i < values.length ? String(values[i]) : '')).join('');
     }
     case 'ConditionalExpression': {
@@ -100,7 +163,7 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
       const a = ev(node.argument);
       if (a === UNKNOWN) return UNKNOWN;
       if (node.operator === '!') return !a;
-      if (node.operator === 'typeof') return typeof a;
+      if (node.operator === 'typeof') return functionType(a)?'function':typeof a;
       if (node.operator === '-') return typeof a === 'number' ? -a : UNKNOWN;
       if (node.operator === '+') return typeof a === 'number' ? a : UNKNOWN;
       return UNKNOWN;
@@ -142,7 +205,21 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
       return UNKNOWN;
     }
     case 'CallExpression': {
-      const name = nodeName(node.callee);
+      const accessor=ev(node.callee);
+      const name=accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_VUE)?(accessor as{[SOURCE_VUE]:string})[SOURCE_VUE]:nodeName(node.callee);
+      if(accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_COPY)){
+        const recipe=(accessor as {[SOURCE_COPY]:CopyRecipe})[SOURCE_COPY];
+        const deep=typeof recipe.deep==='boolean'?recipe.deep:node.arguments[recipe.deep.argument]?ev(node.arguments[recipe.deep.argument]):false;
+        if(typeof deep!=='boolean'&&deep!==undefined)return UNKNOWN;
+        return node.arguments[recipe.input]?copyValue(ev(node.arguments[recipe.input]),!!deep,ctx.budget!):UNKNOWN;
+      }
+      if(accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_TYPE_TEST)){
+        const test=(accessor as {[SOURCE_TYPE_TEST]:{index:number;type:string;negate:boolean}})[SOURCE_TYPE_TEST];
+        const value=node.arguments[test.index]?ev(node.arguments[test.index]):undefined;
+        return value===UNKNOWN?UNKNOWN:((functionType(value)?'function':typeof value)===test.type)!==test.negate;
+      }
+      if(accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_PROJECTION))return (accessor as {[SOURCE_PROJECTION]:Value})[SOURCE_PROJECTION];
+      if(!node.arguments.length&&accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_ACCESSOR))return (accessor as {[SOURCE_ACCESSOR]:Value})[SOURCE_ACCESSOR];
       if (node.callee.type === 'Identifier' && ctx.env[node.callee.name] === CLASS_HELPER) {
         const flatten = (value: Value, level: number): string | typeof UNKNOWN => {
           if (--ctx.budget!.remaining < 0 || level > 40 || value === UNKNOWN) return UNKNOWN;
@@ -161,6 +238,33 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
         return flatten(node.arguments.map(argument => argument.type === 'SpreadElement' ? UNKNOWN : ev(argument)), depth);
       }
       const member = node.callee.type === 'MemberExpression' && !node.callee.computed ? nodeName(node.callee.property) : undefined;
+      if(node.callee.type==='MemberExpression'&&!node.callee.computed&&nodeName(node.callee.object)==='Array'&&!Object.hasOwn(ctx.env,'Array')&&!Object.hasOwn(ctx.bindings,'Array')){
+        if(member==='of'&&node.arguments.length<=256&&!node.arguments.some(a=>a.type==='SpreadElement'))return node.arguments.map(ev);
+        if(member==='from'&&node.arguments.length>=1&&node.arguments.length<=2){
+          const source=ev(node.arguments[0]);
+          const length=Array.isArray(source)?source.length:source&&typeof source==='object'?(source as {length?:Value}).length:UNKNOWN;
+          if(typeof length!=='number'||!Number.isInteger(length)||length<0||length>256)return UNKNOWN;
+          const mapper=node.arguments[1];
+          if(mapper&&(mapper.type!=='ArrowFunctionExpression'||mapper.async))return UNKNOWN;
+          const values:Value[]=[];
+          for(let i=0;i<length;i++){const item=source&&typeof source==='object'&&Object.hasOwn(source,i)?(source as Record<number,Value>)[i]:undefined;values.push(mapper?.type==='ArrowFunctionExpression'?arrowValue(mapper,[item,i],ctx,depth+1):item);if(ctx.budget!.remaining<0)return UNKNOWN;}
+          return values;
+        }
+      }
+      if(node.callee.type==='MemberExpression'&&!node.callee.computed&&['slice','concat','toReversed','reverse'].includes(member??'')){
+        const list=ev(node.callee.object);
+        if(!Array.isArray(list)||list.length>256||node.arguments.some(a=>a.type==='SpreadElement'))return UNKNOWN;
+        const args=node.arguments.map(ev);
+        if(args.includes(UNKNOWN))return UNKNOWN;
+        if(member==='slice')return args.length<=2&&args.every(a=>a===undefined||typeof a==='number'&&Number.isFinite(a))?list.slice(args[0] as number|undefined,args[1] as number|undefined):UNKNOWN;
+        if(member==='toReversed'||member==='reverse'){
+          // reverse mutates its receiver. Only an owned temporary expression is
+          // safe to interpret; identifier/member receivers remain unknown.
+          if(args.length||member==='reverse'&&!ownedArray(node.callee.object))return UNKNOWN;
+          return [...list].reverse();
+        }
+        const result=[...list];for(const value of args){result.push(...Array.isArray(value)?value:[value]);if(result.length>256)return UNKNOWN;}return result;
+      }
       if (node.callee.type === 'MemberExpression' && !node.callee.computed && nodeName(node.callee.property) === 'trim' && !node.arguments.length) {
         const value = ev(node.callee.object);
         return typeof value === 'string' ? value.trim() : UNKNOWN;
@@ -184,6 +288,7 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
         return nodeName(node.callee.property) === 'find' ? undefined : result;
       }
       // Recognize source-level wrappers; never invoke the actual implementation.
+      if(name==='unref'||name==='toRefs')return node.arguments.length?ev(node.arguments[0]):UNKNOWN;
       if (['ref', 'shallowRef', 'reactive', 'readonly'].includes(name ?? '')) return node.arguments.length ? ev(node.arguments[0]) : ['ref', 'shallowRef'].includes(name ?? '') ? undefined : UNKNOWN;
       if (name === 'useVModel') {
         const props = ev(node.arguments[0]), key = node.arguments[1] ? ev(node.arguments[1]) : 'modelValue';

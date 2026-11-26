@@ -11,10 +11,12 @@ export interface LayoutSnapshot {
   /** Visible source IDs and explicit data-sk-anchor nodes, relative to this box.
    * Repeated anchors are paired in DOM order, including inside open shadow roots. */
   anchors?: Record<string, LayoutBox[]>;
+  /** Visible native header-bearing tables; row counts are loading capacity. */
+  tables?: { columns: number; headerRows: number }[];
 }
 export interface LayoutTolerance { tolerancePx?: number; toleranceRatio?: number; overflowTolerancePx?: number }
 export interface LayoutIssue {
-  code: 'CONTENT_INVISIBLE' | 'SKELETON_INVISIBLE' | 'PLACEHOLDERS_INVISIBLE' | 'WIDTH_MISMATCH' | 'HEIGHT_MISMATCH' | 'POSITION_MISMATCH' | 'HORIZONTAL_OVERFLOW' | 'ANCHOR_MISSING' | 'ANCHOR_MISMATCH';
+  code: 'CONTENT_INVISIBLE' | 'SKELETON_INVISIBLE' | 'PLACEHOLDERS_INVISIBLE' | 'WIDTH_MISMATCH' | 'HEIGHT_MISMATCH' | 'POSITION_MISMATCH' | 'HORIZONTAL_OVERFLOW' | 'ANCHOR_MISSING' | 'ANCHOR_MISMATCH' | 'TABLE_STRUCTURE_MISMATCH';
   message: string;
   anchor?: string;
 }
@@ -78,26 +80,39 @@ function paintedPlaceholder(element: Element): boolean {
 }
 
 /** Measure rendered geometry, including open Shadow DOM, without viewport clipping. */
-export function captureLayout(root: HTMLElement): LayoutSnapshot {
+export function captureLayout(root: HTMLElement, sourceIds?:ReadonlySet<string>): LayoutSnapshot {
   const elements = descendants(root);
   const placeholders = elements.filter(element => element.matches('[data-sk-leaf], [data-sk-multiline] > span'));
   const style = getComputedStyle(root);
   const containsOverflow = ['auto', 'scroll', 'hidden', 'clip'].includes(style.overflowX);
   const box = layoutBox(root);
   const anchors: Record<string, LayoutBox[]> = Object.create(null);
+  const tables=elements.filter((node):node is HTMLTableElement=>node.tagName==='TABLE'&&!!(node as HTMLTableElement).tHead&&visible(node)&&visible((node as HTMLTableElement).tHead!)).map(table=>{
+    const occupied:number[]=[],rows=[...table.tHead!.rows];let columns=0;
+    rows.forEach((row,index)=>{
+      let column=0;
+      for(const cell of row.cells){
+        if(cell.getAttribute('aria-hidden')==='true'||['presentation','none'].includes(cell.getAttribute('role')??'')||getComputedStyle(cell).display==='none'||cell.getBoundingClientRect().width===0)continue;
+        while((occupied[column]??0)>index)column++;
+        const span=Math.min(256,Math.max(1,cell.colSpan));
+        for(let offset=0;offset<span;offset++)occupied[column+offset]=index+Math.min(256,Math.max(1,cell.rowSpan));
+        column+=span;columns=Math.max(columns,column);
+      }
+    });return{columns,headerRows:rows.length};
+  });
   for (const element of elements) {
     // Only the visible branch of nested boundaries participates. Skipping the
     // entire boundary would lose anchors that exist in the page artifact.
     if (!visible(element)) continue;
     const explicit = element.getAttribute('data-sk-anchor');
     const id = element.getAttribute('data-sk-source-id') ?? element.id;
-    const key = explicit ? `anchor:${explicit}` : id ? `id:${id}` : undefined;
+    const key = explicit ? `anchor:${explicit}` : id&&(!sourceIds||sourceIds.has(id)) ? `id:${id}` : undefined;
     if (!key) continue;
     const child = layoutBox(element);
     (anchors[key] ??= []).push({ ...child, x: child.x - box.x, y: child.y - box.y });
   }
   return {
-    box, visible: visible(root), anchors,
+    box, visible: visible(root), anchors, tables,
     overflowX: containsOverflow ? 0 : Math.max(0, root.scrollWidth - root.clientWidth),
     placeholders: placeholders.length,
     visiblePlaceholders: placeholders.filter(paintedPlaceholder).length,
@@ -129,7 +144,14 @@ export function compareLayouts(content: LayoutSnapshot, skeleton: LayoutSnapshot
   if (Math.abs(delta.width) > pixels + content.box.width * ratio) add('WIDTH_MISMATCH', `Skeleton width differs by ${delta.width.toFixed(1)}px`);
   if (Math.abs(delta.height) > pixels + content.box.height * ratio) add('HEIGHT_MISMATCH', `Skeleton height differs by ${delta.height.toFixed(1)}px`);
   if (Math.abs(delta.x) > pixels || Math.abs(delta.y) > pixels) add('POSITION_MISMATCH', `Skeleton origin differs by ${delta.x.toFixed(1)}px horizontally and ${delta.y.toFixed(1)}px vertically`);
-  if (skeleton.overflowX > overflow) add('HORIZONTAL_OVERFLOW', `Skeleton has ${skeleton.overflowX.toFixed(1)}px of uncontained horizontal overflow`);
+  if (skeleton.overflowX > content.overflowX+overflow) add('HORIZONTAL_OVERFLOW', `Skeleton has ${(skeleton.overflowX-content.overflowX).toFixed(1)}px of additional uncontained horizontal overflow (source: ${content.overflowX.toFixed(1)}px)`);
+  if(content.tables&&skeleton.tables){
+    if(content.tables.length!==skeleton.tables.length)add('TABLE_STRUCTURE_MISMATCH',`${content.tables.length} real header-bearing tables, ${skeleton.tables.length} skeleton tables`);
+    for(let index=0;index<Math.min(content.tables.length,skeleton.tables.length);index++){
+      const real=content.tables[index],generated=skeleton.tables[index];
+      if(real.columns!==generated.columns||real.headerRows!==generated.headerRows)add('TABLE_STRUCTURE_MISMATCH',`Table ${index+1}: ${real.columns} real columns/${real.headerRows} header rows, ${generated.columns} skeleton columns/${generated.headerRows} header rows`);
+    }
+  }
   const anchors = { compared: 0, mismatched: 0, missing: 0 };
   for (const key of new Set([...Object.keys(content.anchors ?? {}), ...Object.keys(skeleton.anchors ?? {})])) {
     const real = content.anchors?.[key] ?? [], generated = skeleton.anchors?.[key] ?? [];
@@ -149,8 +171,8 @@ export function compareLayouts(content: LayoutSnapshot, skeleton: LayoutSnapshot
   return { needsReview: issues.length > 0, delta, issues, anchors };
 }
 
-function captureBoundaryHost(host: HTMLElement, boundary: HTMLElement): LayoutSnapshot {
-  const snapshot = captureLayout(host);
+function captureBoundaryHost(host: HTMLElement, boundary: HTMLElement, sourceIds?:ReadonlySet<string>): LayoutSnapshot {
+  const snapshot = captureLayout(host,sourceIds);
   const box = layoutBox(boundary);
   for (const anchors of Object.values(snapshot.anchors ?? {})) for (const anchor of anchors) {
     anchor.x += snapshot.box.x - box.x;
@@ -176,6 +198,7 @@ export async function auditBoundaryLayout(element: HTMLElement, options: LayoutT
   const original = getPreview();
   const variant = options.variant ?? (original.target === boundary.id || original.target === 'page' && boundary.kind === 'page' ? original.variant : undefined) ?? boundary.variant ?? artifact.defaultVariant;
   if (!Object.hasOwn(artifact.variants, variant)) throw new Error(`Unknown variant: ${variant}`);
+  const ids=artifact.variants[variant].sourceIds,sourceIds=ids?new Set(ids):undefined;
   const window = element.ownerDocument.defaultView!;
   const viewport = { width: window.innerWidth, height: window.innerHeight };
   const scroll = { x: window.scrollX, y: window.scrollY };
@@ -201,16 +224,16 @@ export async function auditBoundaryLayout(element: HTMLElement, options: LayoutT
     await nextLayout();
     ensureStable();
     const contentHost = [...element.children].find((child): child is HTMLElement => child instanceof HTMLElement && child.hasAttribute('data-sk-content'));
-    const skeletonHost = contentHost?.previousElementSibling;
+    const skeletonHost = [...element.children].find(child=>child.hasAttribute('data-sk-skeleton')) ?? contentHost?.previousElementSibling;
     if (!contentHost || !(skeletonHost instanceof HTMLElement)) throw new Error('Loading region has no supported content and skeleton hosts');
-    const content = captureBoundaryHost(contentHost, element);
+    const content = captureBoundaryHost(contentHost, element,sourceIds);
     if (!content.visible) throw new Error('Real content is hidden by an ancestor; show the region before checking layout');
     await options.capture?.('content');
     ensureStable();
     select(boundary.id, variant);
     await nextLayout();
     ensureStable();
-    const skeleton = captureBoundaryHost(skeletonHost, element);
+    const skeleton = captureBoundaryHost(skeletonHost, element,sourceIds);
     await options.capture?.('skeleton');
     ensureStable();
     return { id: boundary.id, variant, viewport, content, skeleton, ...compareLayouts(content, skeleton, options) };

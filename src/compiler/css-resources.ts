@@ -25,7 +25,7 @@ function assetURLs(value: string): RegExpExecArray[] {
 
 /** Preserve each declaration's import origin. Embedded assets work in inline
  * styles, Shadow DOM, nested routes and production builds without a bundler hook. */
-export async function embedStyleAssets(root: Root, entry: string, read: (file: string) => Promise<Uint8Array> = readFile): Promise<void> {
+export async function embedStyleAssets(root: Root, entry: string, read: (file: string) => Promise<Uint8Array> = readFile, resolve?: (request: string, from: string) => Promise<string | undefined>): Promise<void> {
   const declarations: Promise<void>[] = [];
   root.walkDecls(declaration => {
     declarations.push((async () => {
@@ -35,7 +35,10 @@ export async function embedStyleAssets(root: Root, entry: string, read: (file: s
         if (/^(?:[a-z][\w+.-]*:|\/|#)/i.test(url)) continue;
         const [pathname, fragment] = url.split('#', 2);
         const filename = decodeURIComponent(pathname.split('?')[0].replace(/\\([ ()'"\\])/g, '$1'));
-        const file = path.resolve(path.dirname(declaration.source?.input.file ?? entry), filename);
+        const location = declaration.source;
+        const mapped = location?.input.origin(location.start?.line ?? 1, location.start?.column ?? 1);
+        const origin = mapped && mapped.file || location?.input.file || entry;
+        const file = await resolve?.(filename, origin) ?? path.resolve(path.dirname(origin), filename);
         const bytes = await read(file);
         const data = `data:${mime[path.extname(file).toLowerCase()] ?? 'application/octet-stream'};base64,${Buffer.from(bytes).toString('base64')}${fragment ? `#${fragment}` : ''}`;
         result += declaration.value.slice(previous, match.index) + `url("${data}")`;
