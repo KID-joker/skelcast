@@ -6,7 +6,7 @@ import { devtoolsCSS } from './devtools/styles.js';
 import { icon } from './devtools/icons.js';
 import { escapeHTML } from './shared.js';
 
-interface DevState { artifacts: SkeletonArtifact[]; statuses: TargetStatus[] }
+interface DevState { artifacts: SkeletonArtifact[]; statuses: TargetStatus[]; versions?: Record<string, string> }
 let data: DevState = { artifacts: [], statuses: [] };
 let selected = '';
 let selectedByUser = false;
@@ -64,7 +64,7 @@ async function refresh() {
     data = next;
     if (data.statuses.every(status => status.state === 'ready')) note = '';
     if (!selected) selected = listBoundaries()[0]?.id ?? document.querySelector<HTMLElement>('[data-sk-initial]')?.dataset.skInitial ?? data.artifacts[0]?.id ?? '';
-    if (!replaceArtifacts(data.artifacts)) render();
+    if (!replaceArtifacts(data.artifacts, data.versions)) render();
   } catch {
     if (revision !== refreshRevision) return;
     note = 'Unable to read skeleton status. Ask your coding agent to run skelcast check.'; render();

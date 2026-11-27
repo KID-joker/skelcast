@@ -5,22 +5,35 @@ import { sourceIdAttribute, utilityAttribute } from './styles.js';
 import type { RenderContext, SourceNode } from './context.js';
 import type { ElementMarkers, RenderHost } from './render-host.js';
 import { imageRatio } from './images.js';
+import type { StyleOptions } from '../types.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
 // attributes are owned by the generator and cannot be supplied by source markup.
 const layoutAttribute = (name: string) => name === 'id' || name === 'data-sk-anchor' || ['dir', 'lang'].includes(name) || /^data-(?!sk-)[\w.:-]+$/.test(name);
 
+/** Normalize and filter independently of HTML serialization and source-ID tracking. */
+export function outputAttribute(key: string, value: Value, styles?: StyleOptions): [string, Value] | undefined {
+  if (value === UNKNOWN || value == null) return;
+  if (key === 'className' || key === 'class') {
+    const cls = classString(value);
+    return cls ? ['class', cls] : undefined;
+  }
+  if (key === 'style') {
+    const style = styleString(value);
+    return style ? ['style', style] : undefined;
+  }
+  if (layoutAttribute(key) && ['string', 'number', 'boolean'].includes(typeof value)) return [key === 'id' ? sourceIdAttribute : key, value];
+  if (['width', 'height', 'colSpan', 'rowSpan', 'viewBox'].includes(key)) return [key.toLowerCase(), value];
+  if (styles?.unocss && utilityAttribute(key)) return [key, value === true ? '' : value];
+  if (['rows', 'cols'].includes(key) && typeof value !== 'object') return [key, value];
+  if (key === 'size' && /^\d+$/.test(String(value))) return ['size', value];
+}
+
 export function renderAttributes(this: RenderHost, props: Record<string, Value>): string {
   let attrs = '';
   for (const [key, value] of Object.entries(props)) {
-    if (value === UNKNOWN || value == null) continue;
-    if (key === 'className' || key === 'class') { const cls = classString(value); if (cls) attrs += ` class="${escapeHTML(cls)}"`; }
-    else if (key === 'style') { const style = styleString(value); if (style) attrs += ` style="${escapeHTML(style)}"`; }
-    else if (layoutAttribute(key) && ['string', 'number', 'boolean'].includes(typeof value)) attrs += ` ${key === 'id' ? sourceIdAttribute : key}="${escapeHTML(value)}"`;
-    else if (['width', 'height', 'colSpan', 'rowSpan', 'viewBox'].includes(key)) attrs += ` ${key.toLowerCase()}="${escapeHTML(value)}"`;
-    else if (this.options.styles?.unocss && utilityAttribute(key)) attrs += ` ${key}="${value === true ? '' : escapeHTML(value)}"`;
-    else if (['rows', 'cols'].includes(key) && typeof value !== 'object') attrs += ` ${key}="${escapeHTML(value)}"`;
-    else if (key === 'size' && /^\d+$/.test(String(value))) attrs += ` size="${escapeHTML(value)}"`;
+    const attribute = outputAttribute(key, value, this.options.styles);
+    if (attribute) attrs += ` ${attribute[0]}="${escapeHTML(attribute[1])}"`;
   }
   return attrs;
 }

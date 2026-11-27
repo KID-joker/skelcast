@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
   test(`${framework}: compact toolbar picks regions and keeps inspection tools out of the preview flow`, async ({ page }) => {
@@ -43,7 +44,10 @@ for (const [framework, port] of [['React', 5173], ['Vue', 5174]] as const) {
       expect(artifact.diagnostics).toEqual([]);
       expect(artifact.evidence).toEqual([]);
       expect(artifact.sources).toEqual({});
+      expect(state.versions[artifact.id]).toBe(createHash('sha256').update(JSON.stringify(artifact)).digest('hex'));
     }
+    const refreshed = await (await page.request.get(`http://127.0.0.1:${port}/__skelcast/state`)).json();
+    expect(refreshed.versions).toEqual(state.versions);
     for (const endpoint of ['hints', 'open']) {
       const response = await page.request.post(`http://127.0.0.1:${port}/__skelcast/${endpoint}`, { headers: { 'X-SkelCast-Dev': '1' }, data: { id: 'products.list' } });
       expect(response.status()).toBe(404);

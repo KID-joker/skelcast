@@ -41,6 +41,8 @@ export interface ExpressionContext {
   bindings: Record<string, Value>;
   /** Immutable syntax shared within one compilation; expression values stay local. */
   expressions?: Map<string, t.Expression | null>;
+  /** Source-proved projections keyed by syntax, without synthetic text bindings. */
+  nodeValues?: Map<t.Node, Value>;
   defaultBranches?: boolean;
   unwrapRefs?: boolean;
   /** Shared work limit for nested bounded collection operations. */
@@ -80,10 +82,26 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
   return evaluateNode(node, ctx, depth);
 }
 
+/** Finite wrapper rules shared by expression and table-layout evaluation.
+ * Each caller decides which helper identity and computed bodies it accepts. */
+export function evaluateSourceWrapper(
+  node: t.CallExpression,
+  name: string | undefined,
+  read: (node: t.Node | null | undefined) => Value,
+  computed: (fn: t.Node | undefined) => { value: Value } | undefined,
+): { value: Value } | undefined {
+  if (name === 'unref' || name === 'toRefs') return { value: node.arguments.length ? read(node.arguments[0]) : UNKNOWN };
+  if (['ref', 'shallowRef', 'reactive', 'readonly'].includes(name ?? '')) {
+    return { value: node.arguments.length ? read(node.arguments[0]) : name === 'ref' || name === 'shallowRef' ? undefined : UNKNOWN };
+  }
+  if (name === 'computed' || name === 'useMemo') return computed(node.arguments[0]);
+}
+
 function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, depth: number, readObject?: (node: t.Node, depth: number) => Value): Value {
   if (!ctx.budget) ctx = { ...ctx, budget: { remaining: 10000 } };
   if (--ctx.budget!.remaining < 0) return UNKNOWN;
   if (!node || depth > 40) return UNKNOWN;
+  if (ctx.nodeValues?.has(node)) return ctx.nodeValues.get(node);
   const text = expressionText(node, ctx);
   if (Object.hasOwn(ctx.bindings, text)) return ctx.bindings[text];
   const ev = (n: t.Node | null | undefined) => evaluate(n, ctx, depth + 1);
@@ -300,15 +318,12 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
         return nodeName(node.callee.property) === 'find' ? undefined : result;
       }
       // Recognize source-level wrappers; never invoke the actual implementation.
-      if(name==='unref'||name==='toRefs')return node.arguments.length?ev(node.arguments[0]):UNKNOWN;
-      if (['ref', 'shallowRef', 'reactive', 'readonly'].includes(name ?? '')) return node.arguments.length ? ev(node.arguments[0]) : ['ref', 'shallowRef'].includes(name ?? '') ? undefined : UNKNOWN;
+      const wrapper = evaluateSourceWrapper(node, name, ev, fn =>
+        fn?.type === 'ArrowFunctionExpression' && !fn.async ? { value: arrowValue(fn, [], ctx, depth + 1) } : undefined);
+      if (wrapper) return wrapper.value;
       if (name === 'useVModel') {
         const props = ev(node.arguments[0]), key = node.arguments[1] ? ev(node.arguments[1]) : 'modelValue';
         return props && props !== UNKNOWN && typeof props === 'object' && safeKey(key) && Object.hasOwn(props, key) ? (props as Record<string, unknown>)[key] : UNKNOWN;
-      }
-      if (['computed', 'useMemo'].includes(name ?? '')) {
-        const fn = node.arguments[0];
-        if (fn?.type === 'ArrowFunctionExpression' && !fn.async) return arrowValue(fn, [], ctx, depth + 1);
       }
       return UNKNOWN;
     }

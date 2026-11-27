@@ -2,7 +2,7 @@ import type * as t from '@babel/types';
 import {nodeName,walk,isRenderFunction} from './ast.js';
 import type {ModuleInfo} from './context.js';
 import type {ComponentReference} from './presets/types.js';
-import {evaluate,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
+import {evaluate,evaluateSourceWrapper,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
 import {resolvePreset} from './presets/index.js';
 import {vueHelper} from './vue-render.js';
 import{tableViewportOffset}from'./viewport-constraint.js';
@@ -77,13 +77,17 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
  const context:ExpressionContext={code:mod.code,env,bindings,unwrapRefs:true};
  const value=(node:t.Node|undefined|null,scope=context):Value=>{
   if(!node)return UNKNOWN;
-  if(node.type==='CallExpression'&&helper(node.callee,'unref'))return value(node.arguments[0],scope);
-  if(node.type==='CallExpression'&&helper(node.callee,'computed')&&isRenderFunction(node.arguments[0])&&node.arguments[0].body.type!=='BlockStatement')return value(node.arguments[0].body,scope);
+  if(node.type==='CallExpression'){
+   const name = ['unref', 'computed'].find(name => helper(node.callee, name));
+   const wrapper = evaluateSourceWrapper(node, name, input => value(input, scope), fn =>
+    isRenderFunction(fn) && fn.body.type !== 'BlockStatement' ? { value: value(fn.body, scope) } : undefined);
+   if(wrapper)return wrapper.value;
+  }
   if(node.type==='CallExpression'&&node.callee.type==='MemberExpression'&&node.callee.object.type==='Identifier'&&node.callee.object.name==='Object'&&!Object.hasOwn(mod.env,'Object')&&nodeName(node.callee.property)==='assign'&&node.arguments[0]?.type==='ObjectExpression'){
    const first=value(node.arguments[0],scope);if(!first||typeof first!=='object')return UNKNOWN;
    const result={...first};for(const arg of node.arguments.slice(1)){const next=value(arg,scope);if(next&&typeof next==='object')Object.assign(result,next);}return result;
   }
-  walk(node,n=>{if(n!==node&&n.type==='CallExpression'&&helper(n.callee,'unref')&&n.start!=null&&n.end!=null)scope.bindings[mod.code.slice(n.start,n.end)]=value(n.arguments[0],scope);});
+  walk(node,n=>{if(n!==node&&n.type==='CallExpression'&&helper(n.callee,'unref')&&n.start!=null&&n.end!=null)(scope.nodeValues??=new Map()).set(n,value(n.arguments[0],scope));});
   return evaluate(node,scope);
  };
  for(const statement of setup.body.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations)if(d.id.type==='Identifier')env[d.id.name]=value(d.init);
@@ -95,7 +99,7 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
   if(input?.type==='Identifier')result.columns=sourceProps.columns.map((column,index)=>{
    if(!column||typeof column!=='object')return column;
    const copy:Record<string,Value>={...column};
-   const local:ExpressionContext={...context,env:{...env,[input.name]:column},bindings:{...bindings}};
+   const local:ExpressionContext={...context,env:{...env,[input.name]:column},bindings:{...bindings},nodeValues:new Map(context.nodeValues)};
    if(fn.params[1]?.type==='Identifier')local.env[fn.params[1].name]=index;
    for(const object of objects)for(const property of object.properties)if(property.type==='ObjectProperty'&&!property.computed&&['align','headerAlign','showOverflowTooltip'].includes(nodeName(property.key)??'')){
     const computed=value(property.value,local);if(typeof computed==='string'||typeof computed==='boolean')copy[nodeName(property.key)!]=computed;

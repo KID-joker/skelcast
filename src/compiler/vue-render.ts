@@ -10,6 +10,7 @@ import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 import { renderComponent } from './component-render.js';
 import { componentInputs } from './props.js';
 import { renderJSXNode } from './react.js';
+import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
 
 /** Helper identity is established from imports, including aliases/namespaces. */
 export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {
@@ -184,12 +185,10 @@ function supportedBody(body: Ast): boolean {
 }
 
 async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
-  if(!value||typeof value!=='object'||!Object.hasOwn(value,SOURCE_RENDER))return;
-  const fn=(value as {[SOURCE_RENDER]:t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression})[SOURCE_RENDER];
+  const fn = localRenderFunction(value);
+  if(!fn)return;
   if(ctx.depth>16||node.arguments.some(a=>a.type==='SpreadElement'))return this.fallback(ctx,node,'Local source render recursion or arguments exceed the finite limit');
-  const local={...ctx,env:{...ctx.env},depth:ctx.depth+1};
-  fn.params.forEach((param,i)=>bindPattern(param,node.arguments[i]?evaluate(node.arguments[i],ctx):undefined,local.env));
-  const body=this.prepareFunction({...fn,params:[]},local,{});
+  const { local, body } = prepareLocalRenderCall(this, fn, node, ctx);
   return body?.type==='CallExpression'&&vueHelper(ctx.module,body.callee,'h')?this.vueExpression(body,local):this.jsx(body,local);
 }
 

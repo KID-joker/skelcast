@@ -125,3 +125,44 @@ test('comparison updates notify only their target and clamp overlay opacity', ()
     setPreview({ target: null, comparison: 'off', opacity: 0.5, comparisonView: 'content' });
   }
 });
+
+test('versioned refreshes retain notifications across versioned and direct callers', () => {
+  const id = 'versioned-refresh';
+  let notifications = 0;
+  const stop = subscribeBoundary(id, 'request', () => notifications++);
+  try {
+    assert.equal(replaceArtifacts([artifact(id)], { [id]: 'first' }), true);
+    assert.equal(replaceArtifacts([artifact(id)], { [id]: 'first' }), false);
+    assert.equal(notifications, 1);
+    const updated = artifact(id);
+    updated.variants.default.css = 'section{height:80px}';
+    assert.equal(replaceArtifacts([updated], { [id]: 'second' }), true);
+    assert.equal(replaceArtifacts([structuredClone(updated)]), false);
+    assert.equal(replaceArtifacts([structuredClone(updated)], { [id]: 'second' }), false);
+    assert.equal(notifications, 2);
+    assert.equal(replaceArtifacts([artifact(id)]), true);
+    assert.equal(replaceArtifacts([artifact(id)], { [id]: 'first' }), false);
+    assert.equal(notifications, 3);
+  } finally { stop(); }
+});
+
+test('preview comparison preserves duplicate subscribers and reentrant state changes', () => {
+  const original = getPreview();
+  const calls: string[] = [];
+  const stops = [
+    subscribeBoundary('reentrant', 'request', () => {
+      calls.push('first');
+      if (getPreview().comparison === 'overlay') setPreview({ comparison: 'switch' });
+    }),
+    subscribeBoundary('reentrant', 'request', () => calls.push('second')),
+    subscribeBoundary('reentrant', 'page', () => calls.push('page')),
+  ];
+  try {
+    setPreview({ target: 'reentrant', comparison: 'overlay' });
+    assert.deepEqual(calls, ['first', 'first', 'second', 'page', 'second', 'page']);
+    const before = calls.length;
+    setPreview({ opacity: 0.25 });
+    assert.equal(calls.length, before, 'opacity changes do not affect switch comparisons');
+    assert.deepEqual(JSON.parse(boundarySnapshot('reentrant', 'request')).slice(4), ['switch', null, 'content']);
+  } finally { stops.forEach(stop => stop()); setPreview(original); }
+});

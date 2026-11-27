@@ -1,8 +1,29 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, walk } from './ast.js';
-import { UNKNOWN, bindPattern, evaluate, parseSourceExpression, type ExpressionContext, type Value } from './expression.js';
+import { isRenderFunction, nodeName, walk, type RenderFunction } from './ast.js';
+import { UNKNOWN, SOURCE_RENDER, bindPattern, evaluate, parseSourceExpression, type ExpressionContext, type Value } from './expression.js';
 import type { SkeletonHints } from '../types.js';
 import type { RenderContext } from './context.js';
+import type { RenderHost } from './render-host.js';
+
+export function localRenderFunction(value: Value): RenderFunction | undefined {
+  return value && typeof value === 'object' && Object.hasOwn(value, SOURCE_RENDER)
+    ? (value as { [SOURCE_RENDER]: RenderFunction })[SOURCE_RENDER] : undefined;
+}
+
+/** Share call preparation; callers retain their own limits and parameter policy. */
+export function prepareLocalRenderCall(
+  host: RenderHost,
+  fn: RenderFunction,
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: RenderContext,
+  bind: (parameter: t.Node, value: Value, local: RenderContext) => void =
+    (parameter, value, local) => bindPattern(parameter, value, local.env),
+) {
+  const local = { ...context, env: { ...context.env }, depth: context.depth + 1 };
+  fn.params.forEach((parameter, index) => bind(parameter,
+    node.arguments[index] ? evaluate(node.arguments[index], context) : undefined, local));
+  return { local, body: host.prepareFunction({ ...fn, params: [] }, local, {}) };
+}
 
 /** Explicit state bindings also count when they name an input to a condition. */
 export function hasStateBinding(text: string, context: ExpressionContext): boolean {

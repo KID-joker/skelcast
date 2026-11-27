@@ -2,7 +2,8 @@ import type * as t from '@babel/types';
 import type {ElementNode,TemplateChildNode} from '@vue/compiler-dom';
 import {VISITOR_KEYS} from '@babel/types';
 import {isRenderFunction,patternNames} from './ast.js';
-import {UNKNOWN,SOURCE_RENDER,bindPattern,evaluate,type Value} from './expression.js';
+import {UNKNOWN,bindPattern,evaluate,type Value} from './expression.js';
+import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
 import {slotValue,type SourceSlot,type RenderContext} from './context.js';
 import type {RenderHost} from './render-host.js';
 import{initialExpression}from'./initial-state.js';
@@ -90,11 +91,10 @@ export async function projectSelectedSlots(host:RenderHost,body:t.Node,ctx:Rende
     }
     return;
    }
-   if(callee&&typeof callee==='object'&&Object.hasOwn(callee,SOURCE_RENDER)){
-    const fn=(callee as {[SOURCE_RENDER]:t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression})[SOURCE_RENDER];
-    const local={...context,env:{...context.env},depth:context.depth+1};
-    fn.params.forEach((parameter,i)=>bindSlotArgument(parameter,node.arguments[i]?evaluate(node.arguments[i],context):undefined,local));
-    const value=host.prepareFunction({...fn,params:[]},local,{});if(value)await visit(value,local,depth+1);
+   const fn = localRenderFunction(callee);
+   if(fn){
+    const { local, body } = prepareLocalRenderCall(host, fn, node, context, bindSlotArgument);
+    if(body)await visit(body,local,depth+1);
     return;
    }
    if(node.type==='CallExpression'&&vueHelper(context.module,node.callee,'h')&&node.arguments[0]?.type==='Identifier'){

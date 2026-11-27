@@ -29,6 +29,7 @@ let initialReleased = false;
 let initialHandedOff = false;
 let initialPreviewAllowed = true;
 const overrides = new Map<string, SkeletonArtifact>();
+const overrideVersions = new Map<string, string>();
 
 function updateInitial() {
   if (typeof document === 'undefined') return;
@@ -49,11 +50,14 @@ export const serverSnapshot = () => '';
 export function getPreview(): PreviewState { return preview; }
 /** Inspector subscriptions include pending state; boundary subscriptions only track
  * preview and artifact changes that affect that boundary's rendered output. */
-export function boundarySnapshot(id: string, kind: BoundaryInfo['kind']): string {
+function boundaryValues(id: string, kind: BoundaryInfo['kind']) {
   const held = forced(id, kind);
-  return JSON.stringify([held, held ? preview.variant : null, preview.highlight, artifactRevisions.get(id) ?? 0,
+  return [held, held ? preview.variant ?? null : null, preview.highlight, artifactRevisions.get(id) ?? 0,
     held ? preview.comparison : null, held && preview.comparison === 'overlay' ? preview.opacity : null,
-    held && preview.comparison === 'switch' ? preview.comparisonView : null]);
+    held && preview.comparison === 'switch' ? preview.comparisonView : null] as const;
+}
+export function boundarySnapshot(id: string, kind: BoundaryInfo['kind']): string {
+  return JSON.stringify(boundaryValues(id, kind));
 }
 export function subscribeBoundary(id: string, kind: BoundaryInfo['kind'], listener: () => void) {
   const entry = { id, kind, listener };
@@ -64,9 +68,21 @@ export function setPreview(value: Partial<PreviewState>) {
   const next = { ...preview, ...value };
   next.opacity = Number.isFinite(next.opacity) ? Math.max(0, Math.min(1, next.opacity)) : 0.5;
   if ((Object.keys(next) as (keyof PreviewState)[]).every(key => next[key] === preview[key])) return;
-  const before = new Map([...boundaryListeners].map(entry => [entry, boundarySnapshot(entry.id, entry.kind)]));
+  const values = new Map<string, { state: PreviewState; revision: number; fields: ReturnType<typeof boundaryValues> }>();
+  const read = (id: string, kind: BoundaryInfo['kind']) => {
+    const key = `${kind}:${id}`, revision = artifactRevisions.get(id) ?? 0;
+    let cached = values.get(key);
+    if (!cached || cached.state !== preview || cached.revision !== revision) {
+      values.set(key, cached = { state: preview, revision, fields: boundaryValues(id, kind) });
+    }
+    return cached.fields;
+  };
+  const before = new Map([...boundaryListeners].map(entry => [entry, read(entry.id, entry.kind)]));
   preview = next;
-  for (const [entry, previous] of before) if (previous !== boundarySnapshot(entry.id, entry.kind)) entry.listener();
+  for (const [entry, previous] of before) {
+    const current = read(entry.id, entry.kind);
+    if (previous.some((field, index) => field !== current[index])) entry.listener();
+  }
   emit();
 }
 export function listBoundaries() { return [...boundaries.values()]; }
@@ -83,11 +99,19 @@ export function registerBoundary(info: BoundaryInfo) {
   };
 }
 export function currentArtifact(artifact: SkeletonArtifact) { return overrides.get(artifact.id) ?? artifact; }
-export function replaceArtifacts(artifacts: SkeletonArtifact[]) {
+/** Dev responses supply versions of their browser payloads. Direct callers retain
+ * the existing content comparison when no version is available. */
+export function replaceArtifacts(artifacts: SkeletonArtifact[], versions?: Readonly<Record<string, string>>) {
   const changed = new Set<string>();
   for (const artifact of artifacts) {
     const previous = overrides.get(artifact.id);
-    if (previous === artifact || previous && JSON.stringify(previous) === JSON.stringify(artifact)) continue;
+    const version = versions?.[artifact.id], previousVersion = overrideVersions.get(artifact.id);
+    if (previous === artifact) continue;
+    const unchanged = previous && (version !== undefined && previousVersion !== undefined
+      ? version === previousVersion : JSON.stringify(previous) === JSON.stringify(artifact));
+    if (version !== undefined) overrideVersions.set(artifact.id, version);
+    else overrideVersions.delete(artifact.id);
+    if (unchanged) continue;
     overrides.set(artifact.id, artifact);
     artifactRevisions.set(artifact.id, (artifactRevisions.get(artifact.id) ?? 0) + 1);
     changed.add(artifact.id);

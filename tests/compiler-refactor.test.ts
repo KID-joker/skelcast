@@ -12,6 +12,9 @@ import { renderJSX } from '../src/compiler/react.js';
 import type { RenderContext } from '../src/compiler/context.js';
 import type { RenderHost } from '../src/compiler/render-host.js';
 import { analyzeReact } from '../src/init/react.js';
+import { inheritRootScopes } from '../src/compiler/attributes.js';
+import { renderAttributes } from '../src/compiler/output.js';
+import { UNKNOWN } from '../src/compiler/expression.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-refactor-'));
@@ -23,6 +26,47 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('root attribute merging filters without serializing probes and preserves source markup', () => {
+  const html = '<section class="old" style="color:red" data-sk-source-id="before" data-value="keep" grid="old"> <span>Text</span> </section>';
+  for (const unocss of [false, true]) {
+    let serializations = 0;
+    const styles = { unocss };
+    const host = { options: { styles } } as RenderHost;
+    const result = inheritRootScopes(html, ['data-scope'], {
+      class: ['new', { active: true }], style: { padding: 8 }, id: 'after',
+      'data-value': UNKNOWN, grid: 'cols-2', rows: {},
+    }, '', props => { serializations++; return renderAttributes.call(host, props); }, styles);
+    assert.equal(serializations, 1);
+    assert.match(result, /class="old new active"/);
+    assert.match(result, /style="color:red;padding:8px"/);
+    assert.equal((result.match(/data-sk-source-id=/g) ?? []).length, 1);
+    assert.match(result, /data-sk-source-id="after"/);
+    assert.match(result, /data-value="keep"/);
+    assert.match(result, unocss ? /grid="cols-2"/ : /grid="old"/);
+    assert.doesNotMatch(result, / rows=/);
+    assert.match(result, / data-scope\b/);
+    assert.match(result, /> <span>Text<\/span> <\/section>$/);
+  }
+});
+
+test('local render calls retain isolated arguments and selected-region parameter defaults', async () => {
+  await fixture({
+    'Plain.ts': `import{defineComponent,h}from'vue';export default defineComponent({setup(){const row=(height=48)=>h('section',{style:{height:height+'px'}});return()=>h('main',null,[row(40),row(80),row()]);}});`,
+    'Wrapper.ts': `import{defineComponent,h}from'vue';export default defineComponent({setup(props,{slots}){const row=(arg={height:48})=>h('div',null,slots.default(arg));return()=>h('main',null,row());}});`,
+    'View.vue': `<script setup>import Wrapper from'./Wrapper';import{LoadingBoundary}from'skelcast/vue';import artifact from'virtual:skelcast/region';</script><template><Wrapper v-slot="{height}"><LoadingBoundary :artifact="artifact" :pending="true"><section :style="{height:height+'px'}"/></LoadingBoundary></Wrapper></template>`,
+  }, async root => {
+    const plain = await compileTarget(root, { id: 'plain-calls', source: 'Plain.ts' });
+    assert.match(plain.artifact.variants.default.html, /height:40px/);
+    assert.match(plain.artifact.variants.default.html, /height:80px/);
+    assert.doesNotMatch(plain.artifact.variants.default.html, /height:48px/);
+    assert.ok(plain.artifact.diagnostics.some(d => d.code === 'FALLBACK'), 'ordinary local calls retain opaque missing parameters');
+    const region = await compileTarget(root, { id: 'selected-call', source: 'View.vue', region: 'artifact' });
+    assert.match(region.artifact.variants.default.html, /height:48px/);
+    assert.doesNotMatch(region.artifact.variants.default.html, /<main|<div[^>]*>\s*<div/);
+    assert.ok(!region.artifact.diagnostics.some(d => d.code === 'FALLBACK'));
+  });
+});
 
 test('shared declaration parsing preserves init selection, export aliases and compiler wrapper support', async () => {
   const cases = [

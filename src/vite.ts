@@ -206,8 +206,9 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
               const state = await readProjectState(project);
               const statuses = state.statuses;
               const artifacts = [...state.artifacts.values()].map(previewArtifact);
+              const versions = Object.fromEntries(artifacts.map(artifact => [artifact.id, digest(JSON.stringify(artifact))]));
               res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
-              res.end(JSON.stringify({ artifacts, statuses })); return;
+              res.end(JSON.stringify({ artifacts, statuses, versions })); return;
             }
             if (req.method !== 'POST' || url.pathname !== '/__skelcast/sync') { res.statusCode = 404; res.end(); return; }
             const origin = req.headers.origin;

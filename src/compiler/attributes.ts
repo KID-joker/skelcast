@@ -4,6 +4,8 @@ import type { Value } from './expression.js';
 import { classString, styleString } from './html.js';
 import { sourceIdAttribute } from './styles.js';
 import { camelizeProp } from './props.js';
+import { outputAttribute } from './output.js';
+import type { StyleOptions } from '../types.js';
 
 export function fallthroughAttrs(module: Pick<ModuleInfo, 'propDefaults'>, props: Record<string, Value>): Record<string, Value> {
   return Object.fromEntries(Object.entries(props).filter(([key]) => {
@@ -18,6 +20,7 @@ export function inheritRootScopes(
   attrs: Record<string, Value>,
   rootStyle: string,
   attributes: (props: Record<string, Value>) => string,
+  styles?: StyleOptions,
 ): string {
   if (!html || !scopes.length && !Object.keys(attrs).length && !rootStyle) return html;
   const roots = parse(html).children.filter((node): node is ElementNode => node.type === 1);
@@ -29,7 +32,7 @@ export function inheritRootScopes(
       if (rootStyle) forwarded.style = `${rootStyle};${styleString(forwarded.style)}`;
       for (const attribute of [...node.props].reverse()) {
         const key = attribute.name === sourceIdAttribute ? 'id' : attribute.name;
-        if (attribute.type !== 6 || forwarded[key] == null || !attributes({ [key]: forwarded[key] })) continue;
+        if (attribute.type !== 6 || !outputAttribute(key, forwarded[key], styles)) continue;
         if (attribute.name === 'class') forwarded.class = `${attribute.value?.content ?? ''} ${classString(forwarded.class)}`;
         else if (attribute.name === 'style') forwarded.style = `${attribute.value?.content ?? ''};${styleString(forwarded.style)}`;
         html = html.slice(0, attribute.loc.start.offset) + html.slice(attribute.loc.end.offset);

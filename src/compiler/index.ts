@@ -86,7 +86,7 @@ export class SourceCompiler extends SourceModules {
     return this.fallback(ctx, node, 'Static expansion budget reached; simplify the boundary or supply a local adapter');
   }
   private inheritRootScopes(html: string, scopes: string[], attrs: Record<string, Value> = {}, rootStyle = ''): string {
-    return inheritRootScopes(html, scopes, attrs, rootStyle, props => this.attributes(props));
+    return inheritRootScopes(html, scopes, attrs, rootStyle, props => this.attributes(props), this.options.styles);
   }
   async jsxNodes(nodes: (Ast | null)[], ctx: RenderContext): Promise<string> {
     let html = '';
