@@ -5,7 +5,7 @@ import type { Value } from './expression.js';
 import type { ComponentReference } from './presets/types.js';
 import type { RenderHost } from './render-host.js';
 
-export async function renderAdapter(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string | undefined> {
+async function renderAdapter(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string | undefined> {
   const adapter = host.target.adapters?.[tag];
   if (!adapter) return;
   const file = path.resolve(host.root, adapter);
@@ -13,9 +13,15 @@ export async function renderAdapter(host: RenderHost, tag: string, props: Record
   return host.component(file, 'default', props, ctx, node);
 }
 
-/** Frontends retain their slot and adapter policies; source/preset dispatch is shared. */
-export async function renderComponent(host: RenderHost, tag: string, reference: ComponentReference | undefined, props: Record<string, Value>, slot: SourceSlot, node: SourceNode): Promise<string | undefined> {
+/** Keep frontend policies together: JSX/templates accept explicit adapters;
+ * h() retains its source/preset path. Vue callers resolve references for slots. */
+export async function renderComponent(host: RenderHost, tag: string, props: Record<string, Value>, slot: SourceSlot, node: SourceNode, reference?: ComponentReference): Promise<string | undefined> {
   const ctx = slot.context;
+  if (slot.framework !== 'render') {
+    const adapter = await renderAdapter(host, tag, props, ctx, node);
+    if (adapter !== undefined) return adapter;
+  }
+  if (slot.framework === 'jsx') reference = await host.componentReference(tag, ctx);
   if (reference?.file && (slot.framework === 'render' || /\.(vue|tsx|jsx|ts|js)$/.test(reference.file))) {
     return host.component(reference.file, reference.exported, props, ctx, node);
   }

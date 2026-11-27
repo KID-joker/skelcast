@@ -45,6 +45,20 @@ test('JSX and Vue keep explicit adapters ahead of local source and presets while
   });
 });
 
+test('h component dispatch retains its existing source path when a JSX/template adapter is configured', async () => {
+  await fixture({
+    'Child.ts': `import { h } from 'vue';export default()=>h('section',{class:'source'},'Original')`,
+    'Adapter.tsx': `export default()=> <article className="adapter">Adapter</article>`,
+    'View.ts': `import { h } from 'vue';import Child from './Child';export default()=>h(Child)`,
+  }, async root => {
+    const plain = await compileTarget(root, { ...target, source: 'View.ts' });
+    const configured = await compileTarget(root, { ...target, source: 'View.ts', adapters: { Child: 'Adapter.tsx' } });
+    assert.deepEqual(configured, plain);
+    assert.match(configured.artifact.variants.default.html, /<section class="source"/);
+    assert.doesNotMatch(configured.artifact.variants.default.html, /class="adapter"/);
+  });
+});
+
 test('dynamic Vue tags retain native controls, source slots, spread order and component-scoped diagnostics', async () => {
   await fixture({
     'Child.vue': `<script setup>defineProps(['title'])</script><template><section><h2>{{title}}</h2><slot/><slot name="extra"/></section></template>`,

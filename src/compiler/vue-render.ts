@@ -269,7 +269,7 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
     const ref = await this.componentReference(tag, ctx);
     if (vueHelper(ctx.module, tagNode!, 'Fragment')) return children();
     props.__skSlots = slots;
-    const presentation = await renderComponent(this, tag, ref, props, { framework: 'render', nodes: [], slots, context: local }, node);
+    const presentation = await renderComponent(this, tag, props, { framework: 'render', nodes: [], slots, context: local }, node, ref);
     if (presentation !== undefined) return presentation;
     return this.fallback(local, node, `No source adapter for ${tag}`, this.attributes(props));
   }

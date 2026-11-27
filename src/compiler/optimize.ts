@@ -39,6 +39,7 @@ function needsSourceNodes(css: string): boolean {
 
 export function createArtifactOptimizer(warn: (message: string) => void = () => {}) {
   const styles = new Map<string, string>();
+  const views = new Map<string, Map<string, Pick<SkeletonView, 'html' | 'css'>>>();
   const minify = (css: string): string => {
     const cached = styles.get(css);
     if (cached !== undefined) return cached;
@@ -49,9 +50,17 @@ export function createArtifactOptimizer(warn: (message: string) => void = () => 
     return result;
   };
   const optimizeView = (view: SkeletonView): SkeletonView => {
-    const index = view.css.indexOf(separator);
-    const css = index < 0 ? minify(view.css) : minify(view.css.slice(0, index)) + separator + minify(view.css.slice(index + separator.length));
-    return { ...view, html: needsSourceNodes(view.css) ? view.html : withoutSourceNodes(view.html), css };
+    let htmls = views.get(view.css);
+    if (!htmls) views.set(view.css, htmls = new Map());
+    let result = htmls.get(view.html);
+    if (!result) {
+      const index = view.css.indexOf(separator);
+      const css = index < 0 ? minify(view.css) : minify(view.css.slice(0, index)) + separator + minify(view.css.slice(index + separator.length));
+      result = { html: needsSourceNodes(view.css) ? view.html : withoutSourceNodes(view.html), css };
+      htmls.set(view.html, result);
+    }
+    // Inspection metadata belongs to this view, not the cached presentation.
+    return { ...view, ...result };
   };
   const artifact = (input: SkeletonArtifact): SkeletonArtifact => ({
     ...input, diagnostics: [], evidence: [], sources: {}, source: '',

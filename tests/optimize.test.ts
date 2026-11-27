@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import postcss from 'postcss';
 import { createArtifactOptimizer, sharedStyleModule } from '../src/compiler/optimize.js';
 import type { SkeletonArtifact } from '../src/types.js';
 
@@ -28,6 +29,28 @@ test('production optimization minifies CSS and removes only source location attr
   assert.deepEqual(result.variants.grid.sourceIds, ['catalog']);
   assert.deepEqual(result.sources, {});
   assert.deepEqual(original, before);
+});
+
+test('repeated build stages reuse presentation work while retaining current metadata and changed markup/styles', t => {
+  const parses = t.mock.method(postcss, 'parse');
+  const optimizer = createArtifactOptimizer();
+  const input = artifact();
+  const expected = optimizer.artifact(input);
+  const later = structuredClone(input);
+  later.variants.grid.sourceIds = ['updated'];
+  const result = optimizer.artifact(later);
+  optimizer.module(later, () => 'shared-css');
+  assert.equal(parses.mock.callCount(), 1, 'identical presentation is analyzed once across variants and stages');
+  assert.equal(result.variants.grid.html, expected.variants.grid.html);
+  assert.deepEqual(result.variants.grid.sourceIds, ['updated']);
+  assert.deepEqual(result.variants.list.sourceIds, ['catalog']);
+  later.variants.grid.html += '<aside data-sk-node="new">New content</aside>';
+  assert.match(optimizer.artifact(later).variants.grid.html, /<aside>New content<\/aside>/);
+  later.variants.grid.css = '[data-sk-node] { width: 20px }';
+  const changed = optimizer.artifact(later).variants.grid;
+  assert.match(changed.html, /data-sk-node="new"/);
+  assert.match(changed.css, /width:20px/);
+  assert.deepEqual(optimizer.artifact(input), expected);
 });
 
 test('production markers remain when CSS selectors or selector conditions depend on them', () => {

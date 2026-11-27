@@ -1,5 +1,5 @@
 import { nodeName } from './ast.js';
-import { renderAdapter, renderComponent } from './component-render.js';
+import { renderComponent } from './component-render.js';
 import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
@@ -106,10 +106,7 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression') {
     if (node.children.length) props.children = { [slotValue]: { nodes: node.children, context: ctx, framework: 'jsx' } satisfies SourceSlot };
     this.record('component', tag, 'Expand source component', ctx, node);
-    const adapter = await renderAdapter(this, tag, props, ctx, node);
-    if (adapter !== undefined) return adapter;
-    const imported = await this.componentReference(tag, ctx);
-    const preset = await renderComponent(this, tag, imported, props, { nodes: node.children, context: ctx, framework: 'jsx' }, node);
+    const preset = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'jsx' }, node);
     if (preset !== undefined) return preset;
     return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   }

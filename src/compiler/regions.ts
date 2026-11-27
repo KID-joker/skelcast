@@ -13,8 +13,14 @@ import{vueHelper}from'./vue-render.js';
 export class VueRegion {
  result:string|undefined;
  private suspended=0;
+ // Template syntax is immutable; dynamic tag copies can reuse cached children.
+ private containment=new WeakMap<TemplateChildNode,boolean>();
  constructor(readonly file:string,readonly node:ElementNode){}
- private contains(node:TemplateChildNode):boolean{return node===this.node||node.type===1&&node.children.some(child=>this.contains(child));}
+ private contains(node:TemplateChildNode):boolean{
+  const cached=this.containment.get(node);if(cached!==undefined)return cached;
+  const contains=node===this.node||node.type===1&&node.children.some(child=>this.contains(child));
+  this.containment.set(node,contains);return contains;
+ }
  carries(slot:SourceSlot,seen=new Set<SourceSlot>()):boolean{
   if(seen.has(slot)||seen.size>32)return false;const next=new Set(seen).add(slot);
   if(slot.context.module.file===this.file)return slot.framework==='vue'&&slot.nodes.some(node=>this.contains(node));

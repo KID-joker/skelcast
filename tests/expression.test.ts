@@ -1,9 +1,38 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateString, UNKNOWN } from '../src/compiler/expression.js';
+import { evaluateString, SOURCE_PROJECTION, UNKNOWN } from '../src/compiler/expression.js';
 import { initialString } from '../src/compiler/initial-state.js';
 
 const evaluate = (source: string, bindings: Record<string, unknown> = {}) => evaluateString(source, { code: '', env: {}, bindings });
+
+test('finite method chains read each receiver once without sharing values across evaluations or callbacks', () => {
+  let reads = 0;
+  let items = [1, 2, 3];
+  const env = Object.defineProperty({}, 'items', { get() { reads++; return items; }, enumerable: true });
+  const context = { code: '', env, bindings: {}, expressions: new Map() };
+  const chain = 'items' + '.slice(0)'.repeat(12);
+  assert.deepEqual(evaluateString(chain, context), items);
+  assert.equal(reads, 1);
+  items = [4, 5];
+  assert.deepEqual(evaluateString(chain, context), items);
+  assert.equal(reads, 2);
+  assert.deepEqual(evaluateString('items.map(item => [item].slice(0).map(n => n + 1))', { ...context, env: { items } }), [[5], [6]]);
+  assert.equal(evaluateString('text.trim().trim()', { ...context, env: { text: ' value ' } }), 'value');
+  assert.deepEqual(items, [4, 5]);
+});
+
+test('method receiver reuse retains member bindings and source capabilities before finite method dispatch', () => {
+  let reads = 0;
+  const env = Object.defineProperty({}, 'items', { get() { reads++; return [1, 2]; }, enumerable: true });
+  const context = { code: '', env, bindings: { 'items.slice': { [SOURCE_PROJECTION]: 'bound' } } };
+  assert.equal(evaluateString('items.slice(0)', context), 'bound');
+  assert.equal(reads, 0);
+  assert.equal(evaluateString('source.slice()', {
+    code: '', env: { source: { slice: { [SOURCE_PROJECTION]: 'source' } } }, bindings: {},
+  }), 'source');
+  assert.deepEqual(evaluateString('items.slice(0)', { ...context, bindings: { 'items.slice': UNKNOWN } }), [1, 2]);
+  assert.equal(reads, 1);
+});
 
 test('initial presentation expressions reuse syntax while retaining current facts and explicit bindings', () => {
   const ctx = { code: '', env: { size: UNKNOWN }, bindings: {}, initialValues: { size: 20 }, expressions: new Map() };

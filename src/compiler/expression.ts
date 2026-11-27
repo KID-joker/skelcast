@@ -77,6 +77,10 @@ function inferredObject(name: string, ctx: ExpressionContext): Value {
 
 // This is an abstract, bounded interpreter. No eval, Function, imports or business calls.
 export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext, depth = 0): Value {
+  return evaluateNode(node, ctx, depth);
+}
+
+function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, depth: number, readObject?: (node: t.Node, depth: number) => Value): Value {
   if (!ctx.budget) ctx = { ...ctx, budget: { remaining: 10000 } };
   if (--ctx.budget!.remaining < 0) return UNKNOWN;
   if (!node || depth > 40) return UNKNOWN;
@@ -134,7 +138,7 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
       return result;
     }
     case 'MemberExpression': case 'OptionalMemberExpression': {
-      const obj = ev(node.object);
+      const obj = readObject ? readObject(node.object, depth + 1) : ev(node.object);
       const key = node.computed ? ev(node.property) : nodeName(node.property);
       if (key === UNKNOWN || !safeKey(String(key))) return UNKNOWN;
       if (nodeName(node.property) === 'value' && obj !== UNKNOWN && (obj === null || typeof obj !== 'object')) return obj;
@@ -207,7 +211,13 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
       return UNKNOWN;
     }
     case 'CallExpression': {
-      const accessor=ev(node.callee);
+      // A method lookup and its finite implementation read the same receiver.
+      // Share only this call's receiver, retaining the caller's bindings and depth.
+      let receiver: { value: Value } | undefined;
+      const readReceiver = (object: t.Node, atDepth: number) =>
+        (receiver ??= { value: evaluate(object, ctx, atDepth) }).value;
+      const accessor=evaluateNode(node.callee,ctx,depth+1,readReceiver);
+      const object = () => node.callee.type === 'MemberExpression' ? readReceiver(node.callee.object, depth + 1) : UNKNOWN;
       const name=accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_VUE)?(accessor as{[SOURCE_VUE]:string})[SOURCE_VUE]:nodeName(node.callee);
       if(accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_COPY)){
         const recipe=(accessor as {[SOURCE_COPY]:CopyRecipe})[SOURCE_COPY];
@@ -254,7 +264,7 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
         }
       }
       if(node.callee.type==='MemberExpression'&&!node.callee.computed&&['slice','concat','toReversed','reverse'].includes(member??'')){
-        const list=ev(node.callee.object);
+        const list=object();
         if(!Array.isArray(list)||list.length>256||node.arguments.some(a=>a.type==='SpreadElement'))return UNKNOWN;
         const args=node.arguments.map(ev);
         if(args.includes(UNKNOWN))return UNKNOWN;
@@ -268,7 +278,7 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
         const result=[...list];for(const value of args){result.push(...Array.isArray(value)?value:[value]);if(result.length>256)return UNKNOWN;}return result;
       }
       if (node.callee.type === 'MemberExpression' && !node.callee.computed && nodeName(node.callee.property) === 'trim' && !node.arguments.length) {
-        const value = ev(node.callee.object);
+        const value = object();
         return typeof value === 'string' ? value.trim() : UNKNOWN;
       }
       if (node.callee.type === 'MemberExpression' && nodeName(node.callee.object) === 'Object' && !node.callee.computed && ['keys', 'entries', 'values'].includes(member ?? '') && !Object.hasOwn(ctx.env, 'Object') && !Object.hasOwn(ctx.bindings, 'Object')) {
@@ -276,7 +286,7 @@ export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext
         return value && value !== UNKNOWN && typeof value === 'object' ? nodeName(node.callee.property) === 'entries' ? Object.entries(value) : nodeName(node.callee.property) === 'values' ? Object.values(value) : Object.keys(value) : UNKNOWN;
       }
       if (node.callee.type === 'MemberExpression' && !node.callee.computed && ['map', 'find'].includes(member ?? '')) {
-        const list = ev(node.callee.object), fn = node.arguments[0];
+        const list = object(), fn = node.arguments[0];
         if (!Array.isArray(list) || list.length > 256 || fn?.type !== 'ArrowFunctionExpression' || fn.async || node.arguments.length !== 1) return UNKNOWN;
         const result = [];
         for (let index = 0; index < list.length; index++) {

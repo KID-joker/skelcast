@@ -1,5 +1,5 @@
 import type { Diagnostic } from '../types.js';
-import { renderAdapter, renderComponent } from './component-render.js';
+import { renderComponent } from './component-render.js';
 import { UNKNOWN,SOURCE_INITIAL, bindPattern, evaluateString, sourceCapacity, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry, styleString } from './html.js';
 import { type RenderContext, type SourceSlot } from './context.js';
@@ -276,10 +276,8 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     }
     if (defaults.length){const own=directive(node,['slot']),name=slotName(this,own,ctx,node);if(name!==undefined)slots[name]={nodes:defaults,context:ctx,framework:'vue',parameter:slotParameter(this,own,ctx,node)};}
     props.__skSlots = slots;
-    const adapter = await renderAdapter(this, tag, props, ctx, node);
-    if (adapter !== undefined) return adapter;
   }
-  const presentation = await renderComponent(this, tag, imported, props, { nodes: node.children, context: ctx, framework: 'vue' }, node);
+  const presentation = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'vue' }, node, imported);
   if (presentation !== undefined) return presentation;
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   if (nonVisual.has(tag)) return '';
