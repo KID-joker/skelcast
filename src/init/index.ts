@@ -7,7 +7,8 @@ import { prepareProjectSync, projectFromConfig } from '../generator.js';
 import { atomicWrite, commitOutputs, withProjectLock } from '../storage.js';
 import type { SkeletonConfig } from '../types.js';
 import { stylesheetImports } from '../compiler/stylesheet-source.js';
-import { applyEdits, startOf, endOf, nodeName, objectConfig, parseCode, type Ast } from './ast.js';
+import { applyEdits, objectConfig } from './ast.js';
+import { startOf, endOf, nodeName, parseSource, type Ast } from '../compiler/ast.js';
 import { analyzeReact } from './react.js';
 import { inferredRoute, isPageFile, relativePath, resolveSource, scanProject } from './scan.js';
 import { analyzeVue } from './vue.js';
@@ -22,7 +23,7 @@ function hasUnknown(value: unknown): boolean {
   return value === UNKNOWN || value != null && typeof value === 'object' && Object.values(value).some(hasUnknown);
 }
 function literalConfig(code: string): { config: SkeletonConfig; object: t.ObjectExpression; ast: t.File } {
-  const ast = parseCode(code), object = objectConfig(ast);
+  const ast = parseSource(code), object = objectConfig(ast);
   if (!object) throw new Error('Existing SkelCast config is not a static object; preserve it and integrate targets manually');
   const config = evaluate(object, { code, env: {}, bindings: {} }) as SkeletonConfig;
   if (hasUnknown(config) || !Array.isArray(config.targets)) throw new Error('Existing SkelCast config contains dynamic values; init will not overwrite it');

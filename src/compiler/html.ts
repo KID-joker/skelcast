@@ -18,4 +18,3 @@ export function classString(value: unknown): string {
   if (typeof value === 'object') return Object.entries(value).filter(([, v]) => v !== UNKNOWN && !!v).map(([k]) => k).join(' ');
   return '';
 }
-export { walk as visit } from './ast.js';

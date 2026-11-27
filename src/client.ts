@@ -47,8 +47,8 @@ function writeURL(target: string | null, variant?: string, comparison: Partial<P
   history.replaceState(history.state, '', url);
   setPreview({ target, variant, comparison: next.comparison, opacity: next.opacity, comparisonView: next.comparisonView });
 }
-async function request(endpoint: string, body: unknown) {
-  const response = await fetch(`/__skelcast/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SkelCast-Dev': '1' }, body: JSON.stringify(body) });
+async function requestSync() {
+  const response = await fetch('/__skelcast/sync', { method: 'POST', headers: { 'X-SkelCast-Dev': '1' } });
   const json = await response.json();
   if (!response.ok) throw new Error(json.error ?? 'Operation failed');
   return json;
@@ -126,7 +126,7 @@ function render() {
 }
 async function updateSkeletons() {
   busy = true; note = ''; render();
-  try { await request('sync', {}); await refresh(); }
+  try { await requestSync(); await refresh(); }
   catch { note = 'Skeleton update failed. Ask your coding agent to run skelcast sync.'; }
   finally { busy = false; render(); }
 }

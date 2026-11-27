@@ -1,5 +1,6 @@
 import type * as t from '@babel/types';
-import { applyEdits, boundaryImports, createConditionAnalyzer, endOf, nodeName, startOf, importOffset, isFunction, isLoader, loadingName, parseCode, slice, uniqueName, unwrap, walk, type Ast } from './ast.js';
+import { applyEdits, boundaryImports, createConditionAnalyzer, importOffset, isLoader, loadingName, slice, uniqueName } from './ast.js';
+import { declarationBindings, endOf, nodeName, startOf, isRenderFunction, parseSource, unwrapExpression, walk, type Ast } from '../compiler/ast.js';
 import { type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
 
@@ -9,23 +10,18 @@ export function reactComponents(ast: t.File): ComponentInfo[] {
   let anonymous: ComponentInfo['node'] | undefined;
   for (const s of ast.program.body) {
     const d = s.type === 'ExportNamedDeclaration' || s.type === 'ExportDefaultDeclaration' ? s.declaration ?? s : s;
-    if (d.type === 'FunctionDeclaration' && d.id) functions.set(d.id.name, d);
-    if (d.type === 'VariableDeclaration') for (const v of d.declarations) {
-      let fn = unwrap(v.init);
-      if (fn?.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(fn.callee) ?? '')) fn = fn.arguments[0];
-      if (v.id.type === 'Identifier' && isFunction(fn)) functions.set(v.id.name, fn);
-    }
+    const bindings = [...declarationBindings(d)];
+    for (const [name, fn] of bindings) if (isRenderFunction(fn)) functions.set(name, fn);
     if (s.type === 'ExportDefaultDeclaration') {
-      const value = unwrap(s.declaration);
+      const value = unwrapExpression(s.declaration);
       if (value?.type === 'Identifier') exports.set(value.name, 'default');
-      else if (isFunction(value)) {
+      else if (isRenderFunction(value)) {
         if (value.type !== 'ArrowFunctionExpression' && value.id) { functions.set(value.id.name, value); exports.set(value.id.name, 'default'); }
         else anonymous = value;
       }
     }
     if (s.type === 'ExportNamedDeclaration') {
-      if (d.type === 'FunctionDeclaration' && d.id) exports.set(d.id.name, d.id.name);
-      if (d.type === 'VariableDeclaration') for (const v of d.declarations) if (v.id.type === 'Identifier') exports.set(v.id.name, v.id.name);
+      for (const [name] of bindings) exports.set(name, name);
       for (const spec of s.specifiers ?? []) if (spec.type === 'ExportSpecifier') exports.set(nodeName(spec.local)!, nodeName(spec.exported)!);
     }
   }
@@ -33,7 +29,7 @@ export function reactComponents(ast: t.File): ComponentInfo[] {
   if (anonymous) result.push({ name: 'default', exported: 'default', node: anonymous });
   return result.filter(({ node }) => {
     let jsx = false;
-    walk(node.body, n => { if (n !== node.body && isFunction(n)) return false; if (['JSXElement', 'JSXFragment'].includes(n.type)) jsx = true; });
+    walk(node.body, n => { if (n !== node.body && isRenderFunction(n)) return false; if (['JSXElement', 'JSXFragment'].includes(n.type)) jsx = true; });
     return jsx;
   });
 }
@@ -42,7 +38,7 @@ interface Region { node: Ast; pending: string; content: string; bindings: Record
 export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   const { sameCondition, pureCondition, pendingCondition } = createConditionAnalyzer();
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
-  const code = ctx.source, ast = ctx.ast ?? parseCode(code, ctx.file);
+  const code = ctx.source, ast = ctx.ast ?? parseSource(code, ctx.file);
   const components = reactComponents(ast);
   const boundaryNames = boundaryImports(ast, 'react');
   const boundary = [...boundaryNames][0] ?? uniqueName(code, '__SkelCastBoundary');
@@ -61,7 +57,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
     const knownFlags = new Set<string>();
     const dataFlags = new Map<string, string>();
     walk(body, n => {
-      if (n !== body && isFunction(n)) return false;
+      if (n !== body && isRenderFunction(n)) return false;
       if (n.type === 'VariableDeclarator') {
         if (n.id.type === 'ObjectPattern') {
           const properties = n.id.properties.filter(p => p.type === 'ObjectProperty');
@@ -82,7 +78,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
     if (body.type === 'BlockStatement') for (const s of body.body) {
       if (s.type !== 'IfStatement' || s.alternate || !pendingCondition(slice(code, s.test), knownFlags)) continue;
       const ret = s.consequent.type === 'ReturnStatement' ? s.consequent : s.consequent.type === 'BlockStatement' && s.consequent.body.length === 1 ? s.consequent.body[0] : undefined;
-      if (ret?.type === 'ReturnStatement' && ret.argument && isBoundary(unwrap(ret.argument)!)) continue;
+      if (ret?.type === 'ReturnStatement' && ret.argument && isBoundary(unwrapExpression(ret.argument)!)) continue;
       if (ret?.type === 'ReturnStatement' && isLoader(ret.argument, code)) early.push({ guard: s, returned: ret });
     }
     if (early.length === 1) {
@@ -90,7 +86,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
       regions.push({ node: root, pending, content: slice(code, root), bindings: { [pending]: false }, early });
     } else if (early.length > 1) result.diagnostics.push({ code: 'MULTIPLE_EARLY_LOADERS', file: ctx.file, message: `Multiple early loading guards in ${component.name}; preserved for manual review` });
     if (!early.length) walk(root, (node, ancestors) => {
-      if (node !== root && isFunction(node)) return false;
+      if (node !== root && isRenderFunction(node)) return false;
       if (node.type === 'ConditionalExpression' && pendingCondition(slice(code, node.test), knownFlags) && !managed(ancestors, slice(code, node.test)) && !managed(ancestors, `!(${slice(code, node.test)})`)) {
         const a = isLoader(node.consequent, code), b = isLoader(node.alternate, code);
         if (a !== b) {
@@ -157,7 +153,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   if (result.targets.length) {
     const offset = importOffset(ast);
     result.edits.push({ start: offset, end: offset, text: `\n${boundaryNames.size ? '' : `import { LoadingBoundary as ${boundary} } from 'skelcast/react';\n`}${imports.join('\n')}\n` });
-    parseCode(applyEdits(code, result.edits), ctx.file);
+    parseSource(applyEdits(code, result.edits), ctx.file);
   }
   return result;
 }

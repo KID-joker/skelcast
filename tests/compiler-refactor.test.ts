@@ -11,6 +11,7 @@ import { parseExpression } from '@babel/parser';
 import { renderJSX } from '../src/compiler/react.js';
 import type { RenderContext } from '../src/compiler/context.js';
 import type { RenderHost } from '../src/compiler/render-host.js';
+import { analyzeReact } from '../src/init/react.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-refactor-'));
@@ -22,6 +23,31 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('shared declaration parsing preserves init selection, export aliases and compiler wrapper support', async () => {
+  const cases = [
+    { source: 'export default () => <main>Ready</main>;', targets: 1, exported: 'default' },
+    { source: 'export default function Page(){return <main>Ready</main>}', targets: 1, exported: 'default' },
+    { source: 'const Page = memo(() => <main>Ready</main>); export {Page as Dashboard};', targets: 1, exported: 'Dashboard' },
+    { source: 'const Page = forwardRef((props,ref) => <main>Ready</main>); export default Page;', targets: 1, exported: 'default' },
+    // Init only edits its existing set of supported component declarations.
+    { source: 'export default memo(() => <main>Ready</main>);', targets: 0, exported: 'default' },
+    { source: 'export default forwardRef((props,ref) => <main>Ready</main>);', targets: 0, exported: 'default' },
+  ];
+  await fixture({}, async root => {
+    for (const entry of cases) {
+      const source = `import {memo,forwardRef} from 'react';${entry.source}`;
+      const analysis = analyzeReact({ file: 'View.tsx', source, page: true, routes: ['/'], existing: { targets: [] }, usedIds: new Set() });
+      assert.equal(analysis.targets.length, entry.targets, entry.source);
+      assert.deepEqual(analysis.diagnostics, []);
+      if (entry.targets) assert.equal(analysis.targets[0].export, entry.exported);
+      await writeFile(path.join(root, 'View.tsx'), source);
+      const { artifact } = await compileTarget(root, { id: 'declarations', source: 'View.tsx', export: entry.exported });
+      assert.match(artifact.variants.default.html, /<main\b/);
+      assert.deepEqual(artifact.diagnostics, []);
+    }
+  });
+});
 
 test('React branch inspection reuses syntax while preserving current branch choices and diagnostics', async () => {
   const code = 'flag ? <section>{items.map(item => <p>{item}</p>)}</section> : <aside/>';

@@ -1,5 +1,4 @@
-import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, unwrapExpression } from './ast.js';
+import { componentValue, declarationBindings, isRenderFunction, nodeName, unwrapExpression, walk } from './ast.js';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import type { Diagnostic, SkeletonConfig, SkeletonHints } from '../types.js';
@@ -8,7 +7,6 @@ import { digest, loadStyle, bindStyleVariables } from './styles.js';
 import { componentName, declarationComponents } from './components.js';
 import type { ComponentReference } from './presets/types.js';
 import { ambiguousExport, type ModuleInfo, type ResolvedComponent } from './context.js';
-import { visit } from './html.js';
 import { resolveStylesheet, stylesheetImports, type StyleSource } from './stylesheet-source.js';
 import { parse as parseDOM } from '@vue/compiler-dom';
 import { StaticValues } from './static-values.js';
@@ -192,7 +190,7 @@ export class SourceModules {
     try {
       const ast = this.files.ast(file, code, jsx);
       const requests: string[] = [];
-      visit(ast, n => { if ((n.type === 'ImportDeclaration' || n.type === 'ExportNamedDeclaration' || n.type === 'ExportAllDeclaration') && n.source) requests.push(n.source.value); });
+      walk(ast, n => { if ((n.type === 'ImportDeclaration' || n.type === 'ExportNamedDeclaration' || n.type === 'ExportAllDeclaration') && n.source) requests.push(n.source.value); });
       for (const request of requests) { const dep = await this.resolve(file, request); if (dep) await this.scan(dep); }
     } catch { /* unsupported dependency is still fingerprinted */ }
   }
@@ -217,20 +215,17 @@ export class SourceModules {
     const ec = { code, env: mod.env, bindings: this.hints.bindings ?? {} };
     for (const statement of ast.program.body) {
       const decl = statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportNamedDeclaration' ? statement.declaration ?? statement : statement;
-      if (decl.type === 'FunctionDeclaration' && decl.id) { mod.functions.set(decl.id.name, decl); mod.env[decl.id.name] = UNKNOWN; }
+      const bindings = [...declarationBindings(decl)];
+      for (const [name, value] of bindings) if (value && (isRenderFunction(value) || ['CallExpression', 'ObjectExpression', 'Identifier'].includes(value.type))) mod.functions.set(name, value);
+      if (decl.type === 'FunctionDeclaration' && decl.id) mod.env[decl.id.name] = UNKNOWN;
       if (decl.type === 'VariableDeclaration') for (const d of decl.declarations) {
         if (descriptor?.scriptSetup) mod.setupDeclarations.push(d);
-        let init: t.Node | null | undefined = unwrapExpression(d.init);
-        if (init?.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(init.callee) ?? '')) init = init.arguments[0];
-        if (d.id.type === 'Identifier' && init && (isRenderFunction(init) || init.type === 'CallExpression' || init.type === 'ObjectExpression' || init.type === 'Identifier')) mod.functions.set(d.id.name, init);
-        if (!isRenderFunction(init)) bindPattern(d.id, evaluate(d.init, ec), mod.env);
+        if (!isRenderFunction(componentValue(d.init))) bindPattern(d.id, evaluate(d.init, ec), mod.env);
       }
       if (statement.type === 'ExportDefaultDeclaration') {
         mod.exports.set('default', 'default');
-        const d = unwrapExpression(statement.declaration)!;
-        if (d.type === 'Identifier') mod.functions.set('default', d);
-        else if (d.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(d.callee) ?? '')) { if (d.arguments[0]) mod.functions.set('default', d.arguments[0]); }
-        else mod.functions.set('default', d);
+        const value = componentValue(statement.declaration);
+        if (value) mod.functions.set('default', value);
       }
       if (statement.type === 'ImportDeclaration') {
         for (const spec of statement.specifiers) mod.env[spec.local.name] = classHelpers.has(spec.local.name) ? CLASS_HELPER : UNKNOWN;
@@ -253,8 +248,7 @@ export class SourceModules {
         }
       }
       if (statement.type === 'ExportNamedDeclaration' && statement.exportKind !== 'type') {
-        if (decl.type === 'FunctionDeclaration' && decl.id) mod.exports.set(decl.id.name, decl.id.name);
-        if (decl.type === 'VariableDeclaration') for (const item of decl.declarations) if (item.id.type === 'Identifier') mod.exports.set(item.id.name, item.id.name);
+        for (const [name] of bindings) mod.exports.set(name, name);
         const request = statement.source?.value;
         const resolved = request ? await this.resolve(file, request) : undefined;
         for (const spec of statement.specifiers ?? []) {
@@ -267,7 +261,7 @@ export class SourceModules {
       if (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') mod.exportAll.push({ file: await this.resolve(file, statement.source.value), request: statement.source.value, exported: '*' });
     }
     if (descriptor) {
-      visit(ast, node => {
+      walk(ast, node => {
         if (node.type !== 'ObjectProperty' || nodeName(node.key) !== 'components' || node.value.type !== 'ObjectExpression') return;
         for (const prop of node.value.properties) if (prop.type === 'ObjectProperty' && mod.boundaries.has(nodeName(prop.value) ?? '')) {
           const name = nodeName(prop.key);
@@ -285,7 +279,7 @@ export class SourceModules {
           if (member.type === 'TSPropertySignature' && !member.computed && typeof key === 'string') mod.propDefaults[key] = member.typeAnnotation?.typeAnnotation?.type === 'TSBooleanKeyword' ? false : undefined;
         }
       };
-      visit(ast, n => {
+      walk(ast, n => {
         if (n.type === 'CallExpression' && nodeName(n.callee) === 'defineOptions' && n.arguments[0]?.type === 'ObjectExpression') {
           const value = evaluate(n.arguments[0], ec);
           if (value && typeof value === 'object' && 'inheritAttrs' in value && value.inheritAttrs === false) mod.inheritAttrs = false;
@@ -296,7 +290,7 @@ export class SourceModules {
           if (runtime?.type === 'ArrayExpression') for (const item of runtime.elements) if (item?.type === 'StringLiteral') mod.propDefaults[item.value] = undefined;
         }
       });
-      visit(ast, n => {
+      walk(ast, n => {
         if (n.type !== 'VariableDeclarator' || n.id.type !== 'Identifier') return;
         const init = n.init;
         if (init?.type !== 'CallExpression') return;

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { applyEdits, startOf, endOf, nodeName, importOffset, parseCode, uniqueName, walk, type Ast } from './ast.js';
+import { applyEdits, importOffset, uniqueName } from './ast.js';
+import { startOf, endOf, nodeName, parseSource, walk, type Ast } from '../compiler/ast.js';
 import type { InitChange, InitDiagnostic } from './types.js';
 
 export async function integrateVite(root: string, manifest: { scripts?: Record<string, unknown>; dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> }): Promise<{ changes: InitChange[]; diagnostics: InitDiagnostic[]; configRoot?: string; aliases?: Record<string, string> }> {
@@ -23,7 +24,7 @@ export async function integrateVite(root: string, manifest: { scripts?: Record<s
     else diagnostics.push({ code: 'BUNDLER_UNSUPPORTED', file: 'package.json', message: 'No supported Vite config found; framework/bundler adapter required' });
     return { changes, diagnostics };
   }
-  const ast = parseCode(code, file);
+  const ast = parseSource(code, file);
   const declaration = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration')?.declaration;
   if (!declaration) return { changes, diagnostics: [{ code: 'VITE_CONFIG_UNSUPPORTED', file, message: 'Vite config has no ESM default export' }] };
   let configRoot = root;
@@ -60,7 +61,7 @@ export async function integrateVite(root: string, manifest: { scripts?: Record<s
     { start: startOf(declaration), end: startOf(declaration), text: `${helper}(` },
     { start: endOf(declaration), end: endOf(declaration), text: declaration.type === 'FunctionDeclaration' ? ');' : ')' },
   ]);
-  parseCode(changed);
+  parseSource(changed);
   changes.push({ file, before: code, after: changed, reason: 'Register SkelCast while preserving the existing Vite config' });
   return { changes, diagnostics, configRoot, aliases };
 }

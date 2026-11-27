@@ -74,5 +74,18 @@ test('state reads never reload the app or publish lock bookkeeping, including cu
     expect(updates).toEqual([]);
     await writeFile(path.join(root,'View.tsx'),`export default()=> <article>Updated data</article>`);
     await expect.poll(()=>updates.some(value=>JSON.stringify(value).includes('skelcast:update'))).toBe(true);
+    const syncRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/__skelcast/sync');
+    await page.getByRole('button', { name: 'Update skeletons', exact: true }).click();
+    const request = await syncRequest;
+    expect(request.postData()).toBeNull();
+    expect(request.headers()['x-skelcast-dev']).toBe('1');
+    await expect(page.getByRole('status', { name: 'Skeleton status' })).toHaveText('Up to date');
+    const endpoint = `http://127.0.0.1:${address.port}/__skelcast/sync`;
+    const legacy = await page.request.post(endpoint, { headers: { 'X-SkelCast-Dev': '1' }, data: {} });
+    expect(legacy.ok()).toBe(true);
+    const oversized = await page.request.post(endpoint, { headers: { 'X-SkelCast-Dev': '1' }, data: 'x'.repeat(16385) });
+    expect(oversized.status()).toBe(400);
+    expect(await oversized.json()).toEqual({ error: 'Request too large' });
+    expect(await page.evaluate(()=>(window as unknown as {documentIdentity:string}).documentIdentity)).toBe(identity);
   } finally { await server?.close();await rm(root,{recursive:true,force:true}); }
 });

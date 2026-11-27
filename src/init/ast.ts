@@ -1,13 +1,9 @@
 import { parseExpression } from '@babel/parser';
 import type * as t from '@babel/types';
-import { endOf, isRenderFunction, nodeName, parseSource, startOf, unwrapExpression as unwrap, walk } from '../compiler/ast.js';
+import { endOf, nodeName, startOf, unwrapExpression, walk } from '../compiler/ast.js';
 
-export { endOf, nodeName, startOf, unwrap, walk };
-export type Ast = t.Node;
 export interface Edit { start: number; end: number; text: string }
-export function parseCode(code: string, filename?: string, jsx?: boolean) { return parseSource(code, filename, jsx); }
 export const slice = (code: string, node: t.Node) => code.slice(startOf(node), endOf(node));
-export const isFunction = isRenderFunction;
 export function applyEdits(code: string, edits: Edit[]): string {
   for (const e of [...edits].sort((a, b) => b.start - a.start || b.end - a.end)) code = code.slice(0, e.start) + e.text + code.slice(e.end);
   return code;
@@ -34,8 +30,8 @@ export function boundaryImports(ast: t.File, framework: 'react' | 'vue'): Set<st
 }
 export function objectConfig(ast: t.File): t.ObjectExpression | undefined {
   const declaration = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration');
-  let value = unwrap(declaration?.declaration);
-  if (value?.type === 'CallExpression' && value.arguments.length === 1) value = unwrap(value.arguments[0]);
+  let value = unwrapExpression(declaration?.declaration);
+  if (value?.type === 'CallExpression' && value.arguments.length === 1) value = unwrapExpression(value.arguments[0]);
   return value?.type === 'ObjectExpression' ? value : undefined;
 }
 export const loadingName = (s: string) => /^(?:is)?(?:loading|pending|fetching|initialloading)$|(?:Loading|Pending|Fetching)$/.test(s);

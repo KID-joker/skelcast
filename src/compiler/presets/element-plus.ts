@@ -1,3 +1,4 @@
+import { elementTable } from './element-table.js';
 import type { ComponentPreset, ComponentRole } from './types.js';
 import { elementRow, elementColumn } from './element-grid.js';
 import { elementCard, elementStatistic, elementScrollbar, elementTimeline } from './element-geometry.js';
@@ -11,7 +12,6 @@ import {
   input,
   calendar,
   column,
-  table,
   libraryExport,
   readonly,
   dimension,
@@ -122,7 +122,7 @@ export const elementPlusPreset: ComponentPreset = {
         children: '',
       };
     if (n === 'card') return elementCard(props, policy.slots, text);
-    if (n === 'table') return table(props, policy.columns.resolve(children), text, hints,true,policy.mask);
+    if (n === 'table') return elementTable(props, policy.columns.resolve(children), text, hints, policy.mask);
     if (n === 'tablecolumn') return column(props, children, policy.columns);
     if (n === 'image' || n === 'avatar') return imagePlaceholder(props.size, n === 'avatar' ? '40px' : '160px', n === 'avatar' ? '40px' : '120px');
     // Countdown delegates its public layout and title/prefix/suffix slots to

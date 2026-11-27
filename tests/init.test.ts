@@ -5,7 +5,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { initProject } from '../src/init/index.js';
 import { checkProject, loadProject, readArtifact } from '../src/generator.js';
-import { createConditionAnalyzer, parseCode } from '../src/init/ast.js';
+import { createConditionAnalyzer } from '../src/init/ast.js';
+import { parseSource } from '../src/compiler/ast.js';
 import { matchesRoute, selectPageTarget, withSkelCast } from '../src/vite.js';
 import { scanProject } from '../src/init/scan.js';
 import { analyzeReact } from '../src/init/react.js';
@@ -88,7 +89,7 @@ test('init dry-run discovers React pages/regions without executing code or writi
     assert.equal(await readFile(path.join(root, 'src/App.tsx'), 'utf8'), code);
     assert.ok(!(await readdir(root)).includes('.skelcast'));
     assert.equal((globalThis as any).__initBusinessExecuted, undefined);
-    parseCode(report.changes.find(c => c.file === 'src/App.tsx')!.after);
+    parseSource(report.changes.find(c => c.file === 'src/App.tsx')!.after);
   });
 });
 test('init integrates React regions, extracts only their content, backs up originals and is idempotent', async () => {

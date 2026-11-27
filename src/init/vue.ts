@@ -1,6 +1,7 @@
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import { parse as parseDOM, type ElementNode, type TemplateChildNode, type DirectiveNode } from '@vue/compiler-dom';
-import { applyEdits, boundaryImports, createConditionAnalyzer, startOf, nodeName, importOffset, loadingName, objectConfig, parseCode, uniqueName, walk, type Edit } from './ast.js';
+import { applyEdits, boundaryImports, createConditionAnalyzer, importOffset, loadingName, objectConfig, uniqueName, type Edit } from './ast.js';
+import { startOf, nodeName, parseSource, walk } from '../compiler/ast.js';
 import { type AnalysisContext, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
 
@@ -19,7 +20,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const scripts = [descriptor.script, descriptor.scriptSetup].filter((script): script is NonNullable<typeof descriptor.script> => script != null);
   // A single script has the same local offsets as the scan AST. With both
   // script forms, edits need block-local offsets rather than the combined AST.
-  const scriptAsts = new Map(scripts.map(script => [script, scripts.length === 1 && ctx.ast ? ctx.ast : parseCode(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx')]));
+  const scriptAsts = new Map(scripts.map(script => [script, scripts.length === 1 && ctx.ast ? ctx.ast : parseSource(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx')]));
   const scriptAst = (script: NonNullable<typeof descriptor.script>) => scriptAsts.get(script)!;
   const boundaryNames = new Set<string>();
   for (const script of scripts) for (const name of boundaryImports(scriptAst(script), 'vue')) boundaryNames.add(name);

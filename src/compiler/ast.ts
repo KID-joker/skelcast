@@ -65,3 +65,18 @@ export function walk(node: t.Node | null | undefined, visitor: (node: t.Node, an
 export function isRenderFunction(node?: t.Node | null): node is RenderFunction {
   return node?.type === 'FunctionDeclaration' || node?.type === 'FunctionExpression' || node?.type === 'ArrowFunctionExpression';
 }
+
+/** Read the existing one-layer React wrapper convention without executing it. */
+export function componentValue(node: t.Node | null | undefined): t.Node | undefined {
+  const value = unwrapExpression(node);
+  return value?.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(value.callee) ?? '')
+    ? value.arguments[0] : value;
+}
+
+/** Shared declaration syntax; init and compilation retain their own acceptance rules. */
+export function* declarationBindings(node: t.Node): Generator<[string, t.Node | undefined]> {
+  if (node.type === 'FunctionDeclaration' && node.id) yield [node.id.name, node];
+  if (node.type === 'VariableDeclaration') for (const declaration of node.declarations) {
+    if (declaration.id.type === 'Identifier') yield [declaration.id.name, componentValue(declaration.init)];
+  }
+}

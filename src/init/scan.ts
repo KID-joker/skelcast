@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parse as parseSFC, type SFCParseResult } from '@vue/compiler-sfc';
 import { evaluate } from '../compiler/expression.js';
 import { resolutionCandidates } from '../compiler/resolution.js';
-import { nodeName, parseCode, unwrap, walk, type Ast } from './ast.js';
+import { nodeName, parseSource, unwrapExpression, walk, type Ast } from '../compiler/ast.js';
 import { reactComponents } from './react.js';
 import type { InitDiagnostic } from './types.js';
 
@@ -47,7 +47,7 @@ async function readAliases(root: string, diagnostics: InitDiagnostic[]): Promise
     visited.add(file);
     try {
       const code = await readFile(file, 'utf8');
-      const ast = parseCode(`export default (${code});`);
+      const ast = parseSource(`export default (${code});`);
       const declaration = ast.program.body[0];
       if (declaration.type !== 'ExportDefaultDeclaration') return;
       const value = evaluate(declaration.declaration, { code: `export default (${code});`, env: {}, bindings: {} });
@@ -99,7 +99,7 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
         script = [sfc.descriptor.script?.content, sfc.descriptor.scriptSetup?.content].filter(Boolean).join('\n');
         jsx = [sfc.descriptor.script?.lang, sfc.descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx');
       }
-      const ast = parseCode(script, file, jsx), imports = new Map<string, string>();
+      const ast = parseSource(script, file, jsx), imports = new Map<string, string>();
       for (const node of ast.program.body) if (node.type === 'ImportDeclaration') for (const spec of node.specifiers) imports.set(spec.local.name, node.source.value);
       walk(ast, node => {
         if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init?.type === 'CallExpression' && ['lazy', 'defineAsyncComponent'].includes(nodeName(node.init.callee) ?? '')) {
@@ -112,7 +112,7 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
   const routes = new Map<string, Set<string>>();
   const route = async (source: SourceFile, input: Ast, url: string) => {
     let request: string | undefined;
-    const node = unwrap(input);
+    const node = unwrapExpression(input);
     if (node?.type === 'Identifier') request = source.imports.get(node.name);
     if (node?.type === 'JSXElement') request = source.imports.get(nodeName(node.openingElement.name) ?? '');
     if (node) request ??= lazyImport(node);

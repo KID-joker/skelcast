@@ -7,7 +7,8 @@ import { SourceModules } from '../src/compiler/modules.js';
 import { compileTarget } from '../src/compiler/index.js';
 import { projectFromConfig, syncProject, checkProject } from '../src/generator.js';
 import { resolveSource } from '../src/init/scan.js';
-import { objectConfig, parseCode, unwrap } from '../src/init/ast.js';
+import { objectConfig } from '../src/init/ast.js';
+import { parseSource, unwrapExpression } from '../src/compiler/ast.js';
 
 test('init and compilation agree on directory JSX, aliases, queries and source precedence', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-resolution-'));
@@ -51,9 +52,9 @@ test('init and compilation agree on directory JSX, aliases, queries and source p
 });
 
 test('init unwraps TypeScript angle assertions when reading static configuration and expressions', () => {
-  const ast = parseCode('export default <Config>({targets: []} satisfies Config)!;', 'config.ts');
+  const ast = parseSource('export default <Config>({targets: []} satisfies Config)!;', 'config.ts');
   assert.equal(objectConfig(ast)?.type, 'ObjectExpression');
-  const statement = parseCode('const count = <number>1;', 'state.ts').program.body[0];
+  const statement = parseSource('const count = <number>1;', 'state.ts').program.body[0];
   assert.equal(statement.type, 'VariableDeclaration');
-  if (statement.type === 'VariableDeclaration') assert.equal(unwrap(statement.declarations[0].init)?.type, 'NumericLiteral');
+  if (statement.type === 'VariableDeclaration') assert.equal(unwrapExpression(statement.declarations[0].init)?.type, 'NumericLiteral');
 });

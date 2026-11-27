@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, type RenderFunction } from './ast.js';
+import { isRenderFunction, nodeName, walk, type RenderFunction } from './ast.js';
 import { loadingFrame, prepareRenderFunction } from './branches.js';
 import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
 import { realpath } from 'node:fs/promises';
@@ -17,7 +17,7 @@ import { TableColumns } from './presets/columns.js';
 import { SourceModules, type CompilerOptions } from './modules.js';
 import { vueOptions, vueOptionProps, vueRenderFunction, vueSetupFunction, prepareVueSetup, prepareVueRender, renderVueExpression } from './vue-render.js';
 import { ambiguousExport, type ModuleInfo, type RenderContext, type SourceSlot, type SourceNode } from './context.js';
-import { escapeHTML, styleString, visit } from './html.js';
+import { escapeHTML, styleString } from './html.js';
 import { renderAttributes, renderElement, renderStaticHTML } from './output.js';
 import type { ElementMarkers } from './render-host.js';
 import { renderJSX } from './react.js';
@@ -218,7 +218,7 @@ export class SourceCompiler extends SourceModules {
     const body = this.prepareFunction(fn, ctx, props);
     if (this.target.region && ctx.depth === 1) {
       let region: t.JSXElement | undefined;
-      visit(fn.body, n => {
+      walk(fn.body, n => {
         if (n.type === 'JSXElement' && mod.boundaries.has(nodeName(n.openingElement.name) ?? '') && n.openingElement.attributes.some((a: Ast) => a.type === 'JSXAttribute' && a.name.name === 'artifact' && a.value?.type === 'JSXExpressionContainer' && a.value.expression.type === 'Identifier' && a.value.expression.name === this.target.region) && n.children.some((c: Ast) => c.type !== 'JSXText' || c.value.trim())) region = n;
       });
       return region ? this.jsxNodes(region.children, ctx) : this.fallback(ctx, node, `Missing source region ${this.target.region}`);

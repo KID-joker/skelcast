@@ -206,8 +206,9 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
             if (req.method !== 'POST' || url.pathname !== '/__skelcast/sync') { res.statusCode = 404; res.end(); return; }
             const origin = req.headers.origin;
             if (req.headers['x-skelcast-dev'] !== '1' || origin && new URL(origin).host !== req.headers.host) { res.statusCode = 403; res.end('Development requests only'); return; }
-            let body = '';
-            for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Request too large'); }
+            // Sync has no payload; retain the existing size limit without storing it.
+            let length = 0;
+            for await (const chunk of req) { length += String(chunk).length; if (length > 16384) throw new Error('Request too large'); }
             // Serialize preview regeneration requests.
             const operation = mutation.then(async () => {
               await refreshProject();
