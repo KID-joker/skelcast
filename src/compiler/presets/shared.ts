@@ -1,8 +1,9 @@
 import type { ComponentReference, Presentation } from './types.js';
 import type { TableColumns } from './columns.js';
 import { escapeHTML as escape } from '../../shared.js';
+import { componentName as normalize } from '../components.js';
 
-export { escape };
+export { escape, normalize };
 export const scalar = (value: unknown, fallback = '') =>
   typeof value === 'string' || typeof value === 'number' ? String(value) : fallback;
 export const dimension = (value: unknown, fallback: string) =>
@@ -13,7 +14,6 @@ export const dimension = (value: unknown, fallback: string) =>
       ? value + 'px'
       : value
     : fallback;
-export const normalize = (name: string) => name.replace(/[-_:]/g, '').toLowerCase();
 export const readonly = (props: Record<string, unknown>) =>
   props.readonly === true || props.readOnly === true;
 

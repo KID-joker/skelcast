@@ -13,6 +13,7 @@ let selectedByUser = false;
 let picking = false;
 let note = '';
 let busy = false;
+let refreshRevision = 0;
 const host = document.createElement('div');
 host.id = 'skelcast-devtools';
 host.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483646';
@@ -54,14 +55,20 @@ async function requestSync() {
   return json;
 }
 async function refresh() {
+  const revision = ++refreshRevision;
   try {
     const response = await fetch('/__skelcast/state');
     if (!response.ok) throw new Error('Unable to read skeleton state');
-    data = await response.json();
+    const next: DevState = await response.json();
+    if (revision !== refreshRevision) return;
+    data = next;
     if (data.statuses.every(status => status.state === 'ready')) note = '';
     if (!selected) selected = listBoundaries()[0]?.id ?? document.querySelector<HTMLElement>('[data-sk-initial]')?.dataset.skInitial ?? data.artifacts[0]?.id ?? '';
     if (!replaceArtifacts(data.artifacts)) render();
-  } catch { note = 'Unable to read skeleton status. Ask your coding agent to run skelcast check.'; render(); }
+  } catch {
+    if (revision !== refreshRevision) return;
+    note = 'Unable to read skeleton status. Ask your coding agent to run skelcast check.'; render();
+  }
 }
 const esc = (value: unknown) => escapeHTML(value ?? '');
 function render() {
@@ -146,4 +153,4 @@ const unsubscribe = subscribe(render);
 readURL(); void refresh();
 const hot = (import.meta as any).hot;
 hot?.on('skelcast:update', refresh);
-hot?.dispose(() => { unsubscribe(); document.removeEventListener('click', onDocumentClick, true); window.removeEventListener('popstate', readURL); host.remove(); });
+hot?.dispose(() => { refreshRevision++; unsubscribe(); document.removeEventListener('click', onDocumentClick, true); window.removeEventListener('popstate', readURL); host.remove(); });

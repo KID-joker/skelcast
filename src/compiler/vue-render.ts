@@ -77,15 +77,38 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
   const input = componentInputs(props, ctx.module.propDefaults, 'setup');
   const values=input.values;
   if(setup.params[0])bindSlotInitial(setup.params[0],input.initial,ctx);
-  if(setup.body.type==='BlockStatement')for(const statement of setup.body.body){
-    const names=statement.type==='VariableDeclaration'?statement.declarations.flatMap(d=>patternNames(d.id)):statement.type==='FunctionDeclaration'&&statement.id?[statement.id.name]:[];
-    for(const name of names)for(const key of Object.keys(ctx.initialValues??{}))if(key===name||key.startsWith(name+'.'))delete ctx.initialValues![key];
+
+  // Index top-level syntax once; evaluation below still follows the same phases.
+  const declarations: t.VariableDeclarator[] = [];
+  const declarationByName = new Map<string, t.VariableDeclarator>();
+  const localNames = new Set<string>();
+  const renderBindings: { name?: string; fn: Ast | null | undefined }[] = [];
+  const aliases: [string, string][] = [];
+  if (setup.body.type === 'BlockStatement') for (const statement of setup.body.body) {
+    if (statement.type === 'VariableDeclaration') for (const declaration of statement.declarations) {
+      declarations.push(declaration);
+      for (const name of patternNames(declaration.id)) localNames.add(name);
+      const name = nodeName(declaration.id);
+      renderBindings.push({ name, fn: declaration.init });
+      if (declaration.id.type === 'Identifier') {
+        if (!declarationByName.has(declaration.id.name)) declarationByName.set(declaration.id.name, declaration);
+        if (declaration.init?.type === 'Identifier') aliases.push([declaration.id.name, declaration.init.name]);
+      }
+    }
+    if (statement.type === 'FunctionDeclaration') {
+      const name = statement.id?.name;
+      if (name) localNames.add(name);
+      renderBindings.push({ name, fn: statement });
+    }
+  }
+  for (const key of Object.keys(ctx.initialValues ?? {})) {
+    if (localNames.has(key.split('.')[0])) delete ctx.initialValues![key];
   }
   let render=unwrapExpression(this.prepareFunction(setup,ctx,values));
   const seen=new Set<string>();
   while(render?.type==='Identifier'&&setup.body.type==='BlockStatement'&&!seen.has(render.name)){
     const name=render.name;seen.add(name);
-    const declaration=setup.body.body.flatMap(s=>s.type==='VariableDeclaration'?s.declarations:[]).find(d=>d.id.type==='Identifier'&&d.id.name===name);
+    const declaration=declarationByName.get(name);
     if(!declaration||(declaration.start??Infinity)>=(render.start??0))return;
     render=unwrapExpression(declaration.init);
   }
@@ -101,8 +124,6 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
         if(!readonly&&!(n.callee.type==='Identifier'&&ctx.module.imports.get(n.callee.name)?.request==='vue'))for(const argument of n.arguments)if(argument.type==='Identifier'&&ctx.env[argument.name]&&typeof ctx.env[argument.name]==='object')written.add(argument.name);
       }
     });
-    const declarations=setup.body.body.flatMap(s=>s.type==='VariableDeclaration'?s.declarations:[]);
-    const aliases=declarations.flatMap((d):[string,string][]=>d.id.type==='Identifier'&&d.init?.type==='Identifier'?[[d.id.name,d.init.name]]:[]);
     propagateAliases(written,aliases);
     ctx.initialValues??={};
     for(const d of declarations){
@@ -116,12 +137,10 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
     }
     propagateInitialAliases(ctx.initialValues, aliases);
     for(const name of written)ctx.env[name]=UNKNOWN;
-    for(const statement of setup.body.body){
-      const declarations=statement.type==='VariableDeclaration'?statement.declarations.map(d=>({name:nodeName(d.id),fn:d.init})):statement.type==='FunctionDeclaration'?[{name:statement.id?.name,fn:statement}]:[];
-      for(const {name,fn}of declarations)if(name&&isRenderFunction(fn)&&!fn.async&&!fn.generator&&supportedBody(fn.body)&&!written.has(name)){
-        let visual=false;walk(fn.body,n=>{if(n.type==='JSXElement'||n.type==='JSXFragment'||n.type==='CallExpression'&&vueHelper(ctx.module,n.callee,'h'))visual=true;});
-        if(visual)ctx.env[name]={[SOURCE_RENDER]:fn};
-      }
+    for (const { name, fn } of renderBindings) {
+      if (!name || !isRenderFunction(fn) || fn.async || fn.generator || !supportedBody(fn.body) || written.has(name)) continue;
+      let visual=false;walk(fn.body,n=>{if(n.type==='JSXElement'||n.type==='JSXFragment'||n.type==='CallExpression'&&vueHelper(ctx.module,n.callee,'h'))visual=true;});
+      if(visual)ctx.env[name]={[SOURCE_RENDER]:fn};
     }
     if(partial)this.diagnose('PRESET_LIMIT','Read a direct source render shell; setup effects, lifecycle handlers and mutable state are not executed or reconstructed',ctx,setup);
   }

@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Manifest, ManifestEntry, SkeletonArtifact, SkeletonConfig, SkeletonHints, SkeletonTarget } from './types.js';
@@ -84,29 +84,7 @@ async function readManifest(project: Project): Promise<Manifest | undefined> {
 }
 export const artifactFilename = (id: string) => `${id}.mjs`;
 const targetHash = (target: SkeletonTarget, config: SkeletonConfig) => digest(JSON.stringify({ target, aliases: config.aliases, components: config.components, componentBindings: config.componentBindings, componentDeclarations: config.componentDeclarations, componentPresets: config.componentPresets, styles: config.styles }));
-/** One locked operation shares file reads, including concurrent target checks.
- * A later operation always observes files again. */
-class ProjectFiles {
-  private contents = new Map<string, Promise<{ bytes: Buffer; hash: string }>>();
-  private files = new Map<string, Promise<boolean>>();
-  read(file: string) {
-    let result = this.contents.get(file);
-    if (!result) {
-      result = readFile(file).then(bytes => ({ bytes, hash: digest(bytes) }));
-      this.contents.set(file, result);
-    }
-    return result;
-  }
-  isFile(file: string) {
-    let result = this.files.get(file);
-    if (!result) {
-      result = stat(file).then(info => info.isFile());
-      this.files.set(file, result);
-    }
-    return result;
-  }
-}
-async function entryStatus(project: Project, target: SkeletonTarget, files: ProjectFiles, entry?: ManifestEntry, version?: string): Promise<TargetStatus> {
+async function entryStatus(project: Project, target: SkeletonTarget, files: SourceFiles, entry?: ManifestEntry, version?: string): Promise<TargetStatus> {
   if (!entry) return { id: target.id, state: 'missing', reason: 'No generated artifact' };
   if (version !== GENERATOR_VERSION || entry.hash !== targetHash(target, project.config)) return { id: target.id, state: 'stale', reason: 'Config, hints or generator changed' };
   for (const [file, hash] of Object.entries(entry.dependencies)) {
@@ -127,14 +105,14 @@ async function entryStatus(project: Project, target: SkeletonTarget, files: Proj
 }
 export async function checkProject(project: Project, id?: string): Promise<TargetStatus[]> {
   const targets = selectedTargets(project, id);
-  return withProjectLock(project.outDir, () => checkProjectUnlocked(project, new ProjectFiles(), targets));
+  return withProjectLock(project.outDir, () => checkProjectUnlocked(project, new SourceFiles(), targets));
 }
 function selectedTargets(project: Project, id?: string): SkeletonTarget[] {
   const targets = id ? project.config.targets.filter(target => target.id === id) : project.config.targets;
   if (id && !targets.length) throw new Error(`Unknown skeleton ${id}`);
   return targets;
 }
-async function checkProjectUnlocked(project: Project, files: ProjectFiles, targets: SkeletonTarget[]): Promise<TargetStatus[]> {
+async function checkProjectUnlocked(project: Project, files: SourceFiles, targets: SkeletonTarget[]): Promise<TargetStatus[]> {
   const manifest = await readManifest(project);
   return Promise.all(targets.map(t => entryStatus(project, t, files, manifest?.targets[t.id], manifest?.version)));
 }
@@ -142,7 +120,7 @@ async function checkProjectUnlocked(project: Project, files: ProjectFiles, targe
 export async function readProjectState(project: Project, id?: string) {
   const targets = selectedTargets(project, id);
   return withProjectLock(project.outDir, async () => {
-    const files = new ProjectFiles();
+    const files = new SourceFiles();
     const statuses = await checkProjectUnlocked(project, files, targets);
     const entries = await Promise.all(statuses.filter(status => status.state !== 'missing' && status.state !== 'corrupt').map(async status =>
       [status.id, await readArtifactUnlocked(project, status.id, files)] as const));
@@ -152,7 +130,7 @@ export async function readProjectState(project: Project, id?: string) {
 export async function readArtifact(project: Project, id: string): Promise<SkeletonArtifact> {
   return withProjectLock(project.outDir, () => readArtifactUnlocked(project, id));
 }
-async function readArtifactUnlocked(project: Project, id: string, files = new ProjectFiles()): Promise<SkeletonArtifact> {
+async function readArtifactUnlocked(project: Project, id: string, files = new SourceFiles()): Promise<SkeletonArtifact> {
   if (!project.config.targets.some(t => t.id === id)) throw new Error(`Unknown skeleton ${id}`);
   const { bytes } = await files.read(path.join(project.outDir, artifactFilename(id)));
   const text = bytes.toString('utf8');
@@ -171,8 +149,7 @@ export async function syncProject(project: Project): Promise<{ id: string; state
 /** Prepare without changing owned outputs. Call under withProjectLock, then
  * commit together with any init report so all generated files share recovery. */
 export async function prepareProjectSync(project: Project) {
-  const files = new ProjectFiles();
-  const sources = new SourceFiles();
+  const files = new SourceFiles();
   const old = await readManifest(project);
   const manifest: Manifest = { version: GENERATOR_VERSION, targets: {} };
   const result: { id: string; state: 'generated' | 'reused'; diagnostics: number }[] = [];
@@ -185,7 +162,7 @@ export async function prepareProjectSync(project: Project) {
       result.push({ id: target.id, state: 'reused', diagnostics: (await readArtifactUnlocked(project, target.id, files)).diagnostics.length });
       continue;
     }
-    const { artifact, dependencies } = await compileTargetWithFiles(project.root, target, project.config.aliases ?? {}, project.config, sources);
+    const { artifact, dependencies } = await compileTargetWithFiles(project.root, target, project.config.aliases ?? {}, project.config, files);
     const module = `// Generated by skelcast ${GENERATOR_VERSION}. Edit source or hints, then sync.\nexport default ${JSON.stringify(artifact)};\n`;
     const file = artifactFilename(target.id);
     updates.set(file, module);

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Route } from '@playwright/test';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -6,6 +6,48 @@ import { createServer } from 'vite';
 import { compileTarget } from '../../src/compiler/index.js';
 import { projectFromConfig, syncProject } from '../../src/generator.js';
 import { skelcastPlugin } from '../../dist/vite.js';
+import { loadProject as loadBuiltProject, syncProject as syncBuiltProject } from '../../dist/index.js';
+
+for (const failed of [false, true]) test(`preview refresh ignores an older ${failed ? 'error' : 'response'} after a newer state arrives`, async ({ page }) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-refresh-'));
+  let server: Awaited<ReturnType<typeof createServer>> | undefined;
+  try {
+    await writeFile(path.join(root, 'package.json'), '{"type":"module"}');
+    await writeFile(path.join(root, 'View.tsx'), 'export default()=> <article>Data</article>');
+    await writeFile(path.join(root, 'index.html'), '<!doctype html><div>Application</div>');
+    const config = { targets: [{ id: 'panel', source: 'View.tsx' }] };
+    await writeFile(path.join(root, 'skelcast.config.mjs'), `export default ${JSON.stringify(config)}`);
+    await syncBuiltProject(await loadBuiltProject(root));
+    server = await createServer({ root, configFile: false, logLevel: 'silent', plugins: [skelcastPlugin()], server: { host: '127.0.0.1', port: 0 } });
+    await server.listen();
+    const address = server.httpServer!.address() as { port: number };
+    const url = `http://127.0.0.1:${address.port}`;
+    const state = await (await page.request.get(`${url}/__skelcast/state`)).json();
+    let first!: (route: Route) => void;
+    const firstRequest = new Promise<Route>(resolve => { first = resolve; });
+    let requests = 0;
+    await page.route('**/__skelcast/state', async route => {
+      if (++requests === 1) { first(route); return; }
+      await route.fulfill({ json: state });
+    });
+    const connected = page.waitForEvent('console', message => message.text() === '[vite] connected.');
+    await page.goto(url);
+    await connected;
+    // Hold the initial refresh, then let an HMR refresh finish ahead of it.
+    const older = await firstRequest;
+    server.ws.send({ type: 'custom', event: 'skelcast:update', data: {} });
+    const status = page.getByRole('status', { name: 'Skeleton status' });
+    await expect(status).toHaveText('Up to date');
+    const response = page.waitForResponse(response => response.url().endsWith('/__skelcast/state'));
+    if (failed) await older.fulfill({ status: 500, body: 'Old error' });
+    else await older.fulfill({ json: { ...state, statuses: [{ id: 'panel', state: 'missing' }] } });
+    await response;
+    // Let the fetch continuation and any resulting toolbar render finish.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(status).toHaveText('Up to date');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally { await server?.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test('generic render wrappers preserve responsive 24-column spans, hidden columns and nested gutters', async ({ page }) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-grid-'));
@@ -74,12 +116,19 @@ test('state reads never reload the app or publish lock bookkeeping, including cu
     expect(updates).toEqual([]);
     await writeFile(path.join(root,'View.tsx'),`export default()=> <article>Updated data</article>`);
     await expect.poll(()=>updates.some(value=>JSON.stringify(value).includes('skelcast:update'))).toBe(true);
+    // Both the watcher and HMR see the change; one debounce window publishes once.
+    await page.waitForTimeout(250);
+    expect(updates.filter(value=>JSON.stringify(value).includes('skelcast:update'))).toHaveLength(1);
+    const beforeSync = updates.length;
     const syncRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/__skelcast/sync');
     await page.getByRole('button', { name: 'Update skeletons', exact: true }).click();
     const request = await syncRequest;
     expect(request.postData()).toBeNull();
     expect(request.headers()['x-skelcast-dev']).toBe('1');
     await expect(page.getByRole('status', { name: 'Skeleton status' })).toHaveText('Up to date');
+    // Sync completion and its output-file events also share the notification timer.
+    await page.waitForTimeout(250);
+    expect(updates.slice(beforeSync).filter(value=>JSON.stringify(value).includes('skelcast:update'))).toHaveLength(1);
     const endpoint = `http://127.0.0.1:${address.port}/__skelcast/sync`;
     const legacy = await page.request.post(endpoint, { headers: { 'X-SkelCast-Dev': '1' }, data: {} });
     expect(legacy.ok()).toBe(true);

@@ -97,8 +97,13 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
   const sharedStyles = new Map<string, string>();
   const optimize = () => !dev && options.optimize !== false;
   let initial: { file: string; target: SkeletonTarget; baseCSS?: string } | undefined;
+  let updateTimer: ReturnType<typeof setTimeout> | undefined;
   const refreshProject = async () => { project = await loadProject(project.root); };
-  const sendUpdate = () => server?.ws.send({ type: 'custom', event: 'skelcast:update', data: {} });
+  const sendUpdate = () => {
+    if (closing) return;
+    clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => server?.ws.send({ type: 'custom', event: 'skelcast:update', data: {} }), 100);
+  };
   return {
     name: 'skelcast',
     enforce: 'pre',
@@ -110,6 +115,7 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
     },
     async closeBundle() {
       closing = true;
+      clearTimeout(updateTimer);
       await Promise.allSettled([...requests]);
     },
     async configResolved(config) {
@@ -226,13 +232,12 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
         requests.add(operation);
         void operation.finally(() => requests.delete(operation));
       });
-      let timer: ReturnType<typeof setTimeout>;
       server.watcher.on('all', (_event, file) => {
         if (!file.startsWith(project.root) || file.includes(`${path.sep}node_modules${path.sep}`)) return;
         if (transientFile(file)) return;
-        clearTimeout(timer); timer = setTimeout(sendUpdate, 100);
+        sendUpdate();
       });
-      server.httpServer?.once('close', () => clearTimeout(timer));
+      server.httpServer?.once('close', () => clearTimeout(updateTimer));
     },
     async handleHotUpdate(context) {
       if (transientFile(context.file)) return [];

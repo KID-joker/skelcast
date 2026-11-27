@@ -9,6 +9,28 @@ import { SourceFiles } from '../src/compiler/source-files.js';
 import { StaticValues } from '../src/compiler/static-values.js';
 import { checkProject, projectFromConfig, readArtifact, syncProject } from '../src/generator.js';
 
+test('source aliases share canonical file bytes within an operation and observe later symlink changes', async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-alias-cache-')));
+  try {
+    const source = path.join(root, 'View.tsx'), replacement = path.join(root, 'Other.tsx'), alias = path.join(root, 'Alias.tsx');
+    await writeFile(source, 'Original');
+    await writeFile(replacement, 'Replacement');
+    await fs.symlink(source, alias);
+    const reads = t.mock.method(fs, 'readFile');
+    syncBuiltinESMExports();
+    try {
+      const files = new SourceFiles();
+      const [direct, linked] = await Promise.all([files.read(source), files.read(alias)]);
+      assert.equal(direct, linked);
+      assert.equal(reads.mock.calls.filter(call => call.arguments[0] === source).length, 1);
+      await fs.unlink(alias);
+      await fs.symlink(replacement, alias);
+      assert.equal((await new SourceFiles().read(alias)).bytes.toString(), 'Replacement');
+      assert.equal((await files.read(alias)).bytes.toString(), 'Original', 'one operation retains its snapshot');
+    } finally { reads.mock.restore(); syncBuiltinESMExports(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('one project sync shares source syntax across targets while preserving bindings and later edits', async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-target-cache-')));
   try {
@@ -41,7 +63,11 @@ test('one project sync shares source syntax across targets while preserving bind
       }
       await writeFile(path.join(root, 'Child.vue'), child.replace('Original', 'Updated'));
       assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'stale']);
+      reads.mock.resetCalls();
       assert.deepEqual((await syncProject(project)).map(row => row.state), ['generated', 'generated']);
+      for (const file of ['View.vue', 'Child.vue', 'layout.css']) {
+        assert.equal(reads.mock.calls.filter(call => call.arguments[0] === path.join(root, file)).length, 1, `${file}: freshness checks and recompilation share bytes`);
+      }
       for (const id of ['first', 'second']) {
         for (const view of Object.values((await readArtifact(project, id)).variants)) assert.match(view.html, /Updated/);
       }

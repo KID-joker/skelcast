@@ -4,14 +4,24 @@ import { parse as parseDOM } from '@vue/compiler-dom';
 import { parseSource } from './ast.js';
 import { digest } from './styles.js';
 
-/** Immutable source data shared by scans, targets and variants within one operation.
+/** File bytes and syntax shared by freshness checks, scans, targets and variants within one operation.
  * Evaluated module environments and generated styles remain compiler-local. */
 export class SourceFiles {
   private files = new Map<string, Promise<{ file: string; bytes: Buffer; hash: string }>>();
+  private probes = new Map<string, Promise<boolean>>();
   private scripts = new Map<string, { code: string; sfc?: ReturnType<typeof parseSFC> }>();
   private asts = new Map<string, ReturnType<typeof parseSource>>();
   private templates = new Map<string, ReturnType<typeof parseDOM>>();
   private resolutions = new Map<string, Promise<{ file?: string; missing: string[] }>>();
+
+  isFile(file: string) {
+    let result = this.probes.get(file);
+    if (!result) {
+      result = stat(file).then(info => info.isFile());
+      this.probes.set(file, result);
+    }
+    return result;
+  }
 
   /** Share probes across scans and variants, retaining every failed candidate
    * so each compiler can record its own invalidation dependencies. */
@@ -22,7 +32,7 @@ export class SourceFiles {
       result = (async () => {
         const missing: string[] = [];
         for (const file of candidates) {
-          try { if ((await stat(file)).isFile()) return { file, missing }; }
+          try { if (await this.isFile(file)) return { file, missing }; }
           catch (error) { if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
           missing.push(file);
         }
@@ -33,11 +43,12 @@ export class SourceFiles {
     return result;
   }
 
-  read(file: string) {
+  read(file: string): Promise<{ file: string; bytes: Buffer; hash: string }> {
     let result = this.files.get(file);
     if (!result) {
       result = (async () => {
         const resolved = await realpath(file);
+        if (resolved !== file) return this.read(resolved);
         const bytes = await readFile(resolved);
         return { file: resolved, bytes, hash: digest(bytes) };
       })();
