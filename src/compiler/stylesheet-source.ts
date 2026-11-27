@@ -1,5 +1,13 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import type * as t from '@babel/types';
+
+/** Preserve source import order; resolution and inclusion policy belong to callers. */
+export function stylesheetImports(ast: t.File): string[] {
+  return ast.program.body.flatMap(statement =>
+    statement.type === 'ImportDeclaration' && /\.(?:css|less|scss|sass)(?:[?#].*)?$/.test(statement.source.value)
+      ? [statement.source.value] : []);
+}
 
 export interface StyleSource {
   root: string;

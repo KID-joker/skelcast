@@ -34,6 +34,7 @@ import{presentationInputs}from'./initial-state.js';
 import { SourceFiles } from './source-files.js';
 import { sharedStyleSeparator } from '../shared.js';
 import { bindSetupDeclarations } from './instance-values.js';
+import { camelizeProp, camelProps } from './props.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -98,17 +99,13 @@ export class SourceCompiler extends SourceModules {
     const scoped = Object.fromEntries(Object.entries(this.hints.bindings ?? {}).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
     const bindings = { ...this.options.componentBindings?.[file], ...this.hints.bindings, ...scoped };
     const input=presentationInputs(props);
-    const camelProps = Object.fromEntries(Object.entries(input.values).map(([key, value]) => [key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()), value]));
-    const values = { ...mod.propDefaults, ...input.values, ...camelProps };
+    const values = { ...mod.propDefaults, ...input.values, ...camelProps(input.values) };
     const initialValues={...input.initial};
-    const env: Record<string, Value> = { ...mod.env, ...values, $slots: props.__skSlots ?? {}, $attrs: this.fallthroughAttrs(mod, props) };
+    const env: Record<string, Value> = { ...mod.env, ...values, $slots: props.__skSlots ?? {}, $attrs: fallthroughAttrs(mod, props) };
     for (const name of mod.propBindings){env[name] = values;for(const[key,value]of Object.entries(input.initial))initialValues[name+'.'+key]=value;}
     for (const [name, value] of Object.entries(bindings)) if (/^[\w$]+$/.test(name)) env[name] = value;
     bindSetupDeclarations(mod, sourceValues, { code: mod.code, env, bindings, unwrapRefs: true });
     return { module: mod, code: mod.code, env, bindings, expressions: this.expressions, initialValues, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth, loading: loadingFrame(this.hints.state, parent?.loading ?? this.target.kind === 'request') };
-  }
-  private fallthroughAttrs(mod: ModuleInfo, props: Record<string, Value>): Record<string, Value> {
-    return fallthroughAttrs(mod, props);
   }
   private cssVariables(ctx: RenderContext): string {
     const styles: Record<string, Value> = {};
@@ -159,7 +156,7 @@ export class SourceCompiler extends SourceModules {
       if (!body) return opaque('Vue render body requires a finite presentation adapter');
       if(selectedSlots&&this.region?.active){await projectSelectedSlots(this,body,ctx);return'';}
       this.record('component', exported, 'Statically expand a Vue render function without executing business code', origin, node);
-      return this.inheritRootScopes(await this.vueExpression(body, ctx), parent?.scopes ?? [], mod.inheritAttrs ? this.fallthroughAttrs(mod, props) : {});
+      return this.inheritRootScopes(await this.vueExpression(body, ctx), parent?.scopes ?? [], mod.inheritAttrs ? fallthroughAttrs(mod, props) : {});
     }
     if (mod.descriptor) {
       const rootStyle = this.cssVariables(ctx);
@@ -173,7 +170,7 @@ export class SourceCompiler extends SourceModules {
       ctx.code = template.content;
       const roots = ast.children.filter(child => child.type === 1 || child.type === 5 || child.type === 2 && child.content.trim());
       const root = roots.length === 1 && roots[0].type === 1 && roots[0].tag !== 'template' && !mod.boundaries.has(roots[0].tag) ? roots[0] : undefined;
-      if (mod.inheritAttrs && root) ctx.fallthrough = { node: root, props: this.fallthroughAttrs(mod, props) };
+      if (mod.inheritAttrs && root) ctx.fallthrough = { node: root, props: fallthroughAttrs(mod, props) };
       if (this.target.region && ctx.depth === 1) {
         let region: ElementNode | undefined;
         const find = (n: RootNode | VueNode | ExpressionNode) => {
@@ -188,7 +185,7 @@ export class SourceCompiler extends SourceModules {
           return this.inheritRootScopes(selection.result??this.fallback(ctx,region,'Cannot resolve the loading region through its source slot context'),[],{},rootStyle);
         }finally{this.region=previous;}
       }
-      return this.inheritRootScopes(await this.vueNodes(ast.children, ctx), parent?.scopes ?? [], mod.inheritAttrs && !root ? this.fallthroughAttrs(mod, props) : {}, rootStyle);
+      return this.inheritRootScopes(await this.vueNodes(ast.children, ctx), parent?.scopes ?? [], mod.inheritAttrs && !root ? fallthroughAttrs(mod, props) : {}, rootStyle);
     }
     const fn = component.fn;
     if (!fn) return opaque(`Cannot locate exported component ${exported}`);
@@ -203,7 +200,7 @@ export class SourceCompiler extends SourceModules {
     }
     return body ? this.jsx(body, ctx) : this.fallback(ctx, fn.body, `No supported render return in ${exported}`);
   }
-  jsx(node: Ast | null | undefined, ctx: RenderContext, cost = 1): Promise<string> { return renderJSX.call(this, node, ctx, cost); }
+  jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string> { return renderJSX.call(this, node, ctx); }
   vueExpression(node: Ast | null | undefined, ctx: RenderContext): Promise<string> { return renderVueExpression.call(this, node, ctx); }
   masked(ctx: RenderContext) { return ctx.mode === 'mask' || ctx.mode !== 'preserve' && !ctx.control; }
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string {
@@ -262,7 +259,7 @@ export class SourceCompiler extends SourceModules {
     // hyphens. Keep original keys for adapters that accept library aliases.
     props = { ...props };
     for (const [key,value] of Object.entries(props)) if (!/^(?:data|aria)-/.test(key)) {
-      const camel = key.replace(/-([a-z])/g, (_match,letter:string)=>letter.toUpperCase());
+      const camel = camelizeProp(key);
       if (!(camel in props)) props[camel] = value;
     }
     const role = preset.role(name, props);

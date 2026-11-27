@@ -2,10 +2,11 @@ import type * as t from '@babel/types';
 import {nodeName,walk,isRenderFunction} from './ast.js';
 import type {ModuleInfo} from './context.js';
 import type {ComponentReference} from './presets/types.js';
-import {evaluate,SOURCE_INITIAL,UNKNOWN,type Value} from './expression.js';
+import {evaluate,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
 import {resolvePreset} from './presets/index.js';
 import {vueHelper} from './vue-render.js';
 import{tableViewportOffset}from'./viewport-constraint.js';
+import { camelizeProp } from './props.js';
 type Fn=t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression;
 
 /** Find a reachable, confirmed library table forwarded by an opaque wrapper.
@@ -20,8 +21,14 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
  const columns=new Set<string>(),aliases=new Map<string,string>();
  for(const statement of setup.body.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations){
   if(d.id.type==='Identifier'&&isRenderFunction(d.init))functions.set(d.id.name,d.init);
-  if(d.id.type==='ObjectPattern'&&d.init?.type==='CallExpression'&&helper(d.init.callee,'toRefs')&&d.init.arguments[0]?.type==='Identifier'&&d.init.arguments[0].name===parameter.name)for(const p of d.id.properties)if(p.type==='ObjectProperty'&&nodeName(p.key)==='columns'&&p.value.type==='Identifier')columns.add(p.value.name);
-  if(d.id.type==='ObjectPattern'&&d.init?.type==='CallExpression'&&helper(d.init.callee,'toRefs')&&d.init.arguments[0]?.type==='Identifier'&&d.init.arguments[0].name===parameter.name)for(const p of d.id.properties)if(p.type==='ObjectProperty'&&p.value.type==='Identifier')aliases.set(p.value.name,nodeName(p.key)??'');
+  if(d.id.type==='ObjectPattern'&&d.init?.type==='CallExpression'&&helper(d.init.callee,'toRefs')&&d.init.arguments[0]?.type==='Identifier'&&d.init.arguments[0].name===parameter.name){
+   for(const property of d.id.properties){
+    if(property.type!=='ObjectProperty'||property.value.type!=='Identifier')continue;
+    const key=nodeName(property.key)??'';
+    aliases.set(property.value.name,key);
+    if(key==='columns')columns.add(property.value.name);
+   }
+  }
  }
  const forwarded=(node:t.Node|undefined):boolean=>{
   if(node?.type==='Identifier')return node.name===parameter.name;
@@ -64,19 +71,20 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
  // proved. Literal base styles survive unknown runtime style overrides, with
  // the wrapper's partial-presentation diagnostic retained by the caller.
  const frame=(value:Value)=>loading&&value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_INITIAL)?(value as {[SOURCE_INITIAL]:Record<string,Value>})[SOURCE_INITIAL]:value;
- const sourceProps:Record<string,Value>={},originalProps:Record<string,Value>={};for(const[key,value]of Object.entries(props)){const camel=key.replace(/-([a-z])/g,(_,letter:string)=>letter.toUpperCase());sourceProps[key]=sourceProps[camel]=frame(value);originalProps[key]=originalProps[camel]=value;}
+ const sourceProps:Record<string,Value>={},originalProps:Record<string,Value>={};for(const[key,value]of Object.entries(props)){const camel=camelizeProp(key);sourceProps[key]=sourceProps[camel]=frame(value);originalProps[key]=originalProps[camel]=value;}
  const env:Record<string,Value>={...mod.env,[parameter.name]:sourceProps},bindings:Record<string,Value>={};
  for(const [alias,key]of aliases)env[alias]=Object.hasOwn(sourceProps,key)?sourceProps[key]:undefined;
- const value=(node:t.Node|undefined|null):Value=>{
+ const context:ExpressionContext={code:mod.code,env,bindings,unwrapRefs:true};
+ const value=(node:t.Node|undefined|null,scope=context):Value=>{
   if(!node)return UNKNOWN;
-  if(node.type==='CallExpression'&&helper(node.callee,'unref'))return value(node.arguments[0]);
-  if(node.type==='CallExpression'&&helper(node.callee,'computed')&&isRenderFunction(node.arguments[0])&&node.arguments[0].body.type!=='BlockStatement')return value(node.arguments[0].body);
+  if(node.type==='CallExpression'&&helper(node.callee,'unref'))return value(node.arguments[0],scope);
+  if(node.type==='CallExpression'&&helper(node.callee,'computed')&&isRenderFunction(node.arguments[0])&&node.arguments[0].body.type!=='BlockStatement')return value(node.arguments[0].body,scope);
   if(node.type==='CallExpression'&&node.callee.type==='MemberExpression'&&node.callee.object.type==='Identifier'&&node.callee.object.name==='Object'&&!Object.hasOwn(mod.env,'Object')&&nodeName(node.callee.property)==='assign'&&node.arguments[0]?.type==='ObjectExpression'){
-   const first=value(node.arguments[0]);if(!first||typeof first!=='object')return UNKNOWN;
-   const result={...first};for(const arg of node.arguments.slice(1)){const next=value(arg);if(next&&typeof next==='object')Object.assign(result,next);}return result;
+   const first=value(node.arguments[0],scope);if(!first||typeof first!=='object')return UNKNOWN;
+   const result={...first};for(const arg of node.arguments.slice(1)){const next=value(arg,scope);if(next&&typeof next==='object')Object.assign(result,next);}return result;
   }
-  walk(node,n=>{if(n!==node&&n.type==='CallExpression'&&helper(n.callee,'unref')&&n.start!=null&&n.end!=null)bindings[mod.code.slice(n.start,n.end)]=value(n.arguments[0]);});
-  return evaluate(node,{code:mod.code,env,bindings,unwrapRefs:true});
+  walk(node,n=>{if(n!==node&&n.type==='CallExpression'&&helper(n.callee,'unref')&&n.start!=null&&n.end!=null)scope.bindings[mod.code.slice(n.start,n.end)]=value(n.arguments[0],scope);});
+  return evaluate(node,scope);
  };
  for(const statement of setup.body.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations)if(d.id.type==='Identifier')env[d.id.name]=value(d.init);
  const table=[...candidates.keys()][0];
@@ -86,12 +94,12 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
   const objects=argument?.type==='ObjectExpression'?[argument]:argument?.type==='CallExpression'&&helper(argument.callee,'mergeProps')?argument.arguments.filter((node):node is t.ObjectExpression=>node.type==='ObjectExpression'):[];
   if(input?.type==='Identifier')result.columns=sourceProps.columns.map((column,index)=>{
    if(!column||typeof column!=='object')return column;
-   const copy:Record<string,Value>={...column},previous={...env},previousBindings={...bindings};env[input.name]=column;
-   if(fn.params[1]?.type==='Identifier')env[fn.params[1].name]=index;
+   const copy:Record<string,Value>={...column};
+   const local:ExpressionContext={...context,env:{...env,[input.name]:column},bindings:{...bindings}};
+   if(fn.params[1]?.type==='Identifier')local.env[fn.params[1].name]=index;
    for(const object of objects)for(const property of object.properties)if(property.type==='ObjectProperty'&&!property.computed&&['align','headerAlign','showOverflowTooltip'].includes(nodeName(property.key)??'')){
-    const computed=value(property.value);if(typeof computed==='string'||typeof computed==='boolean')copy[nodeName(property.key)!]=computed;
+    const computed=value(property.value,local);if(typeof computed==='string'||typeof computed==='boolean')copy[nodeName(property.key)!]=computed;
    }
-   for(const key of Object.keys(env))delete env[key];Object.assign(env,previous);for(const key of Object.keys(bindings))delete bindings[key];Object.assign(bindings,previousBindings);
    return copy;
   });
  }

@@ -25,6 +25,22 @@ function references(expression:t.Node,escape=false):Set<string>{
  return result;
 }
 
+/** Infer only collection capacity; unknown item values never become bindings. */
+function collectionCapacity(node: t.Node, read: (node: t.Node) => Value, depth = 0): number | undefined {
+  if (depth > 16) return;
+  const known = sourceCapacity(read(node));
+  if (known != null) return known;
+  if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression' || node.callee.computed) return;
+  const method = nodeName(node.callee.property);
+  if (method === 'map' || method === 'filter') return collectionCapacity(node.callee.object, read, depth + 1);
+  if (method !== 'slice' || node.arguments.length !== 2) return;
+  const from = read(node.arguments[0]), to = read(node.arguments[1]);
+  if (typeof from === 'number' && typeof to === 'number' && Number.isInteger(from) && Number.isInteger(to)
+    && from >= 0 && to > from && to - from <= 256) {
+    return Math.min(to - from, collectionCapacity(node.callee.object, read, depth + 1) ?? 256);
+  }
+}
+
 /** Resolve source declarations, not live ESM values. Loading a module means
  * parsing it through the compiler host; no module or application function runs. */
 export class StaticValues {
@@ -191,23 +207,16 @@ export class StaticValues {
   let value=evaluate(expression,context);
   const cost=remaining-budget.remaining;
   if(value===UNKNOWN){
-   const capacity=(node:t.Node,depth=0):number|undefined=>{
-    if(depth>16)return;
-    // The root is already unknown. Reuse that fact while charging the same work
-    // so budget-limited environments retain their existing resolution order.
-    if(node===expression&&budget.remaining>=cost)budget.remaining-=cost;
-    else {
-     const known=sourceCapacity(evaluate(node,context));
-     if(known!=null)return known;
+   const count = collectionCapacity(expression, node => {
+    // Capacity probing is a second bounded read. A cached root consumes its
+    // recorded cost; a partial read still consumes the remaining budget normally.
+    if (node === expression && budget.remaining >= cost) {
+     budget.remaining -= cost;
+     return UNKNOWN;
     }
-    if(node.type!=='CallExpression'||node.callee.type!=='MemberExpression'||node.callee.computed)return;
-    const method=nodeName(node.callee.property);
-    if(['map','filter'].includes(method??''))return capacity(node.callee.object,depth+1);
-    if(method!=='slice'||node.arguments.length!==2)return;
-    const from=evaluate(node.arguments[0],context),to=evaluate(node.arguments[1],context);
-    if(typeof from==='number'&&typeof to==='number'&&Number.isInteger(from)&&Number.isInteger(to)&&from>=0&&to>from&&to-from<=256)return Math.min(to-from,capacity(node.callee.object,depth+1)??256);
-   };
-   const count=capacity(expression);if(count!=null)value={[SOURCE_COLLECTION]:count};
+    return evaluate(node, context);
+   });
+   if(count!=null)value={[SOURCE_COLLECTION]:count};
   }
   if(this.cycles.has(key))return UNKNOWN;
   let result=value;

@@ -9,7 +9,7 @@ import { componentName, declarationComponents } from './components.js';
 import type { ComponentReference } from './presets/types.js';
 import { ambiguousExport, type ModuleInfo, type ResolvedComponent } from './context.js';
 import { visit } from './html.js';
-import { resolveStylesheet, type StyleSource } from './stylesheet-source.js';
+import { resolveStylesheet, stylesheetImports, type StyleSource } from './stylesheet-source.js';
 import { parse as parseDOM } from '@vue/compiler-dom';
 import { StaticValues } from './static-values.js';
 import { identityArgument } from './identity-wrapper.js';
@@ -89,8 +89,8 @@ export class SourceModules {
       const code = await io.read(file);
       this.entryScripts.add(file);
       const ast = this.files.ast(file, code);
-      for (const statement of ast.program.body) if (statement.type === 'ImportDeclaration' && /\.(?:css|less|scss|sass)(?:[?#].*)?$/.test(statement.source.value)) {
-        const request = statement.source.value.split(/[?#]/)[0];
+      for (const imported of stylesheetImports(ast)) {
+        const request = imported.split(/[?#]/)[0];
         const dep = await resolveStylesheet(request.startsWith('/') ? path.join(this.root,request) : request, file, io);
         this.css.set(dep, (await this.readStyle(dep)).css);
       }

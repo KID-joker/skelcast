@@ -6,6 +6,7 @@ import { digest } from '../compiler/styles.js';
 import { prepareProjectSync, projectFromConfig } from '../generator.js';
 import { atomicWrite, commitOutputs, withProjectLock } from '../storage.js';
 import type { SkeletonConfig } from '../types.js';
+import { stylesheetImports } from '../compiler/stylesheet-source.js';
 import { applyEdits, startOf, endOf, nodeName, objectConfig, parseCode, type Ast } from './ast.js';
 import { analyzeReact } from './react.js';
 import { inferredRoute, isPageFile, relativePath, resolveSource, scanProject } from './scan.js';
@@ -65,8 +66,8 @@ export async function initProject(directory = process.cwd(), options: InitOption
   const usedIds = new Set(existing.targets.map(t => t.id));
   const globalStyles = new Set<string>();
   for (const source of scan.files) if (/^(?:src\/)?(?:main|index|App)\.(?:tsx?|jsx?)$/.test(source.file)) {
-    for (const n of source.ast.program.body) if (n.type === 'ImportDeclaration' && /\.css$/.test(n.source.value)) {
-      const file = await resolveSource(root, source.file, n.source.value, scan.aliases);
+    for (const request of stylesheetImports(source.ast).filter(request => request.endsWith('.css'))) {
+      const file = await resolveSource(root, source.file, request, scan.aliases);
       if (file) globalStyles.add(relativePath(configRoot, path.resolve(root, file)));
     }
   }

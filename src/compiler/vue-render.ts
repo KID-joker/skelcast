@@ -8,6 +8,8 @@ import {renderSlotCall,bindSlotInitial} from './regions.js';
 import{initialExpression,presentationInputs}from'./initial-state.js';
 import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 import { renderComponent } from './component-render.js';
+import { camelProps } from './props.js';
+import { renderJSXNode } from './react.js';
 
 /** Helper identity is established from imports, including aliases/namespaces. */
 export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {
@@ -72,7 +74,7 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
     if(ref.exported==='useAttrs'||ref.exported==='useSlots')ctx.env[name]={[SOURCE_ACCESSOR]:ref.exported==='useAttrs'?attrs:slots};
     if(ref.exported==='*')ctx.env[name]={...(ctx.env[name]&&typeof ctx.env[name]==='object'?ctx.env[name]:{}),useAttrs:{[SOURCE_ACCESSOR]:attrs},useSlots:{[SOURCE_ACCESSOR]:slots}};
   }
-  const input=presentationInputs({...ctx.module.propDefaults,...props,...Object.fromEntries(Object.entries(props).map(([key,value])=>[key.replace(/-([a-z])/g,(_,c:string)=>c.toUpperCase()),value]))});
+  const input = presentationInputs({ ...ctx.module.propDefaults, ...props, ...camelProps(props) });
   const values=input.values;
   if(setup.params[0])bindSlotInitial(setup.params[0],input.initial,ctx);
   if(setup.body.type==='BlockStatement')for(const statement of setup.body.body){
@@ -184,10 +186,12 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
   if (!node) return '';
   const expression = unwrapExpression(node);
   if (expression && expression !== node) return this.vueExpression(expression, ctx);
-  // Delegation used to check both frontends. Charge that existing cost once so
-  // large render trees keep the same fallback location without two checks.
+  // Vue values include both a render-expression and a shared-node unit. Keep
+  // that weight at the frontend boundary, independent of renderer delegation.
   if (node.type !== 'ConditionalExpression' && node.type !== 'LogicalExpression' && node.type !== 'ArrayExpression'
-    && node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') return this.jsx(node, ctx, 2);
+    && node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') {
+    return this.budget(ctx, node, 2) ?? renderJSXNode.call(this, node, ctx);
+  }
   const exhausted = this.budget(ctx, node);
   if (exhausted !== undefined) return exhausted;
   if (node.type === 'ConditionalExpression') {
@@ -222,7 +226,7 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
     ? calleeValue == null && node.optional ? '' : this.fallback(ctx, node, 'Unresolved optional render call needs a finite binding')
     : this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
   if (!vueHelper(ctx.module, node.callee, 'h')) return this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
-  // Retain the existing expansion limit when JSX enters a Vue h() tree.
+  // A JSX h() expression also consumes a Vue call-expansion unit.
   if (framework === 'jsx') {
     const exhausted = this.budget(ctx, node);
     if (exhausted !== undefined) return exhausted;

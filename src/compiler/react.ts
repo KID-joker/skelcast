@@ -17,10 +17,13 @@ function repeatedContent(node: Ast): boolean {
 }
 function hasCollection(node:Ast,root:string,ctx:RenderContext):boolean{let found=false;walk(node,n=>{if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'&&nodeName(n.callee.property)==='map'&&collectionRoot(expressionText(n.callee.object,ctx),ctx)===root)found=true;});return found;}
 
-export async function renderJSX(this: RenderHost, node: Ast | null | undefined, ctx: RenderContext, cost = 1): Promise<string> {
+export async function renderJSX(this: RenderHost, node: Ast | null | undefined, ctx: RenderContext): Promise<string> {
   if (!node) return '';
-  const exhausted = this.budget(ctx, node, cost);
-  if (exhausted !== undefined) return exhausted;
+  return this.budget(ctx, node) ?? renderJSXNode.call(this, node, ctx);
+}
+
+/** Shared node rendering; each frontend accounts for its own expansion cost. */
+export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderContext): Promise<string> {
   if ((node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression' || node.type === 'ParenthesizedExpression')) return this.jsx(node.expression, ctx);
   if (node.type === 'JSXFragment') return this.jsxNodes(node.children, ctx);
   if (node.type === 'JSXText') {

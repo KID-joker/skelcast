@@ -3,11 +3,11 @@ import type { ModuleInfo } from './context.js';
 import type { Value } from './expression.js';
 import { classString, styleString } from './html.js';
 import { sourceIdAttribute } from './styles.js';
+import { camelizeProp } from './props.js';
 
 export function fallthroughAttrs(module: Pick<ModuleInfo, 'propDefaults'>, props: Record<string, Value>): Record<string, Value> {
   return Object.fromEntries(Object.entries(props).filter(([key]) => {
-    const camelName = key.replace(/-([a-z])/g, (_, character: string) => character.toUpperCase());
-    return !key.startsWith('__sk') && !Object.hasOwn(module.propDefaults, camelName);
+    return !key.startsWith('__sk') && !Object.hasOwn(module.propDefaults, camelizeProp(key));
   }));
 }
 

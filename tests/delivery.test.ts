@@ -85,3 +85,42 @@ test('escaped row literals supply masked glyph geometry without becoming values,
   assert.equal((html.match(/data-sk-text-content="A long declared address"/g)||[]).length,1);assert.doesNotMatch(html,/height:(99|125)px/);assert.ok(artifact.diagnostics.some(d=>d.code==='FALLBACK'));assert.ok(artifact.diagnostics.some(d=>/glyph prototypes/.test(d.message)));
  });
 });
+
+test('table column callbacks isolate item/index bindings from sibling columns and pagination', async () => {
+ const core = `import{defineComponent,createVNode as node,mergeProps,toRefs,unref}from'vue';import{ElTable as Grid,ElTableColumn as Column,ElPagination as Pager}from'element-plus';export default defineComponent({setup(props){const{columns:fields,pagination:page}=toRefs(props);const value={align:'center'};onRuntimeMount();const col=(value,index)=>node(Column,mergeProps(value,{align:unref(value).align,headerAlign:index===0?'center':'right'}));const render=()=>[node(Grid,mergeProps(props,{ref:'grid'}),{default:()=>unref(fields).map(col)}),node(Pager,mergeProps({class:unref(value).align},unref(page)))];return()=>render();}});`;
+ await fixture({
+  'Core.ts': core,
+  'View.vue': `<script setup>import Core from'./Core';const columns=[{label:'First',prop:'a',align:'left'},{label:'Second',prop:'b',align:'right'},{label:'Third',prop:'c',align:'center'}];const pagination={currentPage:1,pageSize:8}</script><template><Core :columns="columns" :pagination="pagination"/></template>`,
+ }, async root => {
+  const { artifact } = await compileTarget(root, { id: 'isolated', source: 'View.vue', hints: { repeat: 1 } }, {}, { componentPresets: ['element-plus'] });
+  const html = artifact.variants.default.html;
+  const alignments = (tag: string) => [...html.matchAll(new RegExp(`<${tag}\\b[^>]*style="[^"]*text-align:(left|center|right)`, 'g'))].map(match => match[1]);
+  assert.deepEqual(alignments('th'), ['center', 'right', 'right']);
+  assert.deepEqual(alignments('td'), ['left', 'right', 'center']);
+  assert.match(html, /class="center el-pagination"/);
+  assert.ok(artifact.diagnostics.some(diagnostic => diagnostic.code === 'PRESET_LIMIT'));
+  assert.ok(!artifact.diagnostics.some(diagnostic => diagnostic.code === 'FALLBACK'));
+ });
+});
+
+test('template, setup and render components retain prop alias precedence, defaults and fallthrough', async () => {
+ const components = {
+  'Child.vue': `<script setup lang="ts">const props=withDefaults(defineProps<{blockHeight?:number}>(),{blockHeight:24})</script><template><section :style="{height:props.blockHeight+'px'}"/></template>`,
+  'Setup.ts': `import{defineComponent,h}from'vue';export default defineComponent({props:{blockHeight:{type:Number,default:24}},setup(props){return()=>h('section',{style:{height:props.blockHeight+'px'}})}});`,
+  'Render.ts': `import{defineComponent,h}from'vue';export default defineComponent({props:{blockHeight:{type:Number,default:24}},render(){return h('section',{style:{height:this.blockHeight+'px'}})}});`,
+ };
+ await fixture(components, async root => {
+  const cases = [
+   { props: { 'block-height': 40, blockHeight: 60 }, height: 60 },
+   { props: { blockHeight: 60, 'block-height': 40 }, height: 40 },
+   { props: {}, height: 24 },
+  ];
+  for (const source of Object.keys(components)) for (const { props, height } of cases) {
+   await writeFile(path.join(root, 'View.vue'), `<script setup>import Child from './${source}';const attrs=${JSON.stringify(props)}</script><template><Child v-bind="attrs" data-probe="kept"/></template>`);
+   const { artifact } = await compileTarget(root, { id: 'aliases', source: 'View.vue' });
+   assert.match(artifact.variants.default.html, new RegExp(`height:${height}px`), source);
+   assert.match(artifact.variants.default.html, /data-probe="kept"/, source);
+   assert.deepEqual(artifact.diagnostics, [], source);
+  }
+ });
+});

@@ -401,3 +401,26 @@ test('source discovery parses plain TypeScript assertions separately from TSX an
     assert.ok((await readArtifact(project, report.targets.find(t => t.source === 'src/App.vue')!.id)).variants.default.html.includes('Data'));
   });
 });
+
+test('init keeps its CSS inclusion policy while compilation retains entry import cascade order', async () => {
+  await fixture({
+    'index.html': '<script type="module" src="/src/main.tsx"></script>',
+    'src/main.tsx': `import './z.css';import './a.css';import './query.css?theme';import './base.scss';import App from './App';`,
+    'src/App.tsx': `import './page.css';export default function App(){return <main className="panel">Content</main>}`,
+    'src/z.css': '.panel{height:10px}',
+    'src/a.css': '.panel{height:20px}',
+    'src/query.css': '.panel{height:30px}',
+    'src/base.scss': '$height:40px;.panel{height:$height}',
+    'src/page.css': '.panel{height:50px}',
+  }, async root => {
+    const report = await initProject(root);
+    assert.equal(report.targets.length, 1);
+    assert.deepEqual(report.targets[0].styles, ['src/a.css', 'src/page.css', 'src/z.css']);
+    const artifact = await readArtifact(await loadProject(root), report.targets[0].id);
+    const positions = [10, 20, 30, 40, 50].map(height => artifact.variants.default.css.search(new RegExp(`height:\\s*${height}px`)));
+    assert.ok(positions.every(position => position >= 0), 'all entry styles and page styles remain included');
+    assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'configuration sorting never reorders imported CSS');
+    assert.deepEqual(artifact.diagnostics, []);
+    assert.equal((await initProject(root)).changes.length, 0);
+  });
+});
