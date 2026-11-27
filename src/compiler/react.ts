@@ -71,12 +71,12 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
     const list = evaluate(node.callee.object, ctx);
     const text = expressionText(node.callee.object, ctx);
     const { count, projected } = planCollection(this, text, list, ctx, node);
+    const body = fn.body.type === 'BlockStatement' ? fn.body.body.find(n => n.type === 'ReturnStatement')?.argument : fn.body;
     let html = '';
     for (let i = 0; i < count; i++) {
       const local = { ...ctx, env: { ...ctx.env } };
       bindPattern(fn.params[0], !projected&&Array.isArray(list) ? list[i] ?? UNKNOWN : UNKNOWN, local.env);
       bindPattern(fn.params[1], i, local.env);
-      const body = fn.body.type === 'BlockStatement' ? fn.body.body.find(n => n.type === 'ReturnStatement')?.argument : fn.body;
       html += await this.jsx(body, local);
     }
     return html;

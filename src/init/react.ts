@@ -119,7 +119,13 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
         }
       }
     });
-    const selected = regions.sort((a, b) => startOf(a.node) - startOf(b.node) || endOf(b.node) - endOf(a.node)).filter((r, i, all) => !all.slice(0, i).some(p => startOf(p.node) <= startOf(r.node) && endOf(p.node) >= endOf(r.node)));
+    const selected: Region[] = [];
+    let selectedEnd = -Infinity;
+    for (const region of regions.sort((a, b) => startOf(a.node) - startOf(b.node) || endOf(b.node) - endOf(a.node))) {
+      if (endOf(region.node) <= selectedEnd) continue;
+      selected.push(region);
+      selectedEnd = endOf(region.node);
+    }
     const existingPage = ctx.existing.targets.some(target => target.kind === 'page' && ast.program.body.some(statement => statement.type === 'ImportDeclaration' && statement.source.value === `virtual:skelcast/${target.id}` && statement.specifiers.some(s => s.local.name === target.region)) && (!target.export || target.export === component.exported));
     const isPage = !existingPage && !isBoundary(root) && ctx.page && (component.exported === 'default' || /Page$/.test(component.name) || components.length === 1);
     const pageBindings: Record<string, boolean> = {};

@@ -20,6 +20,7 @@ export interface PreviewState {
   comparisonView: 'content' | 'skeleton';
 }
 const boundaries = new Map<symbol, BoundaryInfo>();
+let pageBoundaryCount = 0;
 const listeners = new Set<() => void>();
 const boundaryListeners = new Set<{ id: string; kind: BoundaryInfo['kind']; listener: () => void }>();
 const artifactRevisions = new Map<string, number>();
@@ -38,9 +39,7 @@ function updateInitial() {
   const id = root.dataset.skInitial!;
   // A static SPA entry may contain another route's initial shell. Any mounted
   // page boundary owns the current page and must retire that shell permanently.
-  if (!initialHandedOff) for (const boundary of boundaries.values()) {
-    if (boundary.kind === 'page') { initialHandedOff = true; break; }
-  }
+  if (pageBoundaryCount > 0) initialHandedOff = true;
   const hidden = initialHandedOff || initialReleased && (!initialPreviewAllowed || !(preview.target === 'page' || preview.target === id));
   if (root.hidden !== hidden) root.hidden = hidden;
   const display = hidden ? 'none' : 'block';
@@ -48,7 +47,7 @@ function updateInitial() {
     root.style.setProperty('display', display, 'important');
   }
 }
-function emit(initialChanged = true) { revision++; if (initialChanged || !initialHandedOff) updateInitial(); listeners.forEach(fn => fn()); }
+function emit() { revision++; listeners.forEach(fn => fn()); }
 export function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function snapshot() { return revision; }
 export const serverSnapshot = () => '';
@@ -88,23 +87,31 @@ export function setPreview(value: Partial<PreviewState>) {
     const current = read(entry.id, entry.kind);
     if (previous.some((field, index) => field !== current[index])) entry.listener();
   }
-  emit();
+  updateInitial(); emit();
 }
 export function listBoundaries() { return [...boundaries.values()]; }
 export function forced(id: string, kind: string) { return preview.target === id || preview.target === 'page' && kind === 'page'; }
 export function registerBoundary(info: BoundaryInfo) {
   const token = Symbol(info.id);
-  boundaries.set(token, info); emit();
+  boundaries.set(token, info);
+  if (info.kind === 'page') pageBoundaryCount++;
+  updateInitial(); emit();
   return {
     update(next: Partial<BoundaryInfo>) {
       const previous = boundaries.get(token);
       if (previous && Object.entries(next).some(([key, value]) => previous[key as keyof BoundaryInfo] !== value)) {
-        boundaries.set(token, { ...previous, ...next });
+        const current = { ...previous, ...next };
+        boundaries.set(token, current);
+        pageBoundaryCount += Number(current.kind === 'page') - Number(previous.kind === 'page');
         // Pending, variants and artifact contents cannot change shell ownership.
-        emit(next.id !== undefined && next.id !== previous.id || next.kind !== undefined && next.kind !== previous.kind);
+        if (!initialHandedOff || next.id !== undefined && next.id !== previous.id || next.kind !== undefined && next.kind !== previous.kind) updateInitial();
+        emit();
       }
     },
-    dispose() { boundaries.delete(token); emit(); },
+    dispose() {
+      if (boundaries.get(token)?.kind === 'page') pageBoundaryCount--;
+      boundaries.delete(token); updateInitial(); emit();
+    },
   };
 }
 export function currentArtifact(artifact: SkeletonArtifact) { return overrides.get(artifact.id) ?? artifact; }
@@ -127,7 +134,8 @@ export function replaceArtifacts(artifacts: SkeletonArtifact[], versions?: Reado
   }
   if (!changed.size) return false;
   for (const entry of boundaryListeners) if (changed.has(entry.id)) entry.listener();
-  emit(false);
+  if (!initialHandedOff) updateInitial();
+  emit();
   return true;
 }
 export function releasePageSkeleton(options: { preview?: boolean } = {}) { initialReleased = true; initialPreviewAllowed = options.preview !== false; updateInitial(); }

@@ -18,7 +18,7 @@ export function planCollection(
   const bound = sourceCapacity(list);
   const root = collectionRoot(text, ctx);
   const boundState = hasStateBinding(text, ctx);
-  const projected = collectionEmpty(root, ctx) && !boundState && projectsCollection(root, ctx);
+  const projected = !boundState && projectsCollection(root, ctx) && collectionEmpty(root, ctx);
   let count = host.hints.repeat;
   if (count == null) {
     if (projected) count = repeatCapacity(text, ctx);

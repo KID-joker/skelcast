@@ -17,6 +17,9 @@ import { renderAttributes, renderElement } from '../src/compiler/output.js';
 import { UNKNOWN } from '../src/compiler/expression.js';
 import { vueRenderFunction } from '../src/compiler/vue-render.js';
 import { parseSource } from '../src/compiler/ast.js';
+import { planCollection } from '../src/compiler/collections.js';
+import { loadingPresence } from '../src/compiler/loading-state.js';
+import { applyEdits } from '../src/init/ast.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-refactor-'));
@@ -28,6 +31,53 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('collection planning skips ineligible root reads and preserves explicit, source and loading views', () => {
+  for (const scenario of ['source', 'control', 'bound', 'untracked', 'projected'] as const) {
+    let reads = 0;
+    const notes: string[] = [];
+    const ctx = {
+      code: 'items', env: { get items() { reads++; return []; } },
+      bindings: scenario === 'bound' ? { items: [] } : {},
+      loading: scenario !== 'source', control: scenario === 'control',
+      projectedCollections: scenario === 'untracked' ? undefined : new Set(['items']),
+      module: { ast: parseSource(''), imports: new Map() },
+    } as unknown as RenderContext;
+    const host = {
+      target: { kind: 'request' }, hints: scenario === 'source' ? { state: 'source' } : {},
+      diagnose: (code: string) => notes.push(code), record: () => {},
+    } as unknown as RenderHost;
+    const projected = scenario === 'projected';
+    assert.deepEqual(planCollection(host, 'items', [], ctx, parseExpression('items')), { count: projected ? 4 : 0, projected });
+    assert.equal(reads, projected ? 1 : 0, scenario);
+    assert.deepEqual(notes, projected ? ['LOADING_PROJECTION'] : ['source', 'bound'].includes(scenario) ? [] : ['EMPTY_STATE']);
+  }
+});
+
+test('collection count aliases preserve duplicates, conflicts, object fields and response scope', () => {
+  for (const [code, expected] of [
+    ['function receive(response){total=response.items.length;rows=response.items;rows=response.items;total=response.items.length}', { root: 'rows', present: true }],
+    ['function receive(response){rows=response.items;page={total:response.items.length}}', { root: 'rows', present: true }],
+    ['function receive(response){rows=response.items;other=response.items;total=response.items.length}', undefined],
+    ['function first(response){rows=response.items;total=response.items.length}function second(response){other=response.items;total=response.items.length}', undefined],
+    ['function first(response){rows=response.items}function second(response){total=response.items.length}', undefined],
+  ] as const) {
+    const ctx = { loading: true, module: { ast: parseSource(code), imports: new Map() } } as unknown as RenderContext;
+    assert.deepEqual(loadingPresence(code.includes('page=') ? 'page.total > 0' : 'total > 0', ctx), expected, code);
+  }
+});
+
+test('React init retains outermost collection regions and independent sibling regions', () => {
+  const source = `export default function App(){const {data,isLoading}=useQuery();return <><main><section>{data.map(item=><article/>)}{data.map(item=><article/>)}</section>{data.map(item=><aside/>)}</main><footer loading={isLoading}>Footer</footer><nav loading={isLoading}>Nav</nav></>}`;
+  const analysis = analyzeReact({ file: 'View.tsx', source, page: false, routes: [], existing: { targets: [] }, usedIds: new Set() });
+  assert.equal(analysis.targets.length, 3);
+  assert.deepEqual(analysis.diagnostics, []);
+  const replacements = analysis.edits.filter(edit => edit.start !== edit.end);
+  assert.deepEqual(replacements.map(edit => source.slice(edit.start, edit.end).match(/^<\w+/)?.[0]), ['<main', '<footer', '<nav']);
+  const changed = applyEdits(source, analysis.edits);
+  assert.equal((changed.match(/skelcast:init/g) ?? []).length, 3);
+  assert.match(changed, /<section>\{data\.map/);
+});
 
 test('root attribute merging filters without serializing probes and preserves source markup', () => {
   const html = '<section class="old" style="color:red" data-sk-source-id="before" data-value="keep" grid="old"> <span>Text</span> </section>';

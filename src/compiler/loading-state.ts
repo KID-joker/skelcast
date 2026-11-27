@@ -33,7 +33,14 @@ function collectionFacts(mod:ModuleInfo):CollectionFacts{
  });
  const result=new Map<string,string>(),conflicts=new Set<string>();
  const add=(name:string,value:string)=>{if(result.has(name)&&result.get(name)!==value)conflicts.add(name);else result.set(name,value);};
- for(const assignments of scopes.values())for(const collection of assignments)for(const count of assignments)if(count.source===collection.source+'.length')add(count.target,collection.target+'.length');
+ for(const assignments of scopes.values()){
+  const targetsBySource=new Map<string,string[]>();
+  for(const {target,source}of assignments){
+   let targets=targetsBySource.get(source);if(!targets)targetsBySource.set(source,targets=[]);
+   targets.push(target);
+  }
+  for(const collection of assignments)for(const target of targetsBySource.get(collection.source+'.length')??[])add(target,collection.target+'.length');
+ }
  for(const name of conflicts)result.delete(name);
  const facts={aliases:result,updated:new Set([...scopes.values()].flatMap(list=>list.map(a=>a.target)))};
  cache.set(mod.imports,facts);return facts;

@@ -49,6 +49,45 @@ test('initial shell retires for a different SPA entry route and stays retired ac
 
 const artifact = (id: string): SkeletonArtifact => ({ id, kind: 'request', render: 'light', source: 'Page.vue', defaultVariant: 'default', variants: { default: { html: '<div/>', css: '' }, list: { html: '<section/>', css: '' } }, diagnostics: [], evidence: [], sources: {} });
 
+test('initial ownership retains late shells, boundary kind changes and repeated disposal', async () => {
+  const runtime: typeof import('../src/runtime/core.js') = await import(new URL('../src/runtime/core.ts?initial-ownership', import.meta.url).href);
+  const makeShell = () => {
+    let display = '', priority = '';
+    return { dataset: { skInitial: 'late-shell' }, hidden: false, style: {
+      getPropertyValue: () => display, getPropertyPriority: () => priority,
+      setProperty: (_name: string, value: string, nextPriority: string) => { display = value; priority = nextPriority; },
+    } };
+  };
+  let initial = makeShell(), available = false;
+  const previous = globalThis.document;
+  Object.assign(globalThis, { document: { querySelector: () => available ? initial : null } });
+  const first = runtime.registerBoundary({ id: 'first', kind: 'page', pending: false, artifact: artifact('first') });
+  const second = runtime.registerBoundary({ id: 'second', kind: 'page', pending: false, artifact: artifact('second') });
+  try {
+    first.update({ kind: 'request' });
+    first.dispose(); first.dispose();
+    second.update({ kind: 'request' });
+    available = true;
+    runtime.setPreview({ target: 'late-shell' });
+    assert.equal(initial.hidden, false, 'pages removed before the shell exists do not take ownership');
+    runtime.releasePageSkeleton({ preview: false });
+    assert.equal(initial.hidden, true);
+    runtime.releasePageSkeleton();
+    assert.equal(initial.hidden, false, 'explicit release still allows initial-shell preview');
+    second.update({ kind: 'page' });
+    assert.equal(initial.hidden, true, 'a request becoming a page retires the shell');
+    second.update({ kind: 'request' });
+    second.dispose(); second.dispose();
+    initial = makeShell();
+    runtime.setPreview({ target: 'page' });
+    assert.equal(initial.hidden, true, 'ownership stays retired after kind changes and shell replacement');
+  } finally {
+    first.dispose(); second.dispose();
+    if (previous) Object.assign(globalThis, { document: previous });
+    else Reflect.deleteProperty(globalThis, 'document');
+  }
+});
+
 test('toolbar and mounted views share preview, boundary and default variant precedence', () => {
   const original = getPreview(), item = artifact('variant-selection');
   try {
