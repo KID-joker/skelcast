@@ -12,6 +12,7 @@ import { baseCSS, digest, scopeArtifactStyles, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
 import type { ComponentReference } from './presets/types.js';
+import { TableColumns } from './presets/columns.js';
 import { SourceModules, type CompilerOptions } from './modules.js';
 import { vueOptions, vueOptionProps, vueRenderFunction, vueSetupFunction, prepareVueSetup, prepareVueRender, renderVueExpression } from './vue-render.js';
 import { ambiguousExport, type ModuleInfo, type RenderContext, type SourceSlot, type SourceNode } from './context.js';
@@ -41,6 +42,7 @@ export class SourceCompiler extends SourceModules {
   private sourceIds=new Set<string>();
   private region?:VueRegion;
   private expressions = new Map<string, t.Expression | null>();
+  private tableColumns = new TableColumns();
   selectVueNode(node:VueNode,ctx:RenderContext){return this.region?.mode(node,ctx);}
   captureVueRegion(render:()=>Promise<string>){return this.region?this.region.capture(render):render();}
   hasSelectedSlot(slot:SourceSlot){return !!this.region?.active&&this.region.carries(slot);}
@@ -291,7 +293,7 @@ export class SourceCompiler extends SourceModules {
         }), local);
     }
     const children = slots.map(key=>renderedSlots[key]).join('');
-    const presentation = preset.present(name, props, children, this.masked(local) ? this.text(local,node) : this.contentText(props.value ?? props.title ?? UNKNOWN,local,node), {...this.hints,state:this.hints.state??(local.loading?'loading':'source')}, {mask:this.masked(local),slots:renderedSlots});
+    const presentation = preset.present(name, props, children, this.masked(local) ? this.text(local,node) : this.contentText(props.value ?? props.title ?? UNKNOWN,local,node), {...this.hints,state:this.hints.state??(local.loading?'loading':'source')}, {mask:this.masked(local),slots:renderedSlots,columns:this.tableColumns});
     if (!presentation) return;
     // Own primitive wrappers use border-box; source slot nodes keep the source
     // box model instead of being globally forced to border-box.

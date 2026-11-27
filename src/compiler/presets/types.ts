@@ -1,4 +1,5 @@
 import type { SkeletonConfig, SkeletonHints } from '../../types.js';
+import type { TableColumns } from './columns.js';
 
 /** Identity from a source import or GlobalComponents declaration, never a tag prefix. */
 export interface ComponentReference {
@@ -27,7 +28,7 @@ export interface ComponentPreset {
     props: Record<string, unknown>,
     children: string,
     text: string,
-    hints?: SkeletonHints,
-    policy?: { mask: boolean; slots?: Record<string, string> },
+    hints: SkeletonHints,
+    policy: { mask: boolean; slots: Record<string, string>; columns: TableColumns },
   ) => Presentation | undefined;
 }

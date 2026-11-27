@@ -6,6 +6,7 @@ import { nonVisual, unknownGeometry } from './html.js';
 import type { RenderHost } from './render-host.js';
 import {renderSlotCall,bindSlotInitial} from './regions.js';
 import{initialExpression,presentationInputs}from'./initial-state.js';
+import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 
 /** Helper identity is established from imports, including aliases/namespaces. */
 export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {
@@ -90,22 +91,16 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
   if(setup.body.type==='BlockStatement'){
     const written=new Set<string>();
     walk(setup.body,n=>{
-      let target:Ast|undefined;
-      if(n.type==='AssignmentExpression')target=n.left;
-      if(n.type==='UpdateExpression'||n.type==='UnaryExpression'&&n.operator==='delete')target=n.argument;
-      while(target?.type==='MemberExpression'||target?.type==='OptionalMemberExpression')target=target.object;
-      if(target?.type==='Identifier')written.add(target.name);
+      const name=rootName(mutationTarget(n));
+      if(name)written.add(name);
       if(n.type==='CallExpression'){
-        if(n.callee.type==='MemberExpression'&&!n.callee.computed&&['push','pop','shift','unshift','splice','sort','reverse','fill','copyWithin','set','add','delete','clear'].includes(nodeName(n.callee.property)??'')){
-          let receiver:Ast=n.callee.object;while(receiver.type==='MemberExpression'||receiver.type==='OptionalMemberExpression')receiver=receiver.object;if(receiver.type==='Identifier')written.add(receiver.name);
-        }
         const capability=evaluate(n.callee,ctx),readonly=capability&&typeof capability==='object'&&(Object.hasOwn(capability,SOURCE_COPY)||Object.hasOwn(capability,SOURCE_TYPE_TEST));
         if(!readonly&&!(n.callee.type==='Identifier'&&ctx.module.imports.get(n.callee.name)?.request==='vue'))for(const argument of n.arguments)if(argument.type==='Identifier'&&ctx.env[argument.name]&&typeof ctx.env[argument.name]==='object')written.add(argument.name);
       }
     });
-    const aliases=setup.body.body.flatMap(s=>s.type==='VariableDeclaration'?s.declarations:[]).flatMap(d=>d.id.type==='Identifier'&&d.init?.type==='Identifier'?[[d.id.name,d.init.name]]:[]);
-    for(let pass=0;pass<aliases.length;pass++)for(const [alias,source]of aliases)if(written.has(alias)||written.has(source)){written.add(alias);written.add(source);}
     const declarations=setup.body.body.flatMap(s=>s.type==='VariableDeclaration'?s.declarations:[]);
+    const aliases=declarations.flatMap((d):[string,string][]=>d.id.type==='Identifier'&&d.init?.type==='Identifier'?[[d.id.name,d.init.name]]:[]);
+    propagateAliases(written,aliases);
     ctx.initialValues??={};
     for(const d of declarations){
       if(d.id.type!=='Identifier'||!written.has(d.id.name)||d.init?.type!=='CallExpression'||!['ref','shallowRef','reactive'].some(name=>vueHelper(ctx.module,d.init!.type==='CallExpression'?d.init!.callee:d.init!,name)))continue;

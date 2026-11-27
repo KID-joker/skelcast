@@ -97,6 +97,42 @@ test('Ant Design supports React compound components and deep imports without exe
   );
 });
 
+test('table columns follow forwarded children, retain escaped content and stay scoped to nested tables', async () => {
+  await fixture({
+    'Forward.vue': '<template><section><slot/></section></template>',
+    'Forward.tsx': 'export default ({children}) => <section>{children}</section>',
+    'View.vue': `<script setup>import {ElTable,ElTableColumn,ElButton,ElInput} from 'element-plus';import Forward from './Forward.vue'</script><template>
+      <ElTable><Forward><ElTableColumn label="Name &amp; &quot;code&quot; &lt;tag&gt;" prop="name" :width="180"/></Forward><ElTableColumn label="Actions"><ElButton>Open &amp; inspect</ElButton></ElTableColumn></ElTable>
+      <ElTable><ElInput><ElTableColumn label="Discarded"/></ElInput></ElTable>
+      <ElTable :columns="[{title:'Explicit'}]"><ElTableColumn label="Ignored"/></ElTable>
+      <ElTable><ElTableColumn label="Outer"><ElTable><ElTableColumn label="Inner"/></ElTable></ElTableColumn></ElTable>
+    </template>`,
+    'View.tsx': `import {Table,Button,Input} from 'antd';import Forward from './Forward';export default () => <>
+      <Table><Forward><Table.Column title={'Name & "code" <tag>'} dataIndex="name" width={180}/></Forward><Table.Column title="Actions"><Button>Open &amp; inspect</Button></Table.Column></Table>
+      <Table><Input><Table.Column title="Discarded"/></Input></Table>
+      <Table columns={[{title:'Explicit'}]}><Table.Column title="Ignored"/></Table>
+      <Table><Table.Column title="Outer"><Table><Table.Column title="Inner"/></Table></Table.Column></Table>
+    </>`,
+  }, async root => {
+    for (const source of ['View.vue', 'View.tsx']) {
+      const { artifact } = await compileTarget(root, { id: 'columns', source, hints: { repeat: 1 } }, {}, presetOptions);
+      const html = artifact.variants.default.html;
+      const tables = elements(html).filter(node => has(node, 'data-sk-data-table'));
+      assert.equal(tables.length, 5);
+      const headers = tables.map(table => elements(table.loc.source).filter(node => node.tag === 'th'));
+      assert.deepEqual(headers.map(nodes => nodes.length), [2, 3, 1, 2, 1]);
+      assert.match(headers[0][0].loc.source, /Name &amp; &quot;code&quot; &lt;tag&gt;/);
+      assert.match(headers[0][1].loc.source, /Actions/);
+      assert.match(headers[2][0].loc.source, /Explicit/);
+      assert.match(headers[3][0].loc.source, /Outer/);
+      assert.match(headers[4][0].loc.source, /Inner/);
+      assert.match(html, />Open &amp; inspect<\/button>/);
+      assert.doesNotMatch(html, /Discarded|Ignored|skelcast-column:|data-sk-column|data-cell=/);
+      assert.equal(artifact.diagnostics.filter(row => row.code === 'FALLBACK').length, 0);
+    }
+  });
+});
+
 test('Vue declarations and exact deep import paths enable common libraries, not lookalike packages', async () => {
   await fixture(
     {

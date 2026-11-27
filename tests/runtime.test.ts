@@ -62,6 +62,22 @@ test('preview and artifact updates notify only affected boundaries', () => {
   } finally { stops.forEach(stop => stop()); setPreview({ target: null, variant: undefined, highlight: false }); }
 });
 
+test('unchanged artifacts do not notify inspectors, while changed artifacts notify once', () => {
+  let notifications = 0;
+  const stop = subscribe(() => notifications++);
+  try {
+    assert.equal(replaceArtifacts([artifact('inspector-refresh')]), true);
+    assert.equal(notifications, 1);
+    assert.equal(replaceArtifacts([artifact('inspector-refresh')]), false);
+    assert.equal(replaceArtifacts([]), false);
+    assert.equal(notifications, 1);
+    const updated = artifact('inspector-refresh');
+    updated.variants.default.html = '<article/>';
+    assert.equal(replaceArtifacts([updated]), true);
+    assert.equal(notifications, 2);
+  } finally { stop(); }
+});
+
 test('comparison updates notify only their target and clamp overlay opacity', () => {
   const calls = { selected: 0, other: 0 };
   const stops = Object.keys(calls).map(id => subscribeBoundary(id, 'request', () => calls[id as keyof typeof calls]++));

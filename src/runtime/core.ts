@@ -90,8 +90,10 @@ export function replaceArtifacts(artifacts: SkeletonArtifact[]) {
     artifactRevisions.set(artifact.id, (artifactRevisions.get(artifact.id) ?? 0) + 1);
     changed.add(artifact.id);
   }
+  if (!changed.size) return false;
   for (const entry of boundaryListeners) if (changed.has(entry.id)) entry.listener();
   emit();
+  return true;
 }
 export function releasePageSkeleton(options: { preview?: boolean } = {}) { initialReleased = true; initialPreviewAllowed = options.preview !== false; updateInitial(); }
 

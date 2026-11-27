@@ -15,10 +15,11 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   if (!template || template.src || template.lang && template.lang !== 'html') {
     result.diagnostics.push({ code: 'VUE_TEMPLATE_UNSUPPORTED', file: ctx.file, message: 'External or preprocessed templates need an adapter' }); return result;
   }
-  const scripts = [descriptor.script, descriptor.scriptSetup].filter(Boolean);
-  const scriptAst = (script: NonNullable<typeof descriptor.script>) => parseCode(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx');
+  const scripts = [descriptor.script, descriptor.scriptSetup].filter((script): script is NonNullable<typeof descriptor.script> => script != null);
+  const scriptAsts = new Map(scripts.map(script => [script, parseCode(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx')]));
+  const scriptAst = (script: NonNullable<typeof descriptor.script>) => scriptAsts.get(script)!;
   const boundaryNames = new Set<string>();
-  for (const script of scripts) for (const name of boundaryImports(scriptAst(script!), 'vue')) boundaryNames.add(name);
+  for (const script of scripts) for (const name of boundaryImports(scriptAst(script), 'vue')) boundaryNames.add(name);
   const normalize = (name: string) => name.replace(/-/g, '').toLowerCase();
   const registeredNames = new Set([...boundaryNames].map(normalize));
   let optionBoundary: string | undefined;
@@ -35,10 +36,10 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   }
   const isBoundary = (node: ElementNode) => registeredNames.has(normalize(node.tag));
   const flags = new Set<string>();
-  for (const script of scripts) walk(scriptAst(script!), n => {
+  for (const script of scripts) walk(scriptAst(script), n => {
     if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern') for (const p of n.id.properties) if (p.type === 'ObjectProperty' && loadingName(nodeName(p.key) ?? '') && p.value.type === 'Identifier') flags.add(p.value.name);
   });
-  if (scripts.some(s => s!.src)) { result.diagnostics.push({ code: 'VUE_SCRIPT_EXTERNAL', file: ctx.file, message: 'External scripts need manual boundary registration' }); return result; }
+  if (scripts.some(s => s.src)) { result.diagnostics.push({ code: 'VUE_SCRIPT_EXTERNAL', file: ctx.file, message: 'External scripts need manual boundary registration' }); return result; }
   const boundary = descriptor.scriptSetup ? [...boundaryNames][0] ?? uniqueName(ctx.source, 'SkelCastBoundary') : optionBoundary ?? uniqueName(ctx.source, 'SkelCastBoundary');
   const reuseImport = !!optionBoundary || !!descriptor.scriptSetup && boundaryNames.size > 0;
   const text = template.content;

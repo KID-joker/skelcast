@@ -57,10 +57,10 @@ async function refresh() {
   try {
     const response = await fetch('/__skelcast/state');
     if (!response.ok) throw new Error('Unable to read skeleton state');
-    data = await response.json(); replaceArtifacts(data.artifacts);
+    data = await response.json();
     if (data.statuses.every(status => status.state === 'ready')) note = '';
     if (!selected) selected = listBoundaries()[0]?.id ?? document.querySelector<HTMLElement>('[data-sk-initial]')?.dataset.skInitial ?? data.artifacts[0]?.id ?? '';
-    render();
+    if (!replaceArtifacts(data.artifacts)) render();
   } catch { note = 'Unable to read skeleton status. Ask your coding agent to run skelcast check.'; render(); }
 }
 const esc = (value: unknown) => escapeHTML(value ?? '');
@@ -119,7 +119,7 @@ function render() {
     if (!value) return;
     selected = value; selectedByUser = true; picking = false;
     if (preview.target) writeURL(selected);
-    render();
+    else render();
   });
   bind('variant', 'change', event => writeURL(getPreview().target, (event.target as HTMLSelectElement).value));
   bind('sync', 'click', () => void updateSkeletons());
@@ -138,12 +138,12 @@ function onDocumentClick(event: MouseEvent) {
   const boundary = (event.target as Element)?.closest<HTMLElement>('[data-sk-boundary]');
   if (!boundary) return;
   event.preventDefault(); event.stopPropagation();
-  selected = boundary.dataset.skBoundary!; selectedByUser = true; picking = false; writeURL(selected); render();
+  selected = boundary.dataset.skBoundary!; selectedByUser = true; picking = false; writeURL(selected);
 }
 document.addEventListener('click', onDocumentClick, true);
 window.addEventListener('popstate', readURL);
 const unsubscribe = subscribe(render);
-readURL(); render(); void refresh();
+readURL(); void refresh();
 const hot = (import.meta as any).hot;
 hot?.on('skelcast:update', refresh);
 hot?.dispose(() => { unsubscribe(); document.removeEventListener('click', onDocumentClick, true); window.removeEventListener('popstate', readURL); host.remove(); });

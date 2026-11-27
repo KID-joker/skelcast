@@ -122,9 +122,9 @@ export const elementPlusPreset: ComponentPreset = {
         style: 'display:inline-block;width:1em;height:1em;border:1px solid currentColor;border-radius:2px',
         children: '',
       };
-    if (n === 'card') return elementCard(props, policy?.slots ?? {default:children}, text);
-    if (n === 'table') return table(props, children, text, hints,true,policy?.mask??true);
-    if (n === 'tablecolumn') return column(props, children);
+    if (n === 'card') return elementCard(props, policy.slots, text);
+    if (n === 'table') return table(props, policy.columns.resolve(children), text, hints,true,policy.mask);
+    if (n === 'tablecolumn') return column(props, children, policy.columns);
     if (n === 'image' || n === 'avatar')
       return {
         tag: 'span',
@@ -137,7 +137,7 @@ export const elementPlusPreset: ComponentPreset = {
       };
     // Countdown delegates its public layout and title/prefix/suffix slots to
     // Statistic. Timer/date functions do not affect that static structure.
-    if (n === 'statistic' || n === 'countdown') return elementStatistic(props,policy?.slots ?? {},text);
+    if (n === 'statistic' || n === 'countdown') return elementStatistic(props,policy.slots,text);
     if (n === 'tag' || n === 'text')
       return {
         tag: 'span',

@@ -4,15 +4,12 @@ import {UNKNOWN,SOURCE_PROJECTION,SOURCE_INITIAL,SOURCE_TYPE_TEST,SOURCE_COLLECT
 import {ambiguousExport,type ModuleInfo} from './context.js';
 import {sourceCopyRecipe,type CopyRecipe} from './copy-recipe.js';
 import {resolveReexports} from './exports.js';
+import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 
 interface Declaration {pattern:t.VariableDeclarator['id'];expression:t.Node|null|undefined;constant:boolean}
 interface Binding {module:ModuleInfo;name:string}
 const identity=(b:Binding)=>JSON.stringify([b.module.file,b.name]);
 const script=(file:string)=>/\.[cm]?[jt]sx?$/.test(file);
-function rootName(node:t.Node|undefined|null):string|undefined{
- while(node?.type==='MemberExpression'||node?.type==='OptionalMemberExpression')node=node.object;
- return node?.type==='Identifier'?node.name:undefined;
-}
 function references(expression:t.Node,escape=false):Set<string>{
  const result=new Set<string>();
  walk(expression,(node,ancestors)=>{
@@ -81,15 +78,12 @@ export class StaticValues {
    if(decl?.type==='VariableDeclaration')for(const d of decl.declarations)for(const name of names(d.id))declarations.set(name,{pattern:d.id,expression:d.init,constant:decl.kind==='const'});
   }
   walk(mod.ast,node=>{
-   if(node.type==='AssignmentExpression'||node.type==='UpdateExpression'||node.type==='UnaryExpression'&&node.operator==='delete'){
-    const target=node.type==='AssignmentExpression'?node.left:node.argument;
+   const target=mutationTarget(node);
+   if(target){
     for(const name of target.type==='ObjectPattern'||target.type==='ArrayPattern'?names(target):[rootName(target)])if(name)unsafe.add(name);
    }
    if(node.type!=='CallExpression')return;
    const callee=node.callee;
-   if(callee.type==='MemberExpression'&&!callee.computed&&['push','pop','shift','unshift','splice','sort','reverse','copyWithin','fill','set','add','delete','clear'].includes(nodeName(callee.property)??'')){
-    const name=rootName(callee.object);if(name)unsafe.add(name);
-   }
    // Passing an object to opaque code can mutate it. Finite standard operations
    // and Vue source wrappers are interpreted separately by the evaluator.
    const member=callee.type==='MemberExpression'&&!callee.computed?nodeName(callee.property):undefined;
@@ -101,11 +95,9 @@ export class StaticValues {
    }
   });
   // Aliases of a mutated/escaped object are unsafe too, in either direction.
-  for(let pass=0;pass<declarations.size;pass++){
-   let changed=false;
-   for(const [name,d]of declarations){const source=rootName(unwrapExpression(d.expression));if(source&&(unsafe.has(name)||unsafe.has(source))){if(!unsafe.has(name)||!unsafe.has(source))changed=true;unsafe.add(name);unsafe.add(source);}}
-   if(!changed)break;
-  }
+  const aliases: [string,string][]=[];
+  for(const [name,d]of declarations){const source=rootName(unwrapExpression(d.expression));if(source)aliases.push([name,source]);}
+  propagateAliases(unsafe,aliases);
   const index={declarations,unsafe};this.indexes.set(mod,index);return index;
  }
  private async binding(mod:ModuleInfo,name:string,seen:Set<string>,budget:{remaining:number}):Promise<Binding|typeof ambiguousExport|undefined>{

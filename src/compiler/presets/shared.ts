@@ -1,6 +1,6 @@
-import { parse } from '@vue/compiler-dom';
 import type { SkeletonHints } from '../../types.js';
 import type { ComponentReference, Presentation } from './types.js';
+import type { TableColumn, TableColumns } from './columns.js';
 import { SOURCE_INITIAL, UNKNOWN, sourceCapacity, sourceCellGlyphs } from '../expression.js';
 import { escapeHTML as escape } from '../../shared.js';
 
@@ -89,26 +89,28 @@ export function card(children: string, title: unknown, text: string, padding = '
     children: (title != null ? text : '') + children,
   };
 }
-export function column(props: Record<string, unknown>, children = ''): Presentation {
+export function column(props: Record<string, unknown>, children: string, columns: TableColumns): Presentation {
   return {
     tag: 'template',
-    children: `<span data-sk-column data-label="${escape(
-      scalar(props.label ?? props.title),
-    )}" data-field="${escape(scalar(props.prop ?? props.dataIndex))}" data-width="${escape(
-      dimension(props.width, '120px'),
-    )}" data-cell="${escape(children)}"></span>`,
+    children: columns.register({
+      label: scalar(props.label ?? props.title),
+      field: scalar(props.prop ?? props.dataIndex),
+      width: dimension(props.width, '120px'),
+      fixed: true,
+      content: children,
+    }),
   };
 }
 /** Finite row/column geometry only; render callbacks and business data parsers never run. */
 export function table(
   props: Record<string, unknown>,
-  children: string,
+  slotColumns: readonly TableColumn[],
   text: string,
   hints: SkeletonHints = {},
   element = false,
   masked = true,
 ): Presentation {
-  const descriptors: { label: string; field: string; width: string; fixed?:boolean; content?: string;type?:string;align?:string;headerAlign?:string }[] = [];
+  const descriptors: TableColumn[] = [];
   const notes: string[] = [];
   let columns = props.columns;
   if(hints.state==='loading'&&columns&&typeof columns==='object'&&Object.hasOwn(columns,SOURCE_INITIAL)){
@@ -129,22 +131,7 @@ export function table(
           'Custom/grouped table column renderers need a source adapter; body cells use finite placeholders.',
         );
     }
-  if (!descriptors.length) {
-    const walk = (node: any) => {
-      if (node.type === 1 && node.props.some((p: any) => p.name === 'data-sk-column')) {
-        const attrs = Object.fromEntries(node.props.map((p: any) => [p.name, p.value?.content]));
-        descriptors.push({
-          label: attrs['data-label'] ?? '',
-          field: attrs['data-field'] ?? '',
-          width: attrs['data-width'] ?? '120px',
-          fixed:true,
-          content: attrs['data-cell'] ?? '',
-        });
-      }
-      for (const n of node.children ?? []) walk(n);
-    };
-    walk(parse(children));
-  }
+  if (!descriptors.length) descriptors.push(...slotColumns);
   if (!descriptors.length) {
     for (let i = 0; i < 3; i++) descriptors.push({ label: '', field: '', width: '120px' });
     notes.push(

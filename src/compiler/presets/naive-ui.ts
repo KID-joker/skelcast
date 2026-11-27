@@ -62,5 +62,5 @@ export const naiveUIPreset: ComponentPreset = {
   package: 'naive-ui',
   role: (name,props) => ['nbutton','ninput','ninputnumber','nselect','ndatepicker','ncolorpicker','nswitch','ncheckbox','nradio','nslider','ncalendar','ninputgrouplabel','nicon'].includes(name) ? readonly(props)&&['ninput','ninputnumber'].includes(name)?'data':'control' : ['nimage','ncode','nstatistic','ntag','nprogress','nh2','nh3','ndatatable'].includes(name) ? 'data' : ['nconfigprovider','ndivider','ncard','ninputgroup','ngrid','ngi','ngriditem','nspace','ntooltip','npopover','nellipsis','nscrollbar','nform','nformitem','nalert','ntable'].includes(name) ? 'layout' : undefined,
   slots: name => name==='ncalendar'?['header']: ['ntooltip', 'npopover'].includes(name) ? ['trigger'] : ['default', 'header', 'footer', 'label'],
-  present: (name,props,children,text,hints,policy) => name==='ndatatable'?table(props,children,text,hints,false,policy?.mask??true):naivePresentation(name,props,children,text,policy?.mask),
+  present: (name,props,children,text,hints,policy) => name==='ndatatable'?table(props,policy.columns.resolve(children),text,hints,false,policy.mask):naivePresentation(name,props,children,text,policy.mask),
 };

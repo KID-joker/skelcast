@@ -148,8 +148,8 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           };border:1px solid #d9d9d9;border-radius:4px`,
           children,
         };
-      if (name === 'table') return table(props, children, text, hints,false,policy?.mask??true);
-      if (name === 'table.column' || name === 'tablecolumn') return column(props, children);
+      if (name === 'table') return table(props, policy.columns.resolve(children), text, hints,false,policy.mask);
+      if (name === 'table.column' || name === 'tablecolumn') return column(props, children, policy.columns);
       if (name === 'card') return card(children, props.title, text, '24px');
       if (name === 'card.meta' || name === 'cardmeta')
         return {
