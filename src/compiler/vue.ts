@@ -6,8 +6,8 @@ import { type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
 import { parseExpression } from '@babel/parser';
 import { parserOptions, type ElementNode, type TemplateChildNode as VueNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
-import { boundaryContentContext, hasStateBinding } from './branches.js';
-import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty,exclusiveChoice} from './loading-state.js';
+import { boundaryContentContext } from './branches.js';
+import { collectionRoot, loadingBranch, projectCollection, exclusiveChoice } from './loading-state.js';
 import{initialString}from'./initial-state.js';
 import { planCollection } from './collections.js';
 
@@ -98,10 +98,10 @@ export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: Re
           if(result===true||result===UNKNOWN&&!choices.has(exclusive.key))choices.set(exclusive.key,exclusive.value);
           else if(result===UNKNOWN&&choices.get(exclusive.key)!==exclusive.value){this.record('branch',expr,'Exclude an incompatible alternative in the representative loading frame',ctx,node);continue;}
         }
-        const boundState=hasStateBinding(expr,ctx),presence=boundState?undefined:loadingPresence(expr,ctx);
-        if(presence&&collectionRoots(nodes,ctx).has(presence.root)&&collectionEmpty(presence.root,ctx)&&projectsCollection(presence.root,ctx)){
-          result=presence.present;
-          ctx={...ctx,projectedCollections:new Set([...ctx.projectedCollections??[],presence.root])};
+        const { boundState, projected } = loadingBranch(expr, ctx, root => collectionRoots(nodes, ctx).has(root));
+        if (projected) {
+          result = projected.present;
+          ctx = projectCollection(ctx, projected.root);
           this.diagnose('LOADING_PROJECTION','Render the source collection template for loading; future result count and values remain unknown',ctx,node);
         }
         if (result !== UNKNOWN && !result) {
@@ -205,8 +205,8 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       if (!p.arg || p.arg.type === 4 && p.arg.isStatic) assign(p, p.arg?.content ?? 'modelValue', evaluateString(expression(p.exp) ?? '', ctx));
     } else if (p.name === 'show') {
       const show = evaluateString(expression(p.exp) ?? '', ctx);
-      const value=expression(p.exp)??'',presence=hasStateBinding(value,ctx)?undefined:loadingPresence(value,ctx);
-      if(presence&&!presence.present&&projectsCollection(presence.root,ctx)&&collectionEmpty(presence.root,ctx))return '';
+      const { projected } = loadingBranch(expression(p.exp) ?? '', ctx, (_root, present) => !present);
+      if (projected) return '';
       if (show !== UNKNOWN && !show) return '';
     } else if (p.name === 'text') { textContent = true; textValue = evaluateString(expression(p.exp) ?? '', ctx); }
     else if (p.name === 'html') {

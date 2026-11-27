@@ -4,8 +4,8 @@ import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } 
 import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
-import { boundaryContentContext, hasStateBinding } from './branches.js';
-import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty} from './loading-state.js';
+import { boundaryContentContext } from './branches.js';
+import { collectionRoot, loadingBranch, projectCollection } from './loading-state.js';
 import { renderCall } from './vue-render.js';
 import { planCollection } from './collections.js';
 
@@ -44,8 +44,13 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   if (node.type === 'JSXExpressionContainer') return node.expression.type === 'JSXEmptyExpression' ? '' : this.jsx(node.expression, ctx);
   if (node.type === 'ConditionalExpression') {
     let test = evaluate(node.test, ctx);
-    const text=expressionText(node.test,ctx),boundState=hasStateBinding(text,ctx),presence=boundState?undefined:loadingPresence(text,ctx);
-    if(presence&&projectsCollection(presence.root,ctx)&&collectionEmpty(presence.root,ctx)&&(hasCollection(node.consequent,presence.root,ctx)||hasCollection(node.alternate,presence.root,ctx))){test=presence.present;ctx={...ctx,projectedCollections:new Set([...ctx.projectedCollections??[],presence.root])};this.diagnose('LOADING_PROJECTION','Render the source collection template for loading; response values remain unknown',ctx,node);}
+    const text = expressionText(node.test, ctx);
+    const { boundState, projected } = loadingBranch(text, ctx, root => hasCollection(node.consequent, root, ctx) || hasCollection(node.alternate, root, ctx));
+    if (projected) {
+      test = projected.present;
+      ctx = projectCollection(ctx, projected.root);
+      this.diagnose('LOADING_PROJECTION', 'Render the source collection template for loading; response values remain unknown', ctx, node);
+    }
     if (this.target.kind === 'request' && this.hints.state!=='source' && test !== UNKNOWN && !boundState && repeatedContent(test ? node.alternate : node.consequent) && !repeatedContent(test ? node.consequent : node.alternate)) this.diagnose('EMPTY_STATE', 'Source-default branch excludes repeated request content; declare a finite populated/empty variant when needed', ctx, node);
     this.record('branch', text, test === UNKNOWN ? 'Default to consequent; override with bindings' : `Resolved to ${!!test}`, ctx, node);
     if (test === UNKNOWN) this.diagnose('BRANCH_DEFAULT', 'Unknown condition: chose consequent; supply bindings to select a branch', ctx, node);
@@ -53,8 +58,9 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   }
   if (node.type === 'LogicalExpression') {
     let left = evaluate(node.left, ctx);
-    const text=expressionText(node.left,ctx),presence=hasStateBinding(text,ctx)?undefined:loadingPresence(text,ctx);
-    if(node.operator==='&&'&&presence&&projectsCollection(presence.root,ctx)&&collectionEmpty(presence.root,ctx)&&(!presence.present||hasCollection(node.right,presence.root,ctx)))left=presence.present;
+    const text = expressionText(node.left, ctx);
+    const { projected } = loadingBranch(text, ctx, (root, present) => node.operator === '&&' && (!present || hasCollection(node.right, root, ctx)));
+    if (projected) left = projected.present;
     if (left === UNKNOWN) { this.record('branch', expressionText(node.left, ctx), 'Include optional content by default', ctx, node); return this.jsx(node.right, ctx); }
     if (node.operator === '&&') return left ? this.jsx(node.right, ctx) : '';
     return left != null && (node.operator === '??' || left) ? this.jsx(node.left, ctx) : this.jsx(node.right, ctx);

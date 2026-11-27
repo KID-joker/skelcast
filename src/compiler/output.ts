@@ -6,6 +6,7 @@ import type { RenderContext, SourceNode } from './context.js';
 import type { ElementMarkers, RenderHost } from './render-host.js';
 import { imageRatio } from './images.js';
 import type { StyleOptions } from '../types.js';
+import type { RootMarkup } from './attributes.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
 // attributes are owned by the generator and cannot be supplied by source markup.
@@ -37,7 +38,7 @@ export function renderAttributes(this: RenderHost, props: Record<string, Value>)
   }
   return attrs;
 }
-export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers: ElementMarkers = {}): string {
+export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers: ElementMarkers = {}, markup?: RootMarkup): string {
   for (const [key, value] of Object.entries(props)) {
     if (layoutAttribute(key) && (value === UNKNOWN || value != null && !['string', 'number', 'boolean'].includes(typeof value))) {
       this.diagnose('LAYOUT_ATTRIBUTE_UNKNOWN', `Cannot resolve ${key}; attribute selectors may not match. Supply an explicit binding`, ctx, node);
@@ -69,7 +70,10 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
       attrs += ` ${key}="${escapeHTML(value === true ? '' : value)}"`;
     }
   }
-  return voids.has(tag) ? `<${tag}${attrs}>` : `<${tag}${attrs}>${children}</${tag}>`;
+  const opening = `<${tag}${attrs}>`;
+  const html = voids.has(tag) ? opening : `${opening}${children}</${tag}>`;
+  markup?.rememberElement(html, tag, opening);
+  return html;
 }
 export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderContext, origin: SourceNode): string {
   this.record('component', 'v-html', 'Replace bounded static HTML content with inert semantic placeholders', ctx, origin);

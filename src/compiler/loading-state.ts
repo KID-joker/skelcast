@@ -2,6 +2,7 @@ import type * as t from '@babel/types';
 import {nodeName,walk} from './ast.js';
 import {evaluateString,parseSourceExpression,UNKNOWN,type ExpressionContext} from './expression.js';
 import type {RenderContext,ModuleInfo} from './context.js';
+import { hasStateBinding } from './branches.js';
 
 interface CollectionFacts { aliases: Map<string, string>; updated: Set<string> }
 // Render contexts copy ModuleInfo but retain its immutable import table.
@@ -73,6 +74,21 @@ export function repeatCapacity(text:string,ctx:RenderContext):number{
  return 4;
 }
 export function collectionEmpty(root:string|undefined,ctx:RenderContext):boolean{const value=root?evaluateString(root,ctx):UNKNOWN;return Array.isArray(value)&&value.length===0;}
+
+/** Share loading eligibility; each frontend supplies its own collection syntax
+ * and decides whether the projected context should reach subsequent siblings. */
+export function loadingBranch(text: string, ctx: RenderContext, includes: (root: string, present: boolean) => boolean) {
+ const boundState = hasStateBinding(text, ctx);
+ const presence = boundState ? undefined : loadingPresence(text, ctx);
+ const projected = presence && projectsCollection(presence.root, ctx) && collectionEmpty(presence.root, ctx)
+  && includes(presence.root, presence.present) ? presence : undefined;
+ return { boundState, projected };
+}
+
+export function projectCollection(ctx: RenderContext, root: string): RenderContext {
+ return { ...ctx, projectedCollections: new Set([...ctx.projectedCollections ?? [], root]) };
+}
+
 export function exclusiveChoice(text:string,ctx?:ExpressionContext):{key:string;value:string}|undefined{
  try{const node=parseSourceExpression(text,ctx);if(node?.type!=='BinaryExpression'||node.operator!=='===')return;
   const key=path(node.left),value=node.right;

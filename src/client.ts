@@ -1,4 +1,4 @@
-import { forced, getPreview, listBoundaries, replaceArtifacts, setPreview, subscribe, type ComparisonMode, type PreviewState } from './runtime/core.js';
+import { forced, getPreview, listBoundaries, replaceArtifacts, selectedVariant, setPreview, subscribe, type ComparisonMode, type PreviewState } from './runtime/core.js';
 import type { SkeletonArtifact } from './types.js';
 import type { TargetStatus } from './generator.js';
 import { patchChildren } from './devtools/dom.js';
@@ -72,22 +72,21 @@ async function refresh() {
 }
 const esc = (value: unknown) => escapeHTML(value ?? '');
 function render() {
+  const boundaries = listBoundaries();
   if (!selectedByUser) {
-    const mounted = listBoundaries();
-    const active = mounted.find(boundary => boundary.kind === 'page') ?? mounted[0];
+    const active = boundaries.find(boundary => boundary.kind === 'page') ?? boundaries[0];
     if (active) selected = active.id;
   }
   const preview = getPreview();
   const artifact = data.artifacts.find(a => a.id === selected);
-  const mounted = listBoundaries().filter(b => b.id === selected);
+  const mounted = boundaries.filter(b => b.id === selected);
   const pending = mounted.some(b => b.pending);
   const status = data.statuses.find(s => s.id === selected);
   const held = !!artifact && forced(selected, artifact.kind);
   const comparing = preview.comparison !== 'off' && held;
   const stateNames = { ready: 'Up to date', stale: 'Out of date', missing: 'Missing', corrupt: 'Modified' };
   const needsUpdate = data.statuses.some(item => item.state !== 'ready');
-  const requestedVariant = (artifact && forced(selected, artifact.kind) ? preview.variant : undefined) ?? mounted[0]?.variant ?? artifact?.defaultVariant ?? '';
-  const variant = artifact?.variants[requestedVariant] ? requestedVariant : artifact?.defaultVariant ?? '';
+  const variant = artifact ? selectedVariant(artifact, mounted[0]?.variant, held) : '';
   const template = document.createElement('template');
   template.innerHTML = `<style>${devtoolsCSS}</style>
     <div class="bar" data-ui-key="bar" role="group" aria-label="SkelCast preview controls"><span class="title"><span class="brand-mark">${icon('layers')}</span>SkelCast</span>

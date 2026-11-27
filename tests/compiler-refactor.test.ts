@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { parse } from '@vue/compiler-dom';
-import { compileTarget } from '../src/compiler/index.js';
+import { compileTarget, SourceCompiler } from '../src/compiler/index.js';
 import type { CompilerOptions } from '../src/compiler/modules.js';
 import { digest } from '../src/compiler/styles.js';
 import { parseExpression } from '@babel/parser';
@@ -12,8 +12,8 @@ import { renderJSX } from '../src/compiler/react.js';
 import type { RenderContext } from '../src/compiler/context.js';
 import type { RenderHost } from '../src/compiler/render-host.js';
 import { analyzeReact } from '../src/init/react.js';
-import { inheritRootScopes } from '../src/compiler/attributes.js';
-import { renderAttributes } from '../src/compiler/output.js';
+import { inheritRootScopes, RootMarkup } from '../src/compiler/attributes.js';
+import { renderAttributes, renderElement } from '../src/compiler/output.js';
 import { UNKNOWN } from '../src/compiler/expression.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
@@ -48,6 +48,56 @@ test('root attribute merging filters without serializing probes and preserves so
     assert.match(result, / data-scope\b/);
     assert.match(result, /> <span>Text<\/span> <\/section>$/);
   }
+});
+
+test('root inheritance carries opening tags across wrappers without parsing their descendants', () => {
+  const parsed: string[] = [];
+  const markup = new RootMarkup((source, options) => { parsed.push(source); return parse(source, options); });
+  const host = { options: {}, masked: () => false, attributes: (props: Record<string, unknown>) => renderAttributes.call(host, props), nodeId: () => 'root' } as unknown as RenderHost;
+  const children = '<article><span>Keep &amp; preserve</span></article>'.repeat(1000);
+  const html = renderElement.call(host, 'section', { class: 'inner', style: 'color:red' }, children, { scopes: [] } as unknown as RenderContext, undefined, {}, markup);
+  const inherit = (html: string, scopes: string[], attrs: Record<string, unknown>) =>
+    inheritRootScopes(html, scopes, attrs, '', host.attributes, undefined, markup);
+  const first = inherit(html, ['data-inner'], { class: 'middle', style: 'padding:8px' });
+  const result = inherit(first, ['data-inner', 'data-outer'], { class: 'outer', style: 'margin:4px' });
+  assert.match(result, /class="inner middle outer"/);
+  assert.match(result, /style="color:red;padding:8px;margin:4px"/);
+  assert.equal((result.match(/data-inner/g) ?? []).length, 1);
+  assert.match(result, / data-outer\b/);
+  assert.equal(result.slice(result.indexOf('>') + 1), children + '</section>');
+  assert.equal(parsed.length, 2);
+  assert.ok(parsed.every(source => !source.includes('<article>')), 'only opening tags are parsed');
+});
+
+test('fragment inheritance retains comments, quoted delimiters, void roots and per-root style precedence', () => {
+  const markup = new RootMarkup();
+  const host = { options: {} } as RenderHost;
+  const attributes = (props: Record<string, unknown>) => renderAttributes.call(host, props);
+  const html = '<!--before--><section data-note="A > B" style="color:red"><span>Body</span></section> between <input value="a > b"><!--after-->';
+  const first = inheritRootScopes(html, ['data-inner'], { class: 'ignored', id: 'ignored' }, '--root:1', attributes, undefined, markup);
+  const result = inheritRootScopes(first, ['data-inner', 'data-outer'], {}, '--parent:2', attributes, undefined, markup);
+  const expected = '<!--before--><section style="color:red;--root:1;;--parent:2;" data-outer  data-inner data-note="A > B" ><span>Body</span></section> between <input style="--root:1;;--parent:2;" data-outer  data-inner value="a > b"><!--after-->';
+  assert.equal(result, expected);
+  assert.doesNotMatch(result, /ignored/);
+});
+
+test('component name indexes retain first normalized imports, exact matches and namespace exports', async () => {
+  const compiler = new SourceCompiler(process.cwd(), { id: 'names', source: 'View.vue' }, {});
+  const first = { file: '/first.vue', request: './first.vue', exported: 'default' };
+  const second = { file: '/second.vue', request: './second.vue', exported: 'default' };
+  const imports = new Map([
+    ['FooBar', first], ['Foo_Bar', second],
+    ['Widgets', { file: '/widgets.ts', request: './widgets', exported: '*' }],
+  ]);
+  const ctx = { module: { imports } } as RenderContext;
+  assert.equal(await compiler.componentReference('foo-bar', ctx), first);
+  assert.equal(await compiler.componentReference('Foo_Bar', ctx), second);
+  assert.deepEqual(await compiler.componentReference('Widgets.Card.Header', ctx), {
+    file: '/widgets.ts', request: './widgets', exported: 'Card.Header',
+  });
+  assert.equal(await compiler.componentReference('foo:bar', { ...ctx, module: { ...ctx.module } }), first);
+  const other = { ...ctx, module: { ...ctx.module, imports: new Map([['FooBar', second]]) } };
+  assert.equal(await compiler.componentReference('foo-bar', other), second);
 });
 
 test('local render calls retain isolated arguments and selected-region parameter defaults', async () => {

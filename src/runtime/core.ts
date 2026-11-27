@@ -123,9 +123,12 @@ export function replaceArtifacts(artifacts: SkeletonArtifact[], versions?: Reado
 }
 export function releasePageSkeleton(options: { preview?: boolean } = {}) { initialReleased = true; initialPreviewAllowed = options.preview !== false; updateInitial(); }
 
+export function selectedVariant(artifact: SkeletonArtifact, variant?: string, held = forced(artifact.id, artifact.kind)): string {
+  const chosen = (held ? preview.variant : undefined) ?? variant ?? artifact.defaultVariant;
+  return artifact.variants[chosen] ? chosen : artifact.defaultVariant;
+}
 export function selectedView(artifact: SkeletonArtifact, variant?: string) {
-  const chosen = (forced(artifact.id, artifact.kind) ? preview.variant : undefined) ?? variant ?? artifact.defaultVariant;
-  return artifact.variants[chosen] ?? artifact.variants[artifact.defaultVariant] ?? Object.values(artifact.variants)[0];
+  return artifact.variants[selectedVariant(artifact, variant)] ?? Object.values(artifact.variants)[0];
 }
 export function mountSkeleton(host: HTMLElement, artifact: SkeletonArtifact, variant?: string): () => void {
   const view = selectedView(artifact, variant);

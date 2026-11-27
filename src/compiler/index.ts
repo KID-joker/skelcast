@@ -1,7 +1,7 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName, walk, type RenderFunction } from './ast.js';
 import { loadingFrame, prepareRenderFunction } from './branches.js';
-import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
+import { fallthroughAttrs, inheritRootScopes, RootMarkup } from './attributes.js';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { type TemplateChildNode as VueNode, type ElementNode, type RootNode, type ExpressionNode } from '@vue/compiler-dom';
@@ -46,6 +46,9 @@ export class SourceCompiler extends SourceModules {
   private region?:VueRegion;
   private expressions = new Map<string, t.Expression | null>();
   private tableColumns = new TableColumns();
+  private componentImports = new WeakMap<ModuleInfo['imports'], Map<string, ComponentReference>>();
+  private configuredComponents = new Set(Object.keys(this.options.components ?? {}).map(componentName));
+  private rootMarkup = new RootMarkup();
   selectVueNode(node:VueNode,ctx:RenderContext){return this.region?.mode(node,ctx);}
   captureVueRegion(render:()=>Promise<string>){return this.region?this.region.capture(render):render();}
   hasSelectedSlot(slot:SourceSlot){return !!this.region?.active&&this.region.carries(slot);}
@@ -86,7 +89,7 @@ export class SourceCompiler extends SourceModules {
     return this.fallback(ctx, node, 'Static expansion budget reached; simplify the boundary or supply a local adapter');
   }
   private inheritRootScopes(html: string, scopes: string[], attrs: Record<string, Value> = {}, rootStyle = ''): string {
-    return inheritRootScopes(html, scopes, attrs, rootStyle, props => this.attributes(props), this.options.styles);
+    return inheritRootScopes(html, scopes, attrs, rootStyle, props => this.attributes(props), this.options.styles, this.rootMarkup);
   }
   async jsxNodes(nodes: (Ast | null)[], ctx: RenderContext): Promise<string> {
     let html = '';
@@ -270,10 +273,19 @@ export class SourceCompiler extends SourceModules {
     const [root, ...members] = tag.split('.');
     const base = ctx.module.imports.get(root);
     const qualified = members.length && base ? { ...base, exported: base.exported === '*' ? members.join('.') : base.exported+'.'+members.join('.') } : undefined;
-    const direct = ctx.module.imports.get(tag) ?? qualified ?? [...ctx.module.imports.entries()].find(([name]) => componentName(name) === componentName(tag))?.[1];
+    let imports = this.componentImports.get(ctx.module.imports);
+    if (!imports) {
+      imports = new Map();
+      for (const [name, reference] of ctx.module.imports) {
+        const key = componentName(name);
+        if (!imports.has(key)) imports.set(key, reference);
+      }
+      this.componentImports.set(ctx.module.imports, imports);
+    }
+    const name = componentName(tag);
+    const direct = ctx.module.imports.get(tag) ?? qualified ?? imports.get(name);
     if (direct?.file) return direct;
-    const configured = Object.keys(this.options.components ?? {}).some(name => componentName(name) === componentName(tag));
-    return configured ? (await this.globalComponents()).get(componentName(tag)) ?? direct : direct ?? (await this.globalComponents()).get(componentName(tag));
+    return this.configuredComponents.has(name) ? (await this.globalComponents()).get(name) ?? direct : direct ?? (await this.globalComponents()).get(name);
   }
   async preset(tag: string, reference: ComponentReference | undefined, props: Record<string, Value>, slot: SourceSlot, node: SourceNode): Promise<string | undefined> {
     const ctx = slot.context;
@@ -318,7 +330,7 @@ export class SourceCompiler extends SourceModules {
       this.inlineStyles.set(key, { value, file: ctx.module.file });
       props = { ...props, style: `--sk-inline-${key}:0` };
     }
-    return renderElement.call(this, tag, props, children, ctx, node, markers);
+    return renderElement.call(this, tag, props, children, ctx, node, markers, this.rootMarkup);
   }
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string> { return renderVueNodes.call(this, nodes, ctx); }
   vueNode(node: VueNode, ctx: RenderContext, skipFor = false): Promise<string> { return renderVueNode.call(this, node, ctx, skipFor); }

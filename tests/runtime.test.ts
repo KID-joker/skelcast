@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedView, setPreview, snapshot, subscribe, subscribeBoundary } from '../src/runtime/core.js';
+import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedVariant, selectedView, setPreview, snapshot, subscribe, subscribeBoundary } from '../src/runtime/core.js';
 import type { SkeletonArtifact } from '../src/types.js';
 
 test('initial shell retires for a different SPA entry route and stays retired across navigation', () => {
@@ -30,6 +30,29 @@ test('initial shell retires for a different SPA entry route and stays retired ac
 });
 
 const artifact = (id: string): SkeletonArtifact => ({ id, kind: 'request', render: 'light', source: 'Page.vue', defaultVariant: 'default', variants: { default: { html: '<div/>', css: '' }, list: { html: '<section/>', css: '' } }, diagnostics: [], evidence: [], sources: {} });
+
+test('toolbar and mounted views share preview, boundary and default variant precedence', () => {
+  const original = getPreview(), item = artifact('variant-selection');
+  try {
+    for (const [target, previewVariant, boundaryVariant, expected] of [
+      [null, 'list', 'default', 'default'],
+      [null, undefined, 'list', 'list'],
+      [item.id, 'list', 'default', 'list'],
+      [item.id, 'missing', 'list', 'default'],
+      [item.id, undefined, 'list', 'list'],
+      [null, undefined, 'missing', 'default'],
+    ] as const) {
+      setPreview({ target, variant: previewVariant });
+      assert.equal(selectedVariant(item, boundaryVariant), expected);
+      assert.equal(selectedView(item, boundaryVariant), item.variants[expected]);
+    }
+    const legacy = { ...item, defaultVariant: 'absent' };
+    assert.equal(selectedVariant(legacy, 'missing'), 'absent');
+    assert.equal(selectedView(legacy, 'missing'), item.variants.default);
+    const empty = { ...legacy, variants: {} };
+    assert.equal(selectedView(empty), undefined);
+  } finally { setPreview(original); }
+});
 
 test('identical normalized preview states preserve identity and do not notify subscribers', () => {
   const original = getPreview();
