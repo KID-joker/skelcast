@@ -38,7 +38,7 @@ export function objectConfig(ast: t.File): t.ObjectExpression | undefined {
   if (value?.type === 'CallExpression' && value.arguments.length === 1) value = unwrap(value.arguments[0]);
   return value?.type === 'ObjectExpression' ? value : undefined;
 }
-export const loadingName = (s: string) => /^(?:is)?(?:loading|pending|fetching|initialloading)$|(?:Loading|Pending|Fetching)$/.test(s) || /^(?:isLoading|isPending|isFetching)$/.test(s);
+export const loadingName = (s: string) => /^(?:is)?(?:loading|pending|fetching|initialloading)$|(?:Loading|Pending|Fetching)$/.test(s);
 const unsafeCondition = (node: t.Node) => ['CallExpression', 'OptionalCallExpression', 'AssignmentExpression', 'UpdateExpression', 'AwaitExpression', 'NewExpression'].includes(node.type);
 /** One file analysis shares syntax facts; known loading flags remain caller-local. */
 export function createConditionAnalyzer() {

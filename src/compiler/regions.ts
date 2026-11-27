@@ -1,8 +1,8 @@
 import type * as t from '@babel/types';
 import type {ElementNode,TemplateChildNode} from '@vue/compiler-dom';
 import {VISITOR_KEYS} from '@babel/types';
-import {isRenderFunction,nodeName,patternNames} from './ast.js';
-import {UNKNOWN,SOURCE_RENDER,evaluate,safeKey,type Value} from './expression.js';
+import {isRenderFunction,patternNames} from './ast.js';
+import {UNKNOWN,SOURCE_RENDER,bindPattern,evaluate,type Value} from './expression.js';
 import {slotValue,type SourceSlot,type RenderContext} from './context.js';
 import type {RenderHost} from './render-host.js';
 import{initialExpression}from'./initial-state.js';
@@ -42,26 +42,9 @@ export class VueRegion {
 
 /** Slot arguments have their own lexical bindings, including aliases/defaults. */
 export function bindSlotArgument(pattern:t.Node,value:Value,ctx:RenderContext):void{
- if(pattern.type==='Identifier'){
-  ctx.env[pattern.name]=value;
-  for(const key of Object.keys(ctx.initialValues??{}))if(key===pattern.name||key.startsWith(pattern.name+'.'))delete ctx.initialValues![key];
-  return;
- }
- if(pattern.type==='AssignmentPattern'){bindSlotArgument(pattern.left,value===undefined?evaluate(pattern.right,ctx):value,ctx);return;}
- if(pattern.type==='ArrayPattern'){pattern.elements.forEach((p,i)=>{if(p)bindSlotArgument(p,Array.isArray(value)?value[i]:UNKNOWN,ctx);});return;}
- if(pattern.type!=='ObjectPattern')return;
- const omitted=new Set<string>();
- for(const property of pattern.properties){
-  if(property.type==='RestElement'){
-   const rest=value&&value!==UNKNOWN&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([key])=>safeKey(key)&&!omitted.has(key))):UNKNOWN;
-   bindSlotArgument(property.argument,rest,ctx);continue;
-  }
-  const key=property.computed?evaluate(property.key,ctx):nodeName(property.key);
-  if(!safeKey(key)){bindSlotArgument(property.value,UNKNOWN,ctx);continue;}
-  omitted.add(key);
-  const field=value&&value!==UNKNOWN&&typeof value==='object'?Object.hasOwn(value,key)?(value as Record<string,Value>)[key]:undefined:UNKNOWN;
-  bindSlotArgument(property.value,field,ctx);
- }
+ bindPattern(pattern,value,ctx.env,{context:ctx,onBind(name){
+  for(const key of Object.keys(ctx.initialValues??{}))if(key===name||key.startsWith(name+'.'))delete ctx.initialValues![key];
+ }});
 }
 export function bindSlotInitial(pattern:t.Node,initial:Value,ctx:RenderContext){
  if(initial===UNKNOWN)return;

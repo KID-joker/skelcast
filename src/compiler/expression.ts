@@ -361,14 +361,40 @@ export function evaluateString(text: string, ctx: ExpressionContext): Value {
   catch { return UNKNOWN; }
 }
 
-export function bindPattern(pattern: t.Node | null | undefined, value: Value, env: Record<string, Value>): void {
+interface PatternOptions {
+  /** Slots interpret defaults, computed keys and object rest; declarations keep
+   * opaque/missing values and leave component defaults to their caller. */
+  context: ExpressionContext;
+  onBind?: (name: string) => void;
+}
+
+export function bindPattern(pattern: t.Node | null | undefined, value: Value, env: Record<string, Value>, options?: PatternOptions): void {
   if (!pattern) return;
-  if (pattern.type === 'Identifier') env[pattern.name] = value;
-  else if (pattern.type === 'AssignmentPattern') bindPattern(pattern.left, value, env);
-  else if (pattern.type === 'ObjectPattern') {
-    for (const p of pattern.properties) if (p.type === 'ObjectProperty') {
-      const key = nodeName(p.key);
-      bindPattern(p.value, value && value !== UNKNOWN && typeof value === 'object' && key != null && Object.hasOwn(value, key) ? (value as Record<string, unknown>)[key!] : UNKNOWN, env);
+  const bind = (node: t.Node | null, next: Value) => bindPattern(node, next, env, options);
+  if (pattern.type === 'Identifier') {
+    env[pattern.name] = value;
+    options?.onBind?.(pattern.name);
+  } else if (pattern.type === 'AssignmentPattern') {
+    bind(pattern.left, options && value === undefined ? evaluate(pattern.right, options.context) : value);
+  } else if (pattern.type === 'ArrayPattern') {
+    pattern.elements.forEach((p, i) => bind(p, Array.isArray(value) ? value[i] : UNKNOWN));
+  } else if (pattern.type === 'ObjectPattern') {
+    const object = value && value !== UNKNOWN && typeof value === 'object' ? value as Record<string, Value> : undefined;
+    const omitted = new Set<string>();
+    for (const property of pattern.properties) {
+      if (property.type === 'RestElement') {
+        if (options) bind(property.argument, object ? Object.fromEntries(Object.entries(object).filter(([key]) => safeKey(key) && !omitted.has(key))) : UNKNOWN);
+        continue;
+      }
+      const key = options && property.computed ? evaluate(property.key, options.context) : nodeName(property.key);
+      if (typeof key !== 'string' || options && !safeKey(key)) { bind(property.value, UNKNOWN); continue; }
+      omitted.add(key);
+      let field: Value = UNKNOWN;
+      if (object) {
+        if (Object.hasOwn(object, key)) field = object[key];
+        else if (options) field = undefined;
+      }
+      bind(property.value, field);
     }
-  } else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((p, i) => bindPattern(p, Array.isArray(value) ? value[i] : UNKNOWN, env));
+  }
 }

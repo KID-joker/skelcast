@@ -60,6 +60,18 @@ test('primitive loose equality follows JavaScript coercion without changing stri
   assert.equal(evaluate('left == right', { left: 1n, right: '1' }), true);
 });
 
+test('initial facts retain longest enumerable prefix matching and current lexical scope', () => {
+  const initialValues = { settings: { panel: { width: 10 } }, 'settings.panel': { width: 20 }, 'settings.panel.width': 30 };
+  const ctx = { code: '', env: { settings: UNKNOWN }, bindings: {}, initialValues, expressions: new Map() };
+  assert.equal(initialString('settings.panel.width + 1', ctx), 31);
+  delete (initialValues as Record<string, unknown>)['settings.panel.width'];
+  assert.equal(initialString('settings.panel.width', ctx), 20);
+  Object.defineProperty(initialValues, 'settings.panel.width', { value: 99 });
+  assert.equal(initialString('settings.panel.width', ctx), 20, 'non-enumerable facts remain excluded');
+  assert.equal(initialString('[1].map(settings => settings + 1)', ctx), UNKNOWN);
+  assert.equal(initialString('settings.panel.width', { ...ctx, initialValues: Object.create({ settings: { panel: { width: 80 } } }) }), UNKNOWN);
+});
+
 test('loose equality never coerces objects or functions and propagates unknown values', () => {
   let calls = 0;
   const object = { valueOf() { calls++; throw new Error('business code'); } };

@@ -55,6 +55,8 @@ export function prepareRenderFunction(
   if (!isRenderFunction(fn)) return;
   const parameter = fn.params[0];
   bindPattern(parameter, props, context.env);
+  // Component defaults intentionally apply only to missing/unknown top-level
+  // props. Explicit undefined and nested defaults retain their existing values.
   if (parameter?.type === 'ObjectPattern') {
     for (const property of parameter.properties) {
       if (property.type !== 'ObjectProperty' || property.value.type !== 'AssignmentPattern') continue;

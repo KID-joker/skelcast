@@ -31,11 +31,10 @@ import { fileURLToPath } from 'node:url';
 import { pruneCSS } from './prune-css.js';
 import {tableWrapper} from './table-wrapper.js';
 import {VueRegion,bindSlotArgument,bindSlotInitial,projectSelectedSlots} from './regions.js';
-import{presentationInputs}from'./initial-state.js';
 import { SourceFiles } from './source-files.js';
 import { sharedStyleSeparator } from '../shared.js';
 import { bindSetupDeclarations } from './instance-values.js';
-import { camelProps, presetProps } from './props.js';
+import { componentInputs, presetProps } from './props.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -101,8 +100,8 @@ export class SourceCompiler extends SourceModules {
     const prefix = `${file}::`;
     const scoped = Object.fromEntries(Object.entries(this.hints.bindings ?? {}).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
     const bindings = { ...this.options.componentBindings?.[file], ...this.hints.bindings, ...scoped };
-    const input=presentationInputs(props);
-    const values = { ...mod.propDefaults, ...input.values, ...camelProps(input.values) };
+    const input = componentInputs(props, mod.propDefaults, 'template');
+    const values = input.values;
     const initialValues={...input.initial};
     const env: Record<string, Value> = { ...mod.env, ...values, $slots: props.__skSlots ?? {}, $attrs: fallthroughAttrs(mod, props) };
     for (const name of mod.propBindings){env[name] = values;for(const[key,value]of Object.entries(input.initial))initialValues[name+'.'+key]=value;}

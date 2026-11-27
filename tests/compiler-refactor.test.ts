@@ -7,6 +7,10 @@ import { parse } from '@vue/compiler-dom';
 import { compileTarget } from '../src/compiler/index.js';
 import type { CompilerOptions } from '../src/compiler/modules.js';
 import { digest } from '../src/compiler/styles.js';
+import { parseExpression } from '@babel/parser';
+import { renderJSX } from '../src/compiler/react.js';
+import type { RenderContext } from '../src/compiler/context.js';
+import type { RenderHost } from '../src/compiler/render-host.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-refactor-'));
@@ -18,6 +22,27 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('React branch inspection reuses syntax while preserving current branch choices and diagnostics', async () => {
+  const code = 'flag ? <section>{items.map(item => <p>{item}</p>)}</section> : <aside/>';
+  const node = parseExpression(code, { plugins: ['jsx'] });
+  if (node.type !== 'ConditionalExpression' || node.consequent.type !== 'JSXElement') throw new Error('Expected conditional JSX');
+  let reads = 0, emptyStates = 0;
+  const children = node.consequent.children;
+  Object.defineProperty(node.consequent, 'children', { get() { reads++; return children; } });
+  const ctx = { code, env: { flag: false }, bindings: {} } as unknown as RenderContext;
+  const host = {
+    target: { kind: 'request' }, hints: {}, budget: () => undefined, record: () => {},
+    diagnose(code: string) { if (code === 'EMPTY_STATE') emptyStates++; },
+    async jsx(selected: unknown) { return selected === node.consequent ? 'list' : 'empty'; },
+  } as unknown as RenderHost;
+  assert.equal(await renderJSX.call(host, node, ctx), 'empty');
+  assert.equal(await renderJSX.call(host, node, ctx), 'empty');
+  ctx.env.flag = true;
+  assert.equal(await renderJSX.call(host, node, ctx), 'list');
+  assert.equal(reads, 1, 'the same collection subtree is scanned once');
+  assert.equal(emptyStates, 2, 'each render still emits its own diagnostics');
+});
 
 test('React type wrappers retain the same native tree, including satisfies and nested wrappers', async () => {
   const jsx = '<section><p>Value</p></section>';

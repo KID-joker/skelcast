@@ -1,6 +1,6 @@
 import type * as t from '@babel/types';
 import{isRenderFunction,nodeName,patternNames,unwrapExpression,walk}from'./ast.js';
-import{UNKNOWN,SOURCE_INITIAL,evaluate,expressionText,parseSourceExpression,safeKey,type ExpressionContext,type Value}from'./expression.js';
+import{UNKNOWN,evaluate,expressionText,parseSourceExpression,safeKey,type ExpressionContext,type Value}from'./expression.js';
 
 type InitialContext = ExpressionContext & { initialValues?: Record<string, Value> };
 
@@ -13,14 +13,18 @@ function path(node:t.Node|undefined|null):string|undefined{
  * Only explicit presentation consumers may project them into a loading frame. */
 export function initialExpression(node:t.Node,ctx:InitialContext):Value{
  const facts=ctx.initialValues;if(!facts)return UNKNOWN;
+ const keys=new Set(Object.keys(facts));
  const bindings={...ctx.bindings};let found=false;
  walk(node,(n,ancestors)=>{
   const key=path(n);if(!key)return;
   const root=key.split('.')[0];
   if(ancestors.some(a=>isRenderFunction(a)&&a.params.some(p=>patternNames(p).includes(root))))return;
   const text=expressionText(n,ctx);if(Object.hasOwn(bindings,text))return;
-  const prefix=Object.keys(facts).filter(name=>key===name||key.startsWith(name+'.')).sort((a,b)=>b.length-a.length)[0];
-  if(!prefix)return;
+  let prefix=key;
+  while(!keys.has(prefix)){
+   const dot=prefix.lastIndexOf('.');if(dot<0)return;
+   prefix=prefix.slice(0,dot);
+  }
   let value=facts[prefix];
   for(const part of key.slice(prefix.length).split('.').filter(Boolean)){
    if(!safeKey(part)||!value||typeof value!=='object'){value=UNKNOWN;break;}
@@ -32,14 +36,4 @@ export function initialExpression(node:t.Node,ctx:InitialContext):Value{
 }
 export function initialString(text:string,ctx:InitialContext):Value{
  try{const node=parseSourceExpression(text,ctx);return node?initialExpression(node,{...ctx,code:text}):UNKNOWN;}catch{return UNKNOWN;}
-}
-export function presentationInputs(props:Record<string,Value>){
- const values:Record<string,Value>={},initial:Record<string,Value>={};
- for(const[key,value]of Object.entries(props)){
-  if(value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_INITIAL)){
-   initial[key]=(value as{[SOURCE_INITIAL]:Value})[SOURCE_INITIAL];
-   values[key]=Object.keys(value).length?Object.fromEntries(Object.entries(value)):UNKNOWN;
-  }else{values[key]=value;initial[key]=value;}
- }
- return{values,initial};
 }

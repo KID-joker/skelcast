@@ -37,9 +37,9 @@ export function createRepairGuideBuilder(artifact: SkeletonArtifact, target?: Sk
   return (node: string, variant: string): RepairGuide => {
     const diagnostics = (diagnosticsByNode.get(node) ?? []).filter(item => inVariant(item, variant));
     const source = artifact.sources[node] ?? diagnostics[0];
-    const candidates = [...(evidenceByNode.get(node) ?? []), ...(source ? evidenceByLocation.get(locationKey(source)) ?? [] : [])];
+    const candidates = [...new Set([...(evidenceByNode.get(node) ?? []), ...(source ? evidenceByLocation.get(locationKey(source)) ?? [] : [])])];
     const selected = candidates.sort((a, b) => a.order - b.order)
-      .filter((entry, index) => (!index || entry.order !== candidates[index - 1].order) && inVariant(entry.item, variant))
+      .filter(entry => inVariant(entry.item, variant))
       .map(entry => entry.item);
     return repairGuide(artifact, variant, target, source, diagnostics, selected);
   };

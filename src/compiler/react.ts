@@ -9,12 +9,21 @@ import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty} from 
 import { renderCall } from './vue-render.js';
 import { planCollection } from './collections.js';
 
-function repeatedContent(node: Ast): boolean {
-  let found = false;
-  walk(node, n => { if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && nodeName(n.callee.property) === 'map') found = true; });
-  return found;
+const collectionCache = new WeakMap<Ast, Ast[]>();
+/** Cache syntax only; receiver paths are resolved with the current source context. */
+function collectionSources(node: Ast): Ast[] {
+  const previous = collectionCache.get(node);
+  if (previous) return previous;
+  const sources: Ast[] = [];
+  walk(node, n => {
+    if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && nodeName(n.callee.property) === 'map') sources.push(n.callee.object);
+  });
+  collectionCache.set(node, sources);
+  return sources;
 }
-function hasCollection(node:Ast,root:string,ctx:RenderContext):boolean{let found=false;walk(node,n=>{if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'&&nodeName(n.callee.property)==='map'&&collectionRoot(expressionText(n.callee.object,ctx),ctx)===root)found=true;});return found;}
+const repeatedContent = (node: Ast): boolean => collectionSources(node).length > 0;
+const hasCollection = (node: Ast, root: string, ctx: RenderContext): boolean =>
+  collectionSources(node).some(source => collectionRoot(expressionText(source, ctx), ctx) === root);
 
 export async function renderJSX(this: RenderHost, node: Ast | null | undefined, ctx: RenderContext): Promise<string> {
   if (!node) return '';

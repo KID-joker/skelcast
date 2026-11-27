@@ -5,10 +5,10 @@ import { slotValue, type ModuleInfo, type RenderContext, type SourceSlot } from 
 import { nonVisual, unknownGeometry } from './html.js';
 import type { RenderHost } from './render-host.js';
 import {renderSlotCall,bindSlotInitial} from './regions.js';
-import{initialExpression,presentationInputs}from'./initial-state.js';
+import{initialExpression}from'./initial-state.js';
 import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 import { renderComponent } from './component-render.js';
-import { camelProps } from './props.js';
+import { componentInputs } from './props.js';
 import { renderJSXNode } from './react.js';
 
 /** Helper identity is established from imports, including aliases/namespaces. */
@@ -74,7 +74,7 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
     if(ref.exported==='useAttrs'||ref.exported==='useSlots')ctx.env[name]={[SOURCE_ACCESSOR]:ref.exported==='useAttrs'?attrs:slots};
     if(ref.exported==='*')ctx.env[name]={...(ctx.env[name]&&typeof ctx.env[name]==='object'?ctx.env[name]:{}),useAttrs:{[SOURCE_ACCESSOR]:attrs},useSlots:{[SOURCE_ACCESSOR]:slots}};
   }
-  const input = presentationInputs({ ...ctx.module.propDefaults, ...props, ...camelProps(props) });
+  const input = componentInputs(props, ctx.module.propDefaults, 'setup');
   const values=input.values;
   if(setup.params[0])bindSlotInitial(setup.params[0],input.initial,ctx);
   if(setup.body.type==='BlockStatement')for(const statement of setup.body.body){

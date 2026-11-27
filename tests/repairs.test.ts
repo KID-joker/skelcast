@@ -36,6 +36,14 @@ test('batch repair guides retain evidence order, variant scope and diagnostic so
   assert.deepEqual(expressions('second', 'tall'), ['other-line']);
   assert.equal(guide('second', 'tall').source?.line, 3);
   assert.deepEqual(guide('missing', 'wide').evidence, []);
+
+  // Empty node keys can also enter the location index. Remove index overlap,
+  // while retaining separate occurrences of the same evidence object.
+  const empty = fact('empty-node', { node: '' });
+  artifact.evidence.push(empty, empty);
+  artifact.sources[''] = { file: 'View.vue', line: 2 };
+  const emptyGuide = createRepairGuideBuilder(artifact);
+  assert.deepEqual(emptyGuide('', 'wide').evidence.map(item => item.expression), ['shared-before', 'shared-after', 'empty-node', 'empty-node']);
 });
 
 for (const [source, code] of [
