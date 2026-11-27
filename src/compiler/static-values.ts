@@ -1,21 +1,14 @@
 import type * as t from '@babel/types';
-import {isRenderFunction,nodeName,unwrapExpression,walk} from './ast.js';
+import {isRenderFunction,nodeName,patternNames as names,unwrapExpression,walk} from './ast.js';
 import {UNKNOWN,SOURCE_PROJECTION,SOURCE_INITIAL,SOURCE_TYPE_TEST,SOURCE_COLLECTION,SOURCE_CELL_GLYPHS,SOURCE_COPY,SOURCE_FUNCTION,SOURCE_VUE,sourceCapacity,bindPattern,evaluate,safeKey,type Value} from './expression.js';
 import {ambiguousExport,type ModuleInfo} from './context.js';
 import {sourceCopyRecipe,type CopyRecipe} from './copy-recipe.js';
+import {resolveReexports} from './exports.js';
 
 interface Declaration {pattern:t.VariableDeclarator['id'];expression:t.Node|null|undefined;constant:boolean}
 interface Binding {module:ModuleInfo;name:string}
 const identity=(b:Binding)=>JSON.stringify([b.module.file,b.name]);
 const script=(file:string)=>/\.[cm]?[jt]sx?$/.test(file);
-const names=(node:t.Node):string[]=>{
- if(node.type==='Identifier')return[node.name];
- if(node.type==='RestElement')return names(node.argument);
- if(node.type==='AssignmentPattern')return names(node.left);
- if(node.type==='ObjectPattern')return node.properties.flatMap(p=>names(p.type==='RestElement'?p.argument:p.value));
- if(node.type==='ArrayPattern')return node.elements.flatMap(p=>p?names(p):[]);
- return[];
-};
 function rootName(node:t.Node|undefined|null):string|undefined{
  while(node?.type==='MemberExpression'||node?.type==='OptionalMemberExpression')node=node.object;
  return node?.type==='Identifier'?node.name:undefined;
@@ -42,6 +35,7 @@ export class StaticValues {
  private cache=new Map<string,Value>();
  private cycles=new Set<string>();
  private copies=new WeakMap<ModuleInfo,Map<t.Node,CopyRecipe|undefined>>();
+ private environments=new WeakMap<ModuleInfo,{values:Record<string,Value>;cycles:number}>();
  constructor(private load:(file:string)=>Promise<ModuleInfo>,private external?:(request:string)=>Promise<ModuleInfo|undefined>){}
  /** Summarize independently declared fields of an unconditional return object.
   * Calls, callbacks and lifecycle handlers are never evaluated. Parameters and
@@ -123,14 +117,7 @@ export class StaticValues {
   if(local!==undefined){const ref=mod.imports.get(local);return ref?follow(ref):{module:mod,name:local};}
   // Destructured exported constants are not component exports, but are data.
   for(const statement of mod.ast.program.body)if(statement.type==='ExportNamedDeclaration'&&statement.declaration?.type==='VariableDeclaration')for(const decl of statement.declaration.declarations)if(names(decl.id).includes(name))return{module:mod,name};
-  const explicit=mod.reexports.get(name);if(explicit)return follow(explicit);
-  if(name==='default')return;
-  let result:Binding|undefined;
-  for(const ref of mod.exportAll){
-   const candidate=await follow(ref,name);if(candidate===ambiguousExport)return candidate;
-   if(candidate){if(result&&identity(result)!==identity(candidate))return ambiguousExport;result=candidate;}
-  }
-  return result;
+  return resolveReexports(mod,name,follow,(left,right)=>identity(left)===identity(right));
  }
  private async exported(mod:ModuleInfo,name:string,seen:Set<string>,budget:{remaining:number}):Promise<Value>{
   const binding=await this.binding(mod,name,new Set(),budget);
@@ -226,6 +213,8 @@ export class StaticValues {
   return result;
  }
  async environment(mod:ModuleInfo):Promise<Record<string,Value>>{
+  const previous=this.environments.get(mod),cycles=this.cycles.size;
+  if(previous?.cycles===cycles)return previous.values;
   const result:Record<string,Value>={},budget={remaining:10000};
   for(const [name]of mod.imports)result[name]=await this.local(mod,name,new Set(),budget);
   for(const [name,fn]of mod.functions)if(isRenderFunction(fn))result[name]=await this.local(mod,name,new Set(),budget);
@@ -233,6 +222,9 @@ export class StaticValues {
    const value=await this.local(mod,name,new Set(),budget);
    if(value!==UNKNOWN||this.index(mod).unsafe.has(name))result[name]=value;
   }
+  // Exhausted work can resolve further on a later pass through the value cache.
+  // New cycle facts can also invalidate values already collected in this pass.
+  if(budget.remaining>=0&&this.cycles.size===cycles)this.environments.set(mod,{values:result,cycles});
   return result;
  }
 }

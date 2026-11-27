@@ -1,17 +1,9 @@
 import type * as t from '@babel/types';
-import{parseExpression}from'@babel/parser';
-import{isRenderFunction,nodeName,unwrapExpression,walk}from'./ast.js';
-import{UNKNOWN,SOURCE_INITIAL,evaluate,expressionText,safeKey,type Value}from'./expression.js';
-import type{RenderContext}from'./context.js';
+import{isRenderFunction,nodeName,patternNames,unwrapExpression,walk}from'./ast.js';
+import{UNKNOWN,SOURCE_INITIAL,evaluate,expressionText,parseSourceExpression,safeKey,type ExpressionContext,type Value}from'./expression.js';
 
-export function patternNames(node:t.Node):string[]{
- if(node.type==='Identifier')return[node.name];
- if(node.type==='AssignmentPattern')return patternNames(node.left);
- if(node.type==='RestElement')return patternNames(node.argument);
- if(node.type==='ObjectPattern')return node.properties.flatMap(p=>patternNames(p.type==='RestElement'?p.argument:p.value));
- if(node.type==='ArrayPattern')return node.elements.flatMap(p=>p?patternNames(p):[]);
- return[];
-}
+type InitialContext = ExpressionContext & { initialValues?: Record<string, Value> };
+
 function path(node:t.Node|undefined|null):string|undefined{
  const value=unwrapExpression(node);
  if(value?.type==='Identifier')return value.name;
@@ -19,7 +11,7 @@ function path(node:t.Node|undefined|null):string|undefined{
 }
 /** Initial presentation facts travel separately from actual expression values.
  * Only explicit presentation consumers may project them into a loading frame. */
-export function initialExpression(node:t.Node,ctx:RenderContext):Value{
+export function initialExpression(node:t.Node,ctx:InitialContext):Value{
  const facts=ctx.initialValues;if(!facts)return UNKNOWN;
  const bindings={...ctx.bindings};let found=false;
  walk(node,(n,ancestors)=>{
@@ -38,8 +30,8 @@ export function initialExpression(node:t.Node,ctx:RenderContext):Value{
  });
  return found?evaluate(node,{...ctx,bindings}):UNKNOWN;
 }
-export function initialString(text:string,ctx:RenderContext):Value{
- try{return initialExpression(parseExpression(text,{plugins:['typescript']}),{...ctx,code:text});}catch{return UNKNOWN;}
+export function initialString(text:string,ctx:InitialContext):Value{
+ try{const node=parseSourceExpression(text,ctx);return node?initialExpression(node,{...ctx,code:text}):UNKNOWN;}catch{return UNKNOWN;}
 }
 export function presentationInputs(props:Record<string,Value>){
  const values:Record<string,Value>={},initial:Record<string,Value>={};

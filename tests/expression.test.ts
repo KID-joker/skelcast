@@ -1,8 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateString, UNKNOWN } from '../src/compiler/expression.js';
+import { initialString } from '../src/compiler/initial-state.js';
 
 const evaluate = (source: string, bindings: Record<string, unknown> = {}) => evaluateString(source, { code: '', env: {}, bindings });
+
+test('initial presentation expressions reuse syntax while retaining current facts and explicit bindings', () => {
+  const ctx = { code: '', env: { size: UNKNOWN }, bindings: {}, initialValues: { size: 20 }, expressions: new Map() };
+  const text = 'size + 1';
+  assert.equal(evaluateString(text, ctx), UNKNOWN);
+  const expression = ctx.expressions!.get(text);
+  assert.ok(expression);
+  assert.equal(initialString(text, ctx), 21);
+  assert.equal(ctx.expressions!.get(text), expression);
+  assert.equal(initialString(text, { ...ctx, initialValues: { size: 40 } }), 41);
+  assert.equal(initialString(text, { ...ctx, bindings: { size: 60 } }), UNKNOWN);
+  assert.equal(initialString('size +', ctx), UNKNOWN);
+  assert.equal(ctx.expressions!.get('size +'), null);
+});
 
 test('primitive loose equality follows JavaScript coercion without changing strict equality', () => {
   const cases: [string, boolean][] = [

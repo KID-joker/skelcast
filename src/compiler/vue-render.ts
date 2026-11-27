@@ -1,11 +1,11 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, unwrapExpression, walk } from './ast.js';
+import { isRenderFunction, nodeName, patternNames, unwrapExpression, walk } from './ast.js';
 import { UNKNOWN, SOURCE_ACCESSOR, SOURCE_RENDER,SOURCE_COPY,SOURCE_TYPE_TEST, bindPattern, evaluate, expressionText, type Ast } from './expression.js';
 import { slotValue, type ModuleInfo, type RenderContext, type SourceSlot } from './context.js';
 import { nonVisual, unknownGeometry } from './html.js';
 import type { RenderHost } from './render-host.js';
 import {renderSlotCall,bindSlotInitial} from './regions.js';
-import{initialExpression,presentationInputs,patternNames}from'./initial-state.js';
+import{initialExpression,presentationInputs}from'./initial-state.js';
 
 /** Helper identity is established from imports, including aliases/namespaces. */
 export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {

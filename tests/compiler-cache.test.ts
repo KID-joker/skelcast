@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
 import { SourceFiles } from '../src/compiler/source-files.js';
+import { StaticValues } from '../src/compiler/static-values.js';
 
 test('scans and variants share source reads and ASTs while keeping binding environments independent', async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-cache-')));
@@ -44,13 +45,14 @@ test('scans and variants share source reads and ASTs while keeping binding envir
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('repeated Vue components share template syntax without sharing props, variants or later source edits', async t => {
+test('repeated Vue components share syntax and static environments without sharing props, variants or later source edits', async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-template-cache-')));
   try {
     const source = `<script setup>import Child from './Child.vue';const groups=[{label:'First',limit:2},{label:'Second',limit:3}]</script><template><main><Child v-for="group in groups" :label="group.label" :limit="group.limit"/></main></template>`;
     await writeFile(path.join(root, 'View.vue'), source);
     await writeFile(path.join(root, 'Child.vue'), `<script setup>import{ref}from'vue';const props=defineProps(['label','limit']);const rows=ref([]);function receive(response){rows.value=response.items;}</script><template><section :data-label="label"><div v-if="rows.length>0"><article v-for="row in rows.slice(0,limit)">{{row.title}}</article></div></section></template>`);
     const templates = t.mock.method(SourceFiles.prototype, 'template');
+    const environments = t.mock.method(StaticValues.prototype, 'environment');
     const target = { id: 'cache', source: 'View.vue', kind: 'request' as const, variants: { loading: {}, source: { state: 'source' as const }, empty: { bindings: { 'Child.vue::rows': [] } } } };
     const first = await compileTarget(root, target);
     const html = first.artifact.variants.loading.html;
@@ -61,9 +63,14 @@ test('repeated Vue components share template syntax without sharing props, varia
     const childTemplates = templates.mock.calls.filter(call => call.arguments[0] === path.join(root, 'Child.vue'));
     assert.equal(childTemplates.length, 6);
     assert.equal(new Set(childTemplates.map(call => call.result)).size, 1, 'instances and variants reuse one immutable template');
+    const childEnvironments = await Promise.all(environments.mock.calls.filter(call => call.arguments[0].file === path.join(root, 'Child.vue')).map(call => call.result));
+    assert.equal(childEnvironments.length, 6);
+    assert.equal(new Set(childEnvironments).size, 3, 'instances reuse their compiler-local environment while variants remain independent');
     await writeFile(path.join(root, 'View.vue'), source.replace('limit:2', 'limit:1'));
     const second = await compileTarget(root, target);
     assert.equal((second.artifact.variants.loading.html.match(/<article /g) ?? []).length, 4);
     assert.notEqual(first.dependencies['View.vue'], second.dependencies['View.vue']);
+    const nextEnvironments = await Promise.all(environments.mock.calls.filter(call => call.arguments[0].file === path.join(root, 'Child.vue')).slice(6).map(call => call.result));
+    assert.ok(nextEnvironments.every(environment => !childEnvironments.includes(environment)), 'later compilations use fresh environments');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

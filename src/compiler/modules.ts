@@ -17,6 +17,7 @@ import { identityArgument } from './identity-wrapper.js';
 import { vueOptions } from './vue-render.js';
 import { resolutionCandidates } from './resolution.js';
 import { SourceFiles } from './source-files.js';
+import { resolveReexports } from './exports.js';
 
 export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'>;
 
@@ -375,21 +376,9 @@ export class SourceModules {
       }
       return;
     }
-    const explicit = mod.reexports.get(exported);
-    if (explicit) return follow(explicit);
     const [namespace, ...members] = exported.split('.');
     const reference = mod.reexports.get(namespace) ?? mod.imports.get(mod.exports.get(namespace) ?? '');
-    if (members.length && reference?.exported === '*') return follow(reference, members.join('.'));
-    // export * never forwards default, and conflicting bindings are not a choice.
-    if (exported === 'default') return;
-    let result: ResolvedComponent | undefined;
-    for (const reference of mod.exportAll) {
-      const candidate = await follow(reference, exported);
-      if (candidate === ambiguousExport) return ambiguousExport;
-      if (!candidate) continue;
-      if (result && (result.module !== candidate.module || result.fn !== candidate.fn)) return ambiguousExport;
-      result = candidate;
-    }
-    return result;
+    if (!mod.reexports.has(exported) && members.length && reference?.exported === '*') return follow(reference, members.join('.'));
+    return resolveReexports(mod, exported, follow, (left, right) => left.module === right.module && left.fn === right.fn);
   }
 }

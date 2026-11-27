@@ -1,11 +1,11 @@
 import type * as t from '@babel/types';
 import type {ElementNode,TemplateChildNode} from '@vue/compiler-dom';
 import {VISITOR_KEYS} from '@babel/types';
-import {isRenderFunction,nodeName} from './ast.js';
+import {isRenderFunction,nodeName,patternNames} from './ast.js';
 import {UNKNOWN,SOURCE_RENDER,evaluate,safeKey,type Value} from './expression.js';
 import {slotValue,type SourceSlot,type RenderContext} from './context.js';
 import type {RenderHost} from './render-host.js';
-import{initialExpression,patternNames}from'./initial-state.js';
+import{initialExpression}from'./initial-state.js';
 import{vueHelper}from'./vue-render.js';
 
 /** A region is compiled in its lexical slot/loop context, without rendering its

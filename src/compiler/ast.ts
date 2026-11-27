@@ -25,6 +25,17 @@ export function nodeName(node?: t.Node | null): string | undefined {
   }
 }
 
+export function patternNames(node: t.Node): string[] {
+  switch (node.type) {
+    case 'Identifier': return [node.name];
+    case 'AssignmentPattern': return patternNames(node.left);
+    case 'RestElement': return patternNames(node.argument);
+    case 'ObjectPattern': return node.properties.flatMap(property => patternNames(property.type === 'RestElement' ? property.argument : property.value));
+    case 'ArrayPattern': return node.elements.flatMap(element => element ? patternNames(element) : []);
+    default: return [];
+  }
+}
+
 export function startOf(node: t.Node): number {
   if (node.start == null) throw new Error(`Missing source start for ${node.type}`);
   return node.start;

@@ -19,7 +19,7 @@ export function inheritRootScopes(
   rootStyle: string,
   attributes: (props: Record<string, Value>) => string,
 ): string {
-  if (!html) return html;
+  if (!html || !scopes.length && !Object.keys(attrs).length && !rootStyle) return html;
   const roots = parse(html).children.filter((node): node is ElementNode => node.type === 1);
   // Work backwards so source offsets remain valid as attributes are inserted.
   for (const node of [...roots].reverse()) {

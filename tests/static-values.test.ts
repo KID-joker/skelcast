@@ -5,11 +5,26 @@ import path from 'node:path';
 import os from 'node:os';
 import {compileTarget} from '../src/compiler/index.js';
 import {evaluateString,UNKNOWN} from '../src/compiler/expression.js';
+import {StaticValues} from '../src/compiler/static-values.js';
+import {SourceModules} from '../src/compiler/modules.js';
 
 async function fixture(files:Record<string,string>,run:(root:string)=>Promise<void>){
  const root=await mkdtemp(path.join(os.tmpdir(),'skelcast-values-'));
  try{for(const [name,source]of Object.entries(files)){await mkdir(path.dirname(path.join(root,name)),{recursive:true});await writeFile(path.join(root,name),source);}await run(root);}finally{await rm(root,{recursive:true,force:true});}
 }
+
+test('static environment caching leaves budget-exhausted passes eligible for further resolution',async()=>{
+ const source=Array.from({length:800},(_,index)=>`export const value${index}=[${Array.from({length:16},(_,i)=>i).join(',')}];`).join('\n');
+ await fixture({'data.ts':source},async root=>{
+  class Modules extends SourceModules{load(file:string){return this.module(file);}}
+  const modules=new Modules(root,{}),mod=await modules.load(path.join(root,'data.ts'));
+  const values=new StaticValues(file=>modules.load(file));
+  const first=await values.environment(mod);
+  assert.equal(first.value799,undefined,'the first pass retains the finite work limit');
+  const second=await values.environment(mod);
+  assert.deepEqual(second.value799,Array.from({length:16},(_,i)=>i),'a later pass can finish using previously resolved values');
+ });
+});
 
 test('local constants cross aliases, default/named/namespace and diamond reexports without executing source',async()=>{
  await fixture({
