@@ -38,12 +38,17 @@ function updateInitial() {
   const id = root.dataset.skInitial!;
   // A static SPA entry may contain another route's initial shell. Any mounted
   // page boundary owns the current page and must retire that shell permanently.
-  const managed = [...boundaries.values()].some(b => b.kind === 'page');
-  if (managed) initialHandedOff = true;
-  root.hidden = initialHandedOff || initialReleased && (!initialPreviewAllowed || !(preview.target === 'page' || preview.target === id));
-  root.style.setProperty('display', root.hidden ? 'none' : 'block', 'important');
+  if (!initialHandedOff) for (const boundary of boundaries.values()) {
+    if (boundary.kind === 'page') { initialHandedOff = true; break; }
+  }
+  const hidden = initialHandedOff || initialReleased && (!initialPreviewAllowed || !(preview.target === 'page' || preview.target === id));
+  if (root.hidden !== hidden) root.hidden = hidden;
+  const display = hidden ? 'none' : 'block';
+  if (root.style.getPropertyValue('display') !== display || root.style.getPropertyPriority('display') !== 'important') {
+    root.style.setProperty('display', display, 'important');
+  }
 }
-function emit() { revision++; updateInitial(); listeners.forEach(fn => fn()); }
+function emit(initialChanged = true) { revision++; if (initialChanged || !initialHandedOff) updateInitial(); listeners.forEach(fn => fn()); }
 export function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function snapshot() { return revision; }
 export const serverSnapshot = () => '';
@@ -93,7 +98,11 @@ export function registerBoundary(info: BoundaryInfo) {
   return {
     update(next: Partial<BoundaryInfo>) {
       const previous = boundaries.get(token);
-      if (previous && Object.entries(next).some(([key, value]) => previous[key as keyof BoundaryInfo] !== value)) { boundaries.set(token, { ...previous, ...next }); emit(); }
+      if (previous && Object.entries(next).some(([key, value]) => previous[key as keyof BoundaryInfo] !== value)) {
+        boundaries.set(token, { ...previous, ...next });
+        // Pending, variants and artifact contents cannot change shell ownership.
+        emit(next.id !== undefined && next.id !== previous.id || next.kind !== undefined && next.kind !== previous.kind);
+      }
     },
     dispose() { boundaries.delete(token); emit(); },
   };
@@ -118,7 +127,7 @@ export function replaceArtifacts(artifacts: SkeletonArtifact[], versions?: Reado
   }
   if (!changed.size) return false;
   for (const entry of boundaryListeners) if (changed.has(entry.id)) entry.listener();
-  emit();
+  emit(false);
   return true;
 }
 export function releasePageSkeleton(options: { preview?: boolean } = {}) { initialReleased = true; initialPreviewAllowed = options.preview !== false; updateInitial(); }

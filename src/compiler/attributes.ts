@@ -22,7 +22,7 @@ export class RootMarkup {
   constructor(private parseHTML = parse) {}
 
   rememberElement(html: string, tag: string, opening: string): void {
-    this.elements.set(html, [{ start: 0, tag, opening }]);
+    if (!this.elements.has(html)) this.elements.set(html, [{ start: 0, tag, opening }]);
   }
 
   rewrite(html: string, update: (opening: string, node: ElementNode, count: number) => string): string {
@@ -48,7 +48,7 @@ export class RootMarkup {
     }
     chunks.push(html.slice(cursor));
     const result = chunks.join('');
-    this.elements.set(result, updated);
+    if (!this.elements.has(result)) this.elements.set(result, updated);
     return result;
   }
 }

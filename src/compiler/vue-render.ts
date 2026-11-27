@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, patternNames, unwrapExpression, walk } from './ast.js';
+import { isRenderFunction, nodeName, patternNames, unwrapExpression, walk, type RenderFunction } from './ast.js';
 import { UNKNOWN, SOURCE_ACCESSOR, SOURCE_RENDER,SOURCE_COPY,SOURCE_TYPE_TEST, bindPattern, evaluate, expressionText, type Ast } from './expression.js';
 import { slotValue, type ModuleInfo, type RenderContext, type SourceSlot } from './context.js';
 import { nonVisual, unknownGeometry } from './html.js';
@@ -30,6 +30,10 @@ export function vueOptions(mod: ModuleInfo, value: Ast | undefined): t.ObjectExp
   if (value?.type === 'CallExpression' && vueHelper(mod, value.callee, 'defineComponent') && value.arguments[0]?.type === 'ObjectExpression') return value.arguments[0];
 }
 
+// Instance contexts share immutable functions and imports, but different modules
+// can give the same helper name a different package identity.
+const renderFunctions = new WeakMap<ModuleInfo['imports'], WeakMap<RenderFunction, boolean>>();
+
 export function vueRenderFunction(mod: ModuleInfo, value: Ast | undefined): t.FunctionExpression | t.ArrowFunctionExpression | t.FunctionDeclaration | undefined {
   const options = vueOptions(mod, value);
   if (options) {
@@ -40,8 +44,14 @@ export function vueRenderFunction(mod: ModuleInfo, value: Ast | undefined): t.Fu
     return;
   }
   if (isRenderFunction(value)) {
-    let found = false;
-    walk(value.body, n => { if (n.type === 'CallExpression' && vueHelper(mod, n.callee, 'h')) found = true; });
+    let functions = renderFunctions.get(mod.imports);
+    if (!functions) renderFunctions.set(mod.imports, functions = new WeakMap());
+    let found = functions.get(value);
+    if (found === undefined) {
+      found = false;
+      walk(value.body, n => { if (n.type === 'CallExpression' && vueHelper(mod, n.callee, 'h')) found = true; });
+      functions.set(value, found);
+    }
     if (found && !value.async && !value.generator) return value;
   }
 }

@@ -38,19 +38,19 @@ function collectionFacts(mod:ModuleInfo):CollectionFacts{
  const facts={aliases:result,updated:new Set([...scopes.values()].flatMap(list=>list.map(a=>a.target)))};
  cache.set(mod.imports,facts);return facts;
 }
-function rootPath(node:t.Node|undefined):string|undefined{
+export function collectionRootNode(node:t.Node|undefined):string|undefined{
  while(node?.type==='CallExpression'&&node.callee.type==='MemberExpression'&&!node.callee.computed&&['slice','filter','map','toReversed'].includes(nodeName(node.callee.property)??''))node=node.callee.object;
  return path(node);
 }
 export function collectionRoot(text:string,ctx?:ExpressionContext):string|undefined{
- return rootPath(parseSourceExpression(text,ctx));
+ return collectionRootNode(parseSourceExpression(text,ctx));
 }
 export function loadingPresence(text:string,ctx:RenderContext):{root:string;present:boolean}|undefined{
  if(!ctx.loading)return;
  try{
   const test=parseSourceExpression(text,ctx);
   if(test?.type!=='BinaryExpression')return;
-  const lengthPath=(node:t.Node)=>{if(node.type==='MemberExpression'&&!node.computed&&nodeName(node.property)==='length'&&node.object.start!=null&&node.object.end!=null){const root=rootPath(node.object);return root?root+'.length':undefined;}return path(node);};
+  const lengthPath=(node:t.Node)=>{if(node.type==='MemberExpression'&&!node.computed&&nodeName(node.property)==='length'&&node.object.start!=null&&node.object.end!=null){const root=collectionRootNode(node.object);return root?root+'.length':undefined;}return path(node);};
   let value=lengthPath(test.left),number=test.right.type==='NumericLiteral'?test.right.value:undefined,operator:string=test.operator;
   if(number===undefined&&test.left.type==='NumericLiteral'){number=test.left.value;value=lengthPath(test.right);operator=({'<':'>','<=':'>=','>':'<','>=':'<='} as Record<string,string>)[operator]??operator;}
   if(!value||number===undefined)return;

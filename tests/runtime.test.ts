@@ -5,15 +5,28 @@ import type { SkeletonArtifact } from '../src/types.js';
 
 test('initial shell retires for a different SPA entry route and stays retired across navigation', () => {
   const declarations: unknown[][] = [];
-  const initial = { dataset: { skInitial: 'static-shell' }, hidden: false, style: { setProperty: (...args: unknown[]) => declarations.push(args) } };
+  const makeShell = () => {
+    let display = '', priority = '';
+    return { dataset: { skInitial: 'static-shell' }, hidden: false, style: {
+      getPropertyValue: () => display, getPropertyPriority: () => priority,
+      setProperty: (...args: [string, string, string]) => { declarations.push(args); [, display, priority] = args; },
+    } };
+  };
+  let initial = makeShell(), queries = 0, available = false;
   const previous = globalThis.document;
-  Object.assign(globalThis, { document: { querySelector: () => initial } });
+  Object.assign(globalThis, { document: { querySelector: () => { queries++; return available ? initial : null; } } });
   const artifact = (id: string): SkeletonArtifact => ({ id, kind: 'page', render: 'light', source: 'Page.vue', defaultVariant: 'default', variants: { default: { html: '<div/>', css: '' } }, diagnostics: [], evidence: [], sources: {} });
   let dispose: (() => void) | undefined;
   try {
     const first = registerBoundary({ id: 'first', kind: 'page', pending: false, artifact: artifact('first') });
+    available = true;
+    first.update({ pending: true });
     assert.equal(initial.hidden, true);
     assert.deepEqual(declarations.at(-1), ['display', 'none', 'important']);
+    const before = queries;
+    for (let i = 0; i < 100; i++) first.update({ pending: i % 2 === 0 });
+    assert.equal(queries, before, 'pending updates do not revisit the retired shell');
+    assert.equal(declarations.length, 1);
     first.dispose();
     assert.equal(initial.hidden, true);
     setPreview({ target: 'page' });
@@ -22,6 +35,11 @@ test('initial shell retires for a different SPA entry route and stays retired ac
     assert.equal(initial.hidden, true);
     next.dispose(); dispose = undefined;
     assert.equal(initial.hidden, true);
+    assert.equal(declarations.length, 1, 'preview and navigation do not rewrite unchanged shell visibility');
+    initial = makeShell();
+    setPreview({ target: 'static-shell' });
+    assert.equal(initial.hidden, true, 'a replaced shell also stays retired');
+    assert.equal(declarations.length, 2);
   } finally {
     dispose?.(); setPreview({ target: null });
     if (previous) Object.assign(globalThis, { document: previous });

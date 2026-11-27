@@ -5,7 +5,7 @@ import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
 import { boundaryContentContext } from './branches.js';
-import { collectionRoot, loadingBranch, projectCollection } from './loading-state.js';
+import { collectionRootNode, loadingBranch, projectCollection } from './loading-state.js';
 import { renderCall } from './vue-render.js';
 import { planCollection } from './collections.js';
 
@@ -22,8 +22,8 @@ function collectionSources(node: Ast): Ast[] {
   return sources;
 }
 const repeatedContent = (node: Ast): boolean => collectionSources(node).length > 0;
-const hasCollection = (node: Ast, root: string, ctx: RenderContext): boolean =>
-  collectionSources(node).some(source => collectionRoot(expressionText(source, ctx), ctx) === root);
+const hasCollection = (node: Ast, root: string): boolean =>
+  collectionSources(node).some(source => collectionRootNode(source) === root);
 
 export async function renderJSX(this: RenderHost, node: Ast | null | undefined, ctx: RenderContext): Promise<string> {
   if (!node) return '';
@@ -45,7 +45,7 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   if (node.type === 'ConditionalExpression') {
     let test = evaluate(node.test, ctx);
     const text = expressionText(node.test, ctx);
-    const { boundState, projected } = loadingBranch(text, ctx, root => hasCollection(node.consequent, root, ctx) || hasCollection(node.alternate, root, ctx));
+    const { boundState, projected } = loadingBranch(text, ctx, root => hasCollection(node.consequent, root) || hasCollection(node.alternate, root));
     if (projected) {
       test = projected.present;
       ctx = projectCollection(ctx, projected.root);
@@ -59,7 +59,7 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   if (node.type === 'LogicalExpression') {
     let left = evaluate(node.left, ctx);
     const text = expressionText(node.left, ctx);
-    const { projected } = loadingBranch(text, ctx, (root, present) => node.operator === '&&' && (!present || hasCollection(node.right, root, ctx)));
+    const { projected } = loadingBranch(text, ctx, (root, present) => node.operator === '&&' && (!present || hasCollection(node.right, root)));
     if (projected) left = projected.present;
     if (left === UNKNOWN) { this.record('branch', expressionText(node.left, ctx), 'Include optional content by default', ctx, node); return this.jsx(node.right, ctx); }
     if (node.operator === '&&') return left ? this.jsx(node.right, ctx) : '';

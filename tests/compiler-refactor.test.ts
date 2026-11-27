@@ -9,12 +9,14 @@ import type { CompilerOptions } from '../src/compiler/modules.js';
 import { digest } from '../src/compiler/styles.js';
 import { parseExpression } from '@babel/parser';
 import { renderJSX } from '../src/compiler/react.js';
-import type { RenderContext } from '../src/compiler/context.js';
+import type { ModuleInfo, RenderContext } from '../src/compiler/context.js';
 import type { RenderHost } from '../src/compiler/render-host.js';
 import { analyzeReact } from '../src/init/react.js';
 import { inheritRootScopes, RootMarkup } from '../src/compiler/attributes.js';
 import { renderAttributes, renderElement } from '../src/compiler/output.js';
 import { UNKNOWN } from '../src/compiler/expression.js';
+import { vueRenderFunction } from '../src/compiler/vue-render.js';
+import { parseSource } from '../src/compiler/ast.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-refactor-'));
@@ -79,6 +81,67 @@ test('fragment inheritance retains comments, quoted delimiters, void roots and p
   const expected = '<!--before--><section style="color:red;--root:1;;--parent:2;" data-outer  data-inner data-note="A > B" ><span>Body</span></section> between <input style="--root:1;;--parent:2;" data-outer  data-inner value="a > b"><!--after-->';
   assert.equal(result, expected);
   assert.doesNotMatch(result, /ignored/);
+});
+
+test('identical native roots and inherited outputs retain their parsed root metadata', () => {
+  let parses = 0;
+  const markup = new RootMarkup((source, options) => { parses++; return parse(source, options); });
+  const host = { options: {}, masked: () => false, attributes: (props: Record<string, unknown>) => renderAttributes.call(host, props), nodeId: () => 'root' } as unknown as RenderHost;
+  const inherit = (html: string, scopes: string[]) => inheritRootScopes(html, scopes, {}, '', host.attributes, undefined, markup);
+  let expected: string | undefined;
+  for (let i = 0; i < 20; i++) {
+    const html = renderElement.call(host, 'section', { class: 'inner' }, '<span>Keep</span>', { scopes: [] } as unknown as RenderContext, undefined, {}, markup);
+    const first = inherit(html, ['data-inner']);
+    const result = inherit(first, ['data-inner', 'data-outer']);
+    expected ??= result;
+    assert.equal(result, expected);
+  }
+  assert.equal(parses, 2, 'each distinct opening is parsed once across identical renders');
+  assert.match(expected!, /<span>Keep<\/span>/);
+});
+
+test('React loading collection checks consume receiver syntax without parsing it again', async () => {
+  for (const code of [
+    'items.length > 0 ? <section>{items.slice(0, 4).map(item => <p>{item}</p>)}</section> : <aside/>',
+    'items.length > 0 && <section>{items.slice(0, 4).map(item => <p>{item}</p>)}</section>',
+  ]) {
+    const node = parseExpression(code, { plugins: ['jsx'] });
+    const expressions = new Map();
+    const ctx = { code, env: { items: [] }, bindings: {}, loading: true, projectedCollections: new Set(['items']), expressions,
+      module: { ast: parseSource(''), imports: new Map() } } as unknown as RenderContext;
+    const notes: string[] = [];
+    const host = {
+      target: { kind: 'page' }, hints: {}, budget: () => undefined, record: () => {},
+      diagnose: (code: string) => notes.push(code),
+      async jsx(selected: unknown) { return selected === (node.type === 'ConditionalExpression' ? node.consequent : node.type === 'LogicalExpression' ? node.right : undefined) ? 'list' : 'empty'; },
+    } as unknown as RenderHost;
+    assert.equal(await renderJSX.call(host, node, ctx), 'list');
+    assert.equal(expressions.has('items.slice(0, 4)'), false, 'existing collection AST is not reparsed as text');
+    assert.deepEqual(notes, node.type === 'ConditionalExpression' ? ['LOADING_PROJECTION'] : []);
+    ctx.bindings['items.length > 0'] = false;
+    assert.equal(await renderJSX.call(host, node, ctx), node.type === 'ConditionalExpression' ? 'empty' : '');
+  }
+});
+
+test('functional Vue classification reuses syntax while retaining helper package identity', () => {
+  for (const code of ["() => h('section')", "() => node('aside')", "() => Vue.h('main')", '() => <section/>']) {
+    const fn = parseExpression(code, { plugins: ['jsx'] });
+    if (fn.type !== 'ArrowFunctionExpression') throw new Error('Expected function');
+    let reads = 0;
+    const body = fn.body;
+    Object.defineProperty(fn, 'body', { get() { reads++; return body; } });
+    const imports: ModuleInfo['imports'] = new Map([
+      ['h', { request: 'vue', exported: 'h' }],
+      ['node', { request: 'vue', exported: 'h' }],
+      ['Vue', { request: 'vue', exported: '*' }],
+    ]);
+    const module = { imports } as ModuleInfo;
+    for (let i = 0; i < 20; i++) assert.equal(vueRenderFunction({ ...module }, fn), code.includes('<section') ? undefined : fn);
+    assert.equal(reads, 1, 'positive and negative classification facts are shared between instances');
+    const other = { imports: new Map([...imports].map(([key, value]) => [key, { ...value, request: 'other-library' }])) } as ModuleInfo;
+    assert.equal(vueRenderFunction(other, fn), undefined);
+    assert.equal(reads, 2, 'different import identities are classified independently');
+  }
 });
 
 test('component name indexes retain first normalized imports, exact matches and namespace exports', async () => {
