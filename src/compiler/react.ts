@@ -1,5 +1,5 @@
 import { nodeName } from './ast.js';
-import path from 'node:path';
+import { renderAdapter, renderComponent } from './component-render.js';
 import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
@@ -7,8 +7,7 @@ import type { RenderHost } from './render-host.js';
 import { boundaryContentContext, hasStateBinding } from './branches.js';
 import { walk } from './ast.js';
 import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty} from './loading-state.js';
-import {renderLocalCall,vueHelper} from './vue-render.js';
-import {renderSlotCall} from './regions.js';
+import { renderCall } from './vue-render.js';
 import { planCollection } from './collections.js';
 
 function repeatedContent(node: Ast): boolean {
@@ -68,12 +67,7 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   if (node.type !== 'JSXElement') {
     if (['NullLiteral', 'BooleanLiteral'].includes(node.type)) return '';
     if (node.type === 'CallExpression'||node.type==='OptionalCallExpression') {
-      const slot=await renderSlotCall(this,node,ctx);if(slot!==undefined)return slot;
-      if(node.type==='CallExpression'){
-        const html=await renderLocalCall.call(this,node,ctx);if(html!==undefined)return html;
-        if(vueHelper(ctx.module,node.callee,'h'))return this.vueExpression(node,ctx);
-      }
-      return this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
+      return renderCall.call(this, node, ctx, 'jsx');
     }
     const value = evaluate(node, ctx);
     if (value && typeof value === 'object' && Object.hasOwn(value, slotValue)) return this.renderSlot((value as { [slotValue]: SourceSlot })[slotValue], ctx);
@@ -112,20 +106,10 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression') {
     if (node.children.length) props.children = { [slotValue]: { nodes: node.children, context: ctx, framework: 'jsx' } satisfies SourceSlot };
     this.record('component', tag, 'Expand source component', ctx, node);
-    const adapter = this.target.adapters?.[tag];
-    if (adapter) {
-      const file = path.resolve(this.root, adapter); await this.scan(file);
-      return this.component(file, 'default', props, ctx, node);
-    }
+    const adapter = await renderAdapter(this, tag, props, ctx, node);
+    if (adapter !== undefined) return adapter;
     const imported = await this.componentReference(tag, ctx);
-    if (imported?.file && /\.(tsx|jsx|vue|ts|js)$/.test(imported.file)) return this.component(imported.file, imported.exported, props, ctx, node);
-    if (ctx.module.functions.has(tag)) {
-      const local = { ...ctx, env: { ...ctx.env }, depth: ctx.depth + 1 };
-      if (local.depth > 16) return this.fallback(ctx, node, 'Component recursion limit reached');
-      const body = this.prepareFunction(ctx.module.functions.get(tag), local, props);
-      return body ? this.jsx(body, local) : this.fallback(ctx, node, `Cannot expand ${tag}`);
-    }
-    const preset = await this.preset(tag, imported, props, { nodes: node.children, context: ctx, framework: 'jsx' }, node);
+    const preset = await renderComponent(this, tag, imported, props, { nodes: node.children, context: ctx, framework: 'jsx' }, node);
     if (preset !== undefined) return preset;
     return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   }

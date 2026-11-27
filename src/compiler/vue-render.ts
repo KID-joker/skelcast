@@ -7,6 +7,7 @@ import type { RenderHost } from './render-host.js';
 import {renderSlotCall,bindSlotInitial} from './regions.js';
 import{initialExpression,presentationInputs}from'./initial-state.js';
 import { mutationTarget, propagateAliases, rootName } from './mutations.js';
+import { renderComponent } from './component-render.js';
 
 /** Helper identity is established from imports, including aliases/namespaces. */
 export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {
@@ -161,8 +162,7 @@ function supportedBody(body: Ast): boolean {
   return body.body.every(statement);
 }
 
-export async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext):Promise<string|undefined>{
-  const value=evaluate(node.callee,ctx);
+async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
   if(!value||typeof value!=='object'||!Object.hasOwn(value,SOURCE_RENDER))return;
   const fn=(value as {[SOURCE_RENDER]:t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression})[SOURCE_RENDER];
   if(ctx.depth>16||node.arguments.some(a=>a.type==='SpreadElement'))return this.fallback(ctx,node,'Local source render recursion or arguments exceed the finite limit');
@@ -203,11 +203,27 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
     return html;
   }
   if (node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') return this.jsx(node, ctx);
-  if(node.type==='CallExpression'){const html=await renderLocalCall.call(this,node,ctx);if(html!==undefined)return html;}
-  const renderedSlot=await renderSlotCall(this,node,ctx);if(renderedSlot!==undefined)return renderedSlot;
-  const slot = evaluate(node.callee, ctx);
-  if (node.type === 'OptionalCallExpression') return slot == null && node.optional ? '' : this.fallback(ctx, node, 'Unresolved optional render call needs a finite binding');
+  return renderCall.call(this, node, ctx, 'render');
+}
+
+/** Classify a call once, then render it directly instead of crossing frontends. */
+export async function renderCall(this: RenderHost, node: t.CallExpression | t.OptionalCallExpression, ctx: RenderContext, framework: 'jsx' | 'render'): Promise<string> {
+  const calleeValue = evaluate(node.callee, ctx);
+  if (node.type === 'CallExpression') {
+    const local = await renderLocalCall.call(this, node, ctx, calleeValue);
+    if (local !== undefined) return local;
+  }
+  const slot = await renderSlotCall(this, node, ctx, calleeValue);
+  if (slot !== undefined) return slot;
+  if (node.type === 'OptionalCallExpression') return framework === 'render'
+    ? calleeValue == null && node.optional ? '' : this.fallback(ctx, node, 'Unresolved optional render call needs a finite binding')
+    : this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
   if (!vueHelper(ctx.module, node.callee, 'h')) return this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
+  // Retain the existing expansion limit when JSX enters a Vue h() tree.
+  if (framework === 'jsx') {
+    const exhausted = this.budget(ctx, node);
+    if (exhausted !== undefined) return exhausted;
+  }
   const tagNode = node.arguments[0];
   const name = (value: Ast | undefined): string | undefined => value?.type === 'MemberExpression' && !value.computed ? `${name(value.object)}.${nodeName(value.property)}` : value ? nodeName(value) : undefined;
   const tagValue = evaluate(tagNode, ctx);
@@ -253,8 +269,7 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
     const ref = await this.componentReference(tag, ctx);
     if (vueHelper(ctx.module, tagNode!, 'Fragment')) return children();
     props.__skSlots = slots;
-    if (ref?.file) return this.component(ref.file, ref.exported, props, local, node);
-    const presentation = await this.preset(tag, ref, props, { framework: 'render', nodes: [], slots, context: local }, node);
+    const presentation = await renderComponent(this, tag, ref, props, { framework: 'render', nodes: [], slots, context: local }, node);
     if (presentation !== undefined) return presentation;
     return this.fallback(local, node, `No source adapter for ${tag}`, this.attributes(props));
   }

@@ -1,4 +1,4 @@
-import { button, input, calendar, table, readonly, escape, scalar } from './shared.js';
+import { button, input, calendar, table, readonly, escape, formItem } from './shared.js';
 import { UNKNOWN } from '../expression.js';
 import type { ComponentPreset, Presentation } from './types.js';
 
@@ -22,7 +22,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, childre
   if (name === 'ncard') return { tag: 'section', style: 'display:block;padding:20px 24px;border:1px solid #dce1e7;border-radius:4px', children: (props.title ? text : '') + children };
   if (name === 'ninputgroup') return { tag: 'div', style: 'display:flex;align-items:stretch;width:100%', children };
   if (name === 'ninputgrouplabel') return { tag: 'div', style: 'display:flex;align-items:center;padding:0 12px;min-height:34px', children };
-  if (name === 'nformitem') return { tag: 'div', style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:18px', children: (props.label ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</label>` : '') + children };
+  if (name === 'nformitem') return formItem(children, props.label);
   if (name === 'ngrid') {
     const gap = (key: string, kebab: string) => /^\d+(?:\.\d+)?$/.test(String(props[key] ?? props[kebab] ?? 0)) ? Math.min(200, Number(props[key] ?? props[kebab] ?? 0)) : 0;
     const gaps = `column-gap:${gap('xGap', 'x-gap')}px;row-gap:${gap('yGap', 'y-gap')}px`;

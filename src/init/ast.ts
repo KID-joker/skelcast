@@ -32,12 +32,6 @@ export function boundaryImports(ast: t.File, framework: 'react' | 'vue'): Set<st
   }
   return names;
 }
-export function sameCondition(left: string, right: string): boolean {
-  if (left === right) return true;
-  const key = (code: string) => JSON.stringify(parseExpression(code, { plugins: ['typescript'] }), (name, value: unknown) =>
-    ['start', 'end', 'loc', 'extra', 'leadingComments', 'trailingComments', 'innerComments', 'comments'].includes(name) ? undefined : value);
-  try { return key(left) === key(right); } catch { return false; }
-}
 export function objectConfig(ast: t.File): t.ObjectExpression | undefined {
   const declaration = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration');
   let value = unwrap(declaration?.declaration);
@@ -46,22 +40,43 @@ export function objectConfig(ast: t.File): t.ObjectExpression | undefined {
 }
 export const loadingName = (s: string) => /^(?:is)?(?:loading|pending|fetching|initialloading)$|(?:Loading|Pending|Fetching)$/.test(s) || /^(?:isLoading|isPending|isFetching)$/.test(s);
 const unsafeCondition = (node: t.Node) => ['CallExpression', 'OptionalCallExpression', 'AssignmentExpression', 'UpdateExpression', 'AwaitExpression', 'NewExpression'].includes(node.type);
-export function pureCondition(code: string): boolean {
-  try {
-    let unsafe = false;
-    walk(parseExpression(code, { plugins: ['typescript'] }), node => { if (unsafeCondition(node)) unsafe = true; });
-    return !unsafe;
-  } catch { return false; }
-}
-export function pendingCondition(code: string, flags: Set<string> = new Set()): boolean {
-  try {
-    let seen = false, unsafe = false;
-    walk(parseExpression(code, { plugins: ['typescript'] }), node => {
-      if (node.type === 'Identifier' && (loadingName(node.name) || flags.has(node.name))) seen = true;
-      if (unsafeCondition(node)) unsafe = true;
-    });
-    return seen && !unsafe;
-  } catch { return false; }
+/** One file analysis shares syntax facts; known loading flags remain caller-local. */
+export function createConditionAnalyzer() {
+  interface Condition { key: string; names: string[]; unsafe: boolean }
+  const cache = new Map<string, Condition | null>();
+  const analyze = (code: string) => {
+    if (cache.has(code)) return cache.get(code);
+    let result: Condition | null = null;
+    try {
+      const ast = parseExpression(code, { plugins: ['typescript'] });
+      const names = new Set<string>();
+      let unsafe = false;
+      walk(ast, node => {
+        if (node.type === 'Identifier') names.add(node.name);
+        if (unsafeCondition(node)) unsafe = true;
+      });
+      const key = JSON.stringify(ast, (name, value: unknown) =>
+        ['start', 'end', 'loc', 'extra', 'leadingComments', 'trailingComments', 'innerComments', 'comments'].includes(name) ? undefined : value);
+      result = { key, names: [...names], unsafe };
+    } catch { /* Invalid conditions remain opaque for every consumer. */ }
+    cache.set(code, result);
+    return result;
+  };
+  return {
+    sameCondition(left: string, right: string): boolean {
+      if (left === right) return true;
+      const a = analyze(left), b = analyze(right);
+      return !!a && !!b && a.key === b.key;
+    },
+    pureCondition(code: string): boolean {
+      const result = analyze(code);
+      return !!result && !result.unsafe;
+    },
+    pendingCondition(code: string, flags: Set<string> = new Set()): boolean {
+      const result = analyze(code);
+      return !!result && !result.unsafe && result.names.some(name => loadingName(name) || flags.has(name));
+    },
+  };
 }
 export function isLoader(node: t.Node | null | undefined, code: string): boolean {
   if (!node) return false;

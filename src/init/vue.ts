@@ -1,6 +1,6 @@
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import { parse as parseDOM, type ElementNode, type TemplateChildNode, type DirectiveNode } from '@vue/compiler-dom';
-import { applyEdits, boundaryImports, startOf, nodeName, importOffset, loadingName, objectConfig, parseCode, pendingCondition, pureCondition, sameCondition, uniqueName, walk, type Edit } from './ast.js';
+import { applyEdits, boundaryImports, createConditionAnalyzer, startOf, nodeName, importOffset, loadingName, objectConfig, parseCode, uniqueName, walk, type Edit } from './ast.js';
 import { type AnalysisContext, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
 
@@ -8,6 +8,7 @@ const directive = (node: ElementNode, name: string) => node.props.find((p): p is
 const contentOf = (text: string, node: ElementNode) => text.slice(node.loc.start.offset, node.loc.end.offset);
 const loader = (node: ElementNode) => /loader|loading|spinner|skeleton|progress/i.test(node.tag ?? '') || /loading|加载|请稍候/i.test((node.children ?? []).filter(n => n.type === 2).map(n => n.content).join(''));
 export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
+  const { sameCondition, pureCondition, pendingCondition } = createConditionAnalyzer();
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
   const { descriptor, errors } = ctx.sfc ?? parseSFC(ctx.source, { filename: ctx.file });
   if (errors.length) throw new Error(String(errors[0]));

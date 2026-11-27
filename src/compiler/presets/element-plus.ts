@@ -4,6 +4,10 @@ import { elementCard, elementStatistic, elementScrollbar, elementTimeline } from
 import{elementPagination}from'./element-pagination.js';
 import {
   button,
+  choice,
+  imagePlaceholder,
+  formItem,
+  descriptionItem,
   input,
   calendar,
   column,
@@ -101,12 +105,7 @@ export const elementPlusPreset: ComponentPreset = {
     if (n === 'option')
       return { tag: 'option', children: children || escape(scalar(props.label ?? props.value)) };
     if (n === 'calendar') return calendar(children);
-    if (n === 'checkbox' || n === 'radio')
-      return {
-        tag: 'label',
-        style: 'display:inline-flex;align-items:center;gap:6px',
-        children: `<input data-sk-layout type="${n}" disabled tabindex="-1">${children}`,
-      };
+    if (n === 'checkbox' || n === 'radio') return choice(n, children);
     if (n === 'pagination')return elementPagination(props,children);
     if (n === 'switch' || n === 'slider')
       return {
@@ -125,16 +124,7 @@ export const elementPlusPreset: ComponentPreset = {
     if (n === 'card') return elementCard(props, policy.slots, text);
     if (n === 'table') return table(props, policy.columns.resolve(children), text, hints,true,policy.mask);
     if (n === 'tablecolumn') return column(props, children, policy.columns);
-    if (n === 'image' || n === 'avatar')
-      return {
-        tag: 'span',
-        leaf: true,
-        style: `display:inline-block;width:${dimension(
-          props.size,
-          n === 'avatar' ? '40px' : '160px',
-        )};height:${dimension(props.size, n === 'avatar' ? '40px' : '120px')};flex-shrink:0`,
-        children: '',
-      };
+    if (n === 'image' || n === 'avatar') return imagePlaceholder(props.size, n === 'avatar' ? '40px' : '160px', n === 'avatar' ? '40px' : '120px');
     // Countdown delegates its public layout and title/prefix/suffix slots to
     // Statistic. Timer/date functions do not affect that static structure.
     if (n === 'statistic' || n === 'countdown') return elementStatistic(props,policy.slots,text);
@@ -154,27 +144,10 @@ export const elementPlusPreset: ComponentPreset = {
     if (n === 'col') return elementColumn(props, children);
     if (n === 'space' || n === 'buttongroup')
       return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children };
-    if (n === 'formitem')
-      return {
-        tag: 'div',
-        style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:18px',
-        children:
-          (props.label
-            ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
-                scalar(props.label),
-              )}</label>`
-            : '') + children,
-      };
+    if (n === 'formitem') return formItem(children, props.label);
     if (n === 'divider')
       return { tag: 'div', style: 'height:1px;margin:20px 0;background:#e4e7ed', children: '' };
-    if (n === 'descriptionsitem')
-      return {
-        tag: 'div',
-        style: 'display:flex;gap:12px;padding:8px 0',
-        children:
-          `<span data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</span>` +
-          children,
-      };
+    if (n === 'descriptionsitem') return descriptionItem(children, props.label);
     if (n === 'scrollbar') return elementScrollbar(props,children);
     if(n==='timeline'||n==='timelineitem')return elementTimeline(n,props,children,text);
     if (n === 'container') return { tag: 'section', style: 'display:flex;min-width:0;flex:1', children };

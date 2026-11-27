@@ -53,6 +53,35 @@ export function button(children: string, _props: Record<string, unknown>, height
     children,
   };
 }
+export function choice(type: 'checkbox' | 'radio', children: string): Presentation {
+  return {
+    tag: 'label',
+    style: 'display:inline-flex;align-items:center;gap:6px',
+    children: `<input data-sk-layout type="${type}" disabled tabindex="-1">${children}`,
+  };
+}
+export function imagePlaceholder(size: unknown, width: string, height: string): Presentation {
+  return {
+    tag: 'span',
+    leaf: true,
+    style: `display:inline-block;width:${dimension(size, width)};height:${dimension(size, height)};flex-shrink:0`,
+    children: '',
+  };
+}
+export function formItem(children: string, label: unknown, margin = '18px'): Presentation {
+  return {
+    tag: 'div',
+    style: `display:flex;flex-direction:column;gap:6px;margin-bottom:${margin}`,
+    children: (label ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(scalar(label))}</label>` : '') + children,
+  };
+}
+export function descriptionItem(children: string, label: unknown): Presentation {
+  return {
+    tag: 'div',
+    style: 'display:flex;gap:12px;padding:8px 0',
+    children: `<span data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(scalar(label))}</span>` + children,
+  };
+}
 export function input(props: Record<string, unknown>, height = '32px'): Presentation {
   return {
     tag: props.type === 'textarea' ? 'textarea' : 'input',

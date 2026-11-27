@@ -63,8 +63,7 @@ export function bindSlotInitial(pattern:t.Node,initial:Value,ctx:RenderContext){
  ctx.initialValues??={};for(const name of patternNames(pattern))if(local.env[name]!==UNKNOWN)ctx.initialValues[name]=local.env[name];
 }
 
-export async function renderSlotCall(host:RenderHost,node:t.CallExpression|t.OptionalCallExpression,ctx:RenderContext):Promise<string|undefined>{
- const value=evaluate(node.callee,ctx);
+export async function renderSlotCall(host:RenderHost,node:t.CallExpression|t.OptionalCallExpression,ctx:RenderContext,value:Value):Promise<string|undefined>{
  if(!value||typeof value!=='object'||!Object.hasOwn(value,slotValue))return;
  if(node.arguments.length>1||node.arguments.some(argument=>argument.type==='SpreadElement'))return host.fallback(ctx,node,'Scoped slot arguments need one finite source object');
  const argument=node.arguments[0]?evaluate(node.arguments[0],ctx):{};

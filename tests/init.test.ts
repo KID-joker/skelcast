@@ -5,13 +5,28 @@ import path from 'node:path';
 import os from 'node:os';
 import { initProject } from '../src/init/index.js';
 import { checkProject, loadProject, readArtifact } from '../src/generator.js';
-import { parseCode } from '../src/init/ast.js';
+import { createConditionAnalyzer, parseCode } from '../src/init/ast.js';
 import { matchesRoute, selectPageTarget, withSkelCast } from '../src/vite.js';
 import { scanProject } from '../src/init/scan.js';
 import { analyzeReact } from '../src/init/react.js';
 import { analyzeVue } from '../src/init/vue.js';
 
 const manifest = { name: 'existing-app', type: 'module', dependencies: { react: '^19', vue: '^3', vite: '^8' }, devDependencies: { skelcast: '^0.1.0' } };
+test('condition analysis preserves syntax equivalence and checks loading flags against the current scope', () => {
+  const conditions = createConditionAnalyzer();
+  assert.ok(conditions.sameCondition('!(loading)', '! /* comment */ loading'));
+  assert.ok(!conditions.sameCondition('loading && ready', 'loading || ready'));
+  assert.ok(conditions.pureCondition('fetching?.value && ready'));
+  assert.ok(!conditions.pendingCondition('busy && ready'));
+  assert.ok(conditions.pendingCondition('busy && ready', new Set(['busy'])));
+  assert.ok(!conditions.pendingCondition('busy && ready'));
+  for (const code of ['loading()', 'loading = true', 'loading++', 'await loading', 'loading &&']) {
+    assert.ok(!conditions.pureCondition(code), code);
+    assert.ok(!conditions.pendingCondition(code, new Set(['loading'])), code);
+  }
+  assert.ok(!conditions.sameCondition('loading &&', 'loading ||'));
+  assert.ok(conditions.sameCondition('loading &&', 'loading &&'));
+});
 test('initial page matching prefers specific routes over an earlier Vue catch-all', () => {
   const targets = [
     { id: '404', source: '404.vue', kind: 'page' as const, route: '/:pathMatch(.*)*' },

@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { applyEdits, boundaryImports, endOf, nodeName, startOf, importOffset, isFunction, isLoader, loadingName, parseCode, pendingCondition, pureCondition, sameCondition, slice, uniqueName, unwrap, walk, type Ast } from './ast.js';
+import { applyEdits, boundaryImports, createConditionAnalyzer, endOf, nodeName, startOf, importOffset, isFunction, isLoader, loadingName, parseCode, slice, uniqueName, unwrap, walk, type Ast } from './ast.js';
 import { type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
 
@@ -40,6 +40,7 @@ export function reactComponents(ast: t.File): ComponentInfo[] {
 interface EarlyLoader { guard: t.IfStatement; returned: t.ReturnStatement }
 interface Region { node: Ast; pending: string; content: string; bindings: Record<string, boolean>; early?: EarlyLoader[] }
 export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
+  const { sameCondition, pureCondition, pendingCondition } = createConditionAnalyzer();
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
   const code = ctx.source, ast = ctx.ast ?? parseCode(code, ctx.file);
   const components = reactComponents(ast);

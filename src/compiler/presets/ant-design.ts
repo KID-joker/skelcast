@@ -1,6 +1,10 @@
 import type { ComponentPreset, ComponentRole } from './types.js';
 import {
   button,
+  choice,
+  imagePlaceholder,
+  formItem,
+  descriptionItem,
   input,
   calendar,
   card,
@@ -8,7 +12,6 @@ import {
   table,
   libraryExport,
   readonly,
-  dimension,
   escape,
   scalar,
 } from './shared.js';
@@ -134,12 +137,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
       if (name === 'select.option' || name === 'selectoption')
         return { tag: 'option', children: children || escape(scalar(props.label ?? props.value)) };
       if (name === 'calendar') return calendar(children);
-      if (name === 'checkbox' || name === 'radio')
-        return {
-          tag: 'label',
-          style: 'display:inline-flex;align-items:center;gap:6px',
-          children: `<input data-sk-layout type="${name}" disabled tabindex="-1">${children}`,
-        };
+      if (name === 'checkbox' || name === 'radio') return choice(name, children);
       if (name === 'switch' || name === 'slider' || name === 'pagination')
         return {
           tag: 'div',
@@ -156,16 +154,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           tag: 'div',
           children: (props.title ? text : '') + (props.description ? text : '') + children,
         };
-      if (name === 'avatar' || name === 'image')
-        return {
-          tag: 'span',
-          leaf: true,
-          style: `display:inline-block;width:${dimension(
-            props.size,
-            name === 'avatar' ? '32px' : '160px',
-          )};height:${dimension(props.size, name === 'avatar' ? '32px' : '120px')};flex-shrink:0`,
-          children: '',
-        };
+      if (name === 'avatar' || name === 'image') return imagePlaceholder(props.size, name === 'avatar' ? '32px' : '160px', name === 'avatar' ? '32px' : '120px');
       if (name === 'statistic')
         return {
           tag: 'div',
@@ -212,26 +201,8 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           }%`,
           children,
         };
-      if (name === 'form.item' || name === 'formitem')
-        return {
-          tag: 'div',
-          style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:24px',
-          children:
-            (props.label
-              ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
-                  scalar(props.label),
-                )}</label>`
-              : '') + children,
-        };
-      if (name === 'descriptions.item' || name === 'descriptionsitem')
-        return {
-          tag: 'div',
-          style: 'display:flex;gap:12px;padding:8px 0',
-          children:
-            `<span data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
-              scalar(props.label),
-            )}</span>` + children,
-        };
+      if (name === 'form.item' || name === 'formitem') return formItem(children, props.label, '24px');
+      if (name === 'descriptions.item' || name === 'descriptionsitem') return descriptionItem(children, props.label);
       if (name === 'divider')
         return { tag: 'div', style: 'height:1px;margin:24px 0;background:#f0f0f0', children: '' };
       if (name === 'configprovider') return { tag: 'div', style: 'display:contents', children };

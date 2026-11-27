@@ -19,6 +19,32 @@ const naiveDeclarations = `declare module 'vue' { interface GlobalComponents { $
 
 const target: SkeletonTarget = { id: 'test.list', source: 'View.tsx' };
 
+test('JSX and Vue keep explicit adapters ahead of local source and presets while forwarding children', async () => {
+  await fixture({
+    'Child.tsx': `export default({children})=><section className="source">{children}</section>`,
+    'Adapter.tsx': `export default({children})=><article className="adapter">{children}</article>`,
+    'Child.vue': `<template><section class="source"><slot/></section></template>`,
+    'Adapter.vue': `<template><article class="adapter"><slot/></article></template>`,
+    'View.tsx': `import Child from './Child';import{Button}from'antd';export default()=> <main><Child>Source child</Child><Button>Action</Button></main>`,
+    'View.vue': `<script setup>import Child from './Child.vue';import{Button}from'antd'</script><template><main><Child>Source child</Child><Button>Action</Button></main></template>`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue']) {
+      const options = { componentPresets: ['antd' as const] };
+      const plain = await compileTarget(root, { ...target, source }, {}, options);
+      assert.match(plain.artifact.variants.default.html, /<section class="source"/);
+      assert.match(plain.artifact.variants.default.html, /<button/);
+      const adapter = source.endsWith('.vue') ? 'Adapter.vue' : 'Adapter.tsx';
+      const adapted = await compileTarget(root, { ...target, source, adapters: { Child: adapter, Button: adapter } }, {}, options);
+      const html = adapted.artifact.variants.default.html;
+      assert.equal((html.match(/<article class="adapter"/g) ?? []).length, 2);
+      assert.doesNotMatch(html, /<section|<button/);
+      assert.match(html, /Source child/);
+      assert.match(html, /Action/);
+      assert.deepEqual(adapted.artifact.diagnostics, []);
+    }
+  });
+});
+
 test('dynamic Vue tags retain native controls, source slots, spread order and component-scoped diagnostics', async () => {
   await fixture({
     'Child.vue': `<script setup>defineProps(['title'])</script><template><section><h2>{{title}}</h2><slot/><slot name="extra"/></section></template>`,

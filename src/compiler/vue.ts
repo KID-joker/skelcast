@@ -1,12 +1,11 @@
 import type { Diagnostic } from '../types.js';
-import path from 'node:path';
+import { renderAdapter, renderComponent } from './component-render.js';
 import { UNKNOWN,SOURCE_INITIAL, bindPattern, evaluateString, sourceCapacity, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry, styleString } from './html.js';
 import { type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
 import { parseExpression } from '@babel/parser';
 import { parserOptions, type ElementNode, type TemplateChildNode as VueNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
-import { componentName } from './components.js';
 import { boundaryContentContext, hasStateBinding } from './branches.js';
 import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty,exclusiveChoice} from './loading-state.js';
 import{initialString}from'./initial-state.js';
@@ -40,6 +39,43 @@ function slotName(host:RenderHost,slot:DirectiveNode|undefined,ctx:RenderContext
  const name=slot.arg.type===4&&slot.arg.isStatic?slot.arg.content:evaluateString(expression(slot.arg)??'',ctx);
  if(typeof name==='string')return name;
  host.diagnose('SLOT_UNKNOWN','Dynamic slot name needs a finite source value',ctx,node);
+}
+
+type VueProp = ElementNode['props'][number];
+interface EvaluatedProp { prop: VueProp; key?: string; value: Value; projected: boolean }
+const dynamicContentProp = (prop: VueProp) => prop.name !== 'is' && prop.name !== 'for' && !(prop.type === 7 && prop.arg?.type === 4 && prop.arg.content === 'is');
+
+function assignProp(props: Record<string, Value>, prop: VueProp, key: string | undefined, value: Value): void {
+  if (key != null) props[key] = prop.type === 7 && prop.name === 'bind' && key === 'class' && props.class != null ? [props.class, value] : value;
+  else if (value && value !== UNKNOWN && typeof value === 'object' && !Array.isArray(value)) Object.assign(props, value);
+}
+
+/** Replay evaluated attributes in source order after a dynamic tag is known.
+ * Only native width/height projections need reevaluation under their layout policy. */
+function dynamicProps(host: RenderHost, entries: EvaluatedProp[], node: ElementNode, ctx: RenderContext) {
+  const props: Record<string, Value> = Object.create(null);
+  let unknownLayout = false;
+  for (const entry of entries) {
+    const { prop, key } = entry;
+    let { value } = entry;
+    if (prop.type === 7) {
+      if (node.tagType !== 1 && entry.projected) {
+        value = UNKNOWN;
+        if (key === 'width' || key === 'height') {
+          value = evaluateString(expression(prop.exp) ?? key, { ...ctx, defaultBranches: true });
+          host.diagnose('LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`, ctx, node);
+          if (value === UNKNOWN) unknownLayout = true;
+        }
+      }
+      if (node.tag === 'component' && key == null && value && typeof value === 'object' && 'is' in value && value.is === node.tag) {
+        value = UNKNOWN;
+        host.diagnose('SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings', ctx, node);
+      }
+    }
+    entry.value = value;
+    assignProp(props, prop, key, value);
+  }
+  return { props, unknownLayout };
 }
 
 export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: RenderContext): Promise<string> {
@@ -130,19 +166,16 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
   let props: Record<string, Value> = Object.create(null);
   // A dynamic tag reuses evaluated attribute values; resolving its tag must not
   // parse synthetic markup or revisit loop/region and expression evaluation.
-  type Prop = ElementNode['props'][number];
-  const values = node.tag === 'component' ? new Map<Prop, { key?: string; value: Value }>() : undefined;
-  const initialProps = values ? new Map<Prop, Value>() : undefined;
+  let values: EvaluatedProp[] | undefined = node.tag === 'component' ? [] : undefined;
   // Record once and enrich the diagnostic when a dynamic component is known.
   const notes: Diagnostic[] = [];
   const diagnose = (code: string, message: string) => {
     const diagnostic = this.diagnose(code, message, ctx, node);
     if (values) notes.push(diagnostic);
   };
-  const assign = (prop: Prop, key: string | undefined, value: Value) => {
-    values?.set(prop, { key, value });
-    if (key != null) props[key] = prop.type === 7 && prop.name === 'bind' && key === 'class' && props.class != null ? [props.class, value] : value;
-    else if (value && value !== UNKNOWN && typeof value === 'object' && !Array.isArray(value)) Object.assign(props, value);
+  const assign = (prop: VueProp, key: string | undefined, value: Value, projected = false) => {
+    values?.push({ prop, key, value, projected });
+    assignProp(props, prop, key, value);
   };
   let unknownLayout = false;
   let htmlContent: string | undefined, textContent = false;
@@ -157,16 +190,17 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     else if (p.name === 'bind' && p.arg?.type === 4 && p.arg.isStatic) {
       const key = p.arg.content;
       let value = evaluateString(expression(p.exp) ?? key, ctx);
+      let projected = false;
       if(value===UNKNOWN&&ctx.loading&&node.tagType===1&&!['class','style'].includes(key)){
         const initial=initialString(expression(p.exp)??key,ctx);
-        if(initial!==UNKNOWN){initialProps?.set(p,value);value={[SOURCE_INITIAL]:initial};diagnose('LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
+        if(initial!==UNKNOWN){projected=true;value={[SOURCE_INITIAL]:initial};diagnose('LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
       }
       if (value === UNKNOWN && ['class', 'style', 'width', 'height'].includes(key)) {
         value = evaluateString(expression(p.exp) ?? key, { ...ctx, defaultBranches: true });
         diagnose('LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`);
         if (value === UNKNOWN) unknownLayout = true;
       }
-      assign(p, key, value);
+      assign(p, key, value, projected);
     } else if (p.name === 'model') {
       if (!p.arg || p.arg.type === 4 && p.arg.isStatic) assign(p, p.arg?.content ?? 'modelValue', evaluateString(expression(p.exp) ?? '', ctx));
     } else if (p.name === 'show') {
@@ -216,34 +250,14 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       if (tag === 'slot') tagType = 2;
       else if (!parserOptions.isNativeTag!(tag)) tagType = 1;
       if (tagType === 1 && tag !== 'component') for (const note of notes) note.component = tag;
-      node = { ...node, tag, tagType, props: node.props.filter(p => p.name !== 'is' && !(p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is') && p.name !== 'for') } as ElementNode;
+      node = { ...node, tag, tagType, props: node.props.filter(dynamicContentProp) } as ElementNode;
       if (this.selectVueNode(node, ctx) === 'skip') return '';
       const exhausted = this.budget(ctx, node);
       if (exhausted !== undefined) return exhausted;
-      props = Object.create(null);
-      for (const prop of node.props) {
-        const entry = values!.get(prop);
-        if (!entry) continue;
-        const { key } = entry;
-        let { value } = entry;
-        if (prop.type === 7) {
-          if (tagType !== 1 && initialProps?.has(prop)) {
-            value = initialProps.get(prop);
-            if (key === 'width' || key === 'height') {
-              value = evaluateString(expression(prop.exp) ?? key, { ...ctx, defaultBranches: true });
-              this.diagnose('LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`, ctx, node);
-              if (value === UNKNOWN) unknownLayout = true;
-            }
-          }
-          // A self-selecting spread has no finite component target. Keep the
-          // existing unresolved-spread fallback without recursive stack growth.
-          if (tag === 'component' && key == null && value && typeof value === 'object' && 'is' in value && value.is === tag) {
-            value = UNKNOWN;
-            this.diagnose('SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings', ctx, node);
-          }
-        }
-        assign(prop, key, value);
-      }
+      values = values!.filter(entry => dynamicContentProp(entry.prop));
+      const resolved = dynamicProps(this, values, node, ctx);
+      props = resolved.props;
+      unknownLayout ||= resolved.unknownLayout;
       continue;
     }
     break;
@@ -262,12 +276,10 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     }
     if (defaults.length){const own=directive(node,['slot']),name=slotName(this,own,ctx,node);if(name!==undefined)slots[name]={nodes:defaults,context:ctx,framework:'vue',parameter:slotParameter(this,own,ctx,node)};}
     props.__skSlots = slots;
-    const adapter = this.target.adapters?.[tag];
-    if (adapter) { const file = path.resolve(this.root, adapter); await this.scan(file); return this.component(file, 'default', props, ctx, node); }
+    const adapter = await renderAdapter(this, tag, props, ctx, node);
+    if (adapter !== undefined) return adapter;
   }
-  if (imported?.file && /\.(vue|tsx|jsx|ts|js)$/.test(imported.file)) return this.component(imported.file, imported.exported, props, ctx, node);
-  if (componentName(tag) === 'routerlink') return this.element('a', props, await this.vueNodes(node.children, ctx), ctx, node);
-  const presentation = await this.preset(tag, imported, props, { nodes: node.children, context: ctx, framework: 'vue' }, node);
+  const presentation = await renderComponent(this, tag, imported, props, { nodes: node.children, context: ctx, framework: 'vue' }, node);
   if (presentation !== undefined) return presentation;
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   if (nonVisual.has(tag)) return '';
