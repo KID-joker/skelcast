@@ -16,7 +16,7 @@ function repeatedContent(node: Ast): boolean {
   walk(node, n => { if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && nodeName(n.callee.property) === 'map') found = true; });
   return found;
 }
-function hasCollection(node:Ast,root:string,ctx:RenderContext):boolean{let found=false;walk(node,n=>{if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'&&nodeName(n.callee.property)==='map'&&collectionRoot(expressionText(n.callee.object,ctx))===root)found=true;});return found;}
+function hasCollection(node:Ast,root:string,ctx:RenderContext):boolean{let found=false;walk(node,n=>{if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'&&nodeName(n.callee.property)==='map'&&collectionRoot(expressionText(n.callee.object,ctx),ctx)===root)found=true;});return found;}
 
 export async function renderJSX(this: RenderHost, node: Ast | null | undefined, ctx: RenderContext): Promise<string> {
   if (!node) return '';
@@ -33,10 +33,10 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   if (node.type === 'JSXExpressionContainer') return node.expression.type === 'JSXEmptyExpression' ? '' : this.jsx(node.expression, ctx);
   if (node.type === 'ConditionalExpression') {
     let test = evaluate(node.test, ctx);
-    const text=expressionText(node.test,ctx),presence=hasStateBinding(text,ctx)?undefined:loadingPresence(text,ctx);
+    const text=expressionText(node.test,ctx),boundState=hasStateBinding(text,ctx),presence=boundState?undefined:loadingPresence(text,ctx);
     if(presence&&projectsCollection(presence.root,ctx)&&collectionEmpty(presence.root,ctx)&&(hasCollection(node.consequent,presence.root,ctx)||hasCollection(node.alternate,presence.root,ctx))){test=presence.present;ctx={...ctx,projectedCollections:new Set([...ctx.projectedCollections??[],presence.root])};this.diagnose('LOADING_PROJECTION','Render the source collection template for loading; response values remain unknown',ctx,node);}
-    if (this.target.kind === 'request' && this.hints.state!=='source' && test !== UNKNOWN && !hasStateBinding(expressionText(node.test, ctx), ctx) && repeatedContent(test ? node.alternate : node.consequent) && !repeatedContent(test ? node.consequent : node.alternate)) this.diagnose('EMPTY_STATE', 'Source-default branch excludes repeated request content; declare a finite populated/empty variant when needed', ctx, node);
-    this.record('branch', expressionText(node.test, ctx), test === UNKNOWN ? 'Default to consequent; override with bindings' : `Resolved to ${!!test}`, ctx, node);
+    if (this.target.kind === 'request' && this.hints.state!=='source' && test !== UNKNOWN && !boundState && repeatedContent(test ? node.alternate : node.consequent) && !repeatedContent(test ? node.consequent : node.alternate)) this.diagnose('EMPTY_STATE', 'Source-default branch excludes repeated request content; declare a finite populated/empty variant when needed', ctx, node);
+    this.record('branch', text, test === UNKNOWN ? 'Default to consequent; override with bindings' : `Resolved to ${!!test}`, ctx, node);
     if (test === UNKNOWN) this.diagnose('BRANCH_DEFAULT', 'Unknown condition: chose consequent; supply bindings to select a branch', ctx, node);
     return this.jsx(test === UNKNOWN || test ? node.consequent : node.alternate, ctx);
   }
@@ -105,7 +105,7 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
   if (ctx.module.boundaries.has(tag)) {
     const pending = opening.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'pending');
     const expression = pending?.type === 'JSXAttribute' && pending.value?.type === 'JSXExpressionContainer' ? expressionText(pending.value.expression, ctx) : '';
-    return this.jsxNodes(node.children, {...(expression ? boundaryContentContext(ctx, expression) : ctx),loading:this.hints.state==='loading'||this.hints.state!=='source'&&!!expression&&expression!=='false'});
+    return this.jsxNodes(node.children, boundaryContentContext(ctx, expression, this.hints.state));
   }
   if (unknownGeometry(props.style)) unknownLayout = true;
   if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));

@@ -39,6 +39,8 @@ export interface ExpressionContext {
   code: string;
   env: Record<string, Value>;
   bindings: Record<string, Value>;
+  /** Immutable syntax shared within one compilation; expression values stay local. */
+  expressions?: Map<string, t.Expression | null>;
   defaultBranches?: boolean;
   unwrapRefs?: boolean;
   /** Shared work limit for nested bounded collection operations. */
@@ -330,9 +332,22 @@ function arrowValue(fn: t.ArrowFunctionExpression, args: Value[], ctx: Expressio
   return statements(fn.body.body)?.value;
 }
 
+export function parseSourceExpression(text: string, ctx?: ExpressionContext): t.Expression | undefined {
+  const cached = ctx?.expressions?.get(text);
+  if (cached !== undefined) return cached ?? undefined;
+  let expression: t.Expression | null = null;
+  try { expression = parseExpression(text, { plugins: ['typescript'] }); }
+  catch { /* Invalid syntax stays opaque, including on later requests. */ }
+  ctx?.expressions?.set(text, expression);
+  return expression ?? undefined;
+}
+
 export function evaluateString(text: string, ctx: ExpressionContext): Value {
   if (Object.hasOwn(ctx.bindings, text.trim())) return ctx.bindings[text.trim()];
-  try { return evaluate(parseExpression(text, { plugins: ['typescript'] }), { ...ctx, code: text }); }
+  try {
+    const expression = parseSourceExpression(text, ctx);
+    return expression ? evaluate(expression, { ...ctx, code: text }) : UNKNOWN;
+  }
   catch { return UNKNOWN; }
 }
 

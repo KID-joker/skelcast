@@ -4,6 +4,7 @@ import type { TargetStatus } from './generator.js';
 import { patchChildren } from './devtools/dom.js';
 import { devtoolsCSS } from './devtools/styles.js';
 import { icon } from './devtools/icons.js';
+import { escapeHTML } from './shared.js';
 
 interface DevState { artifacts: SkeletonArtifact[]; statuses: TargetStatus[] }
 let data: DevState = { artifacts: [], statuses: [] };
@@ -62,7 +63,7 @@ async function refresh() {
     render();
   } catch { note = 'Unable to read skeleton status. Ask your coding agent to run skelcast check.'; render(); }
 }
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+const esc = (value: unknown) => escapeHTML(value ?? '');
 function render() {
   if (!selectedByUser) {
     const mounted = listBoundaries();

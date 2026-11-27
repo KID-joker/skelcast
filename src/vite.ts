@@ -7,6 +7,7 @@ import type { SkeletonArtifact, SkeletonTarget } from './types.js';
 import { createArtifactOptimizer, sharedStyleModule } from './compiler/optimize.js';
 import { digest } from './compiler/styles.js';
 import { parse, type ElementNode, type RootNode } from '@vue/compiler-dom';
+import { sharedStyleSeparator as separator } from './shared.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
@@ -68,7 +69,7 @@ export function withSkelCast(config: UserConfigExport): UserConfigExport {
 }
 const firstScreen = (artifact: SkeletonArtifact, reuse = false) => {
   const view = artifact.variants[artifact.defaultVariant];
-  const separator = '/* skelcast-shared-base */', index = view.css.indexOf(separator);
+  const index = view.css.indexOf(separator);
   let styles = `<style>${escapeStyle(view.css)}</style>`;
   if (reuse) {
     styles = `<style data-sk-initial-style>${escapeStyle(index < 0 ? view.css : view.css.slice(0, index))}</style>`;
@@ -137,7 +138,7 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
       if (initial) {
         const artifact = optimizer.artifact(await readArtifact(project, initial.target.id));
         const css = artifact.variants[artifact.defaultVariant].css;
-        const separator = '/* skelcast-shared-base */', index = css.indexOf(separator);
+        const index = css.indexOf(separator);
         initial.baseCSS = index < 0 ? undefined : css.slice(index + separator.length);
       }
     },

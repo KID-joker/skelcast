@@ -2,12 +2,9 @@ import { parse } from '@vue/compiler-dom';
 import type { SkeletonHints } from '../../types.js';
 import type { ComponentReference, Presentation } from './types.js';
 import { SOURCE_INITIAL, UNKNOWN, sourceCapacity, sourceCellGlyphs } from '../expression.js';
+import { escapeHTML as escape } from '../../shared.js';
 
-export const escape = (value: unknown) =>
-  String(value).replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  );
+export { escape };
 export const scalar = (value: unknown, fallback = '') =>
   typeof value === 'string' || typeof value === 'number' ? String(value) : fallback;
 export const dimension = (value: unknown, fallback: string) =>

@@ -1,3 +1,5 @@
+import { sharedStyleSeparator as separator } from '../shared.js';
+
 interface StyleEntry { references: number; remove: () => void; last:()=>void }
 const styles = new WeakMap<Document | ShadowRoot, Map<string, StyleEntry>>();
 interface SharedSheet { sheet: CSSStyleSheet; references: number }
@@ -6,7 +8,7 @@ const sheets = new WeakMap<Document, Map<string, SharedSheet>>();
 /** Light DOM instances share one style element per document. Shadow roots share
  * constructed sheets when available, with a scoped style-element fallback. */
 export function acquireStyle(root: Document | ShadowRoot, css: string, shared=false): () => void {
-  const separator='/* skelcast-shared-base */',index=css.indexOf(separator);
+  const index=css.indexOf(separator);
   if(index>=0){
     const local=acquireStyle(root,css.slice(0,index)),base=acquireStyle(root,css.slice(index+separator.length),true);
     return()=>{base();local();};

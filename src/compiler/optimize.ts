@@ -3,8 +3,7 @@ import { transform } from 'lightningcss';
 import postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';
 import type { SkeletonArtifact, SkeletonView } from '../types.js';
-
-const separator = '/* skelcast-shared-base */';
+import { sharedStyleSeparator as separator } from '../shared.js';
 
 /** Remove only source-location attributes, without reserializing text or whitespace. */
 function withoutSourceNodes(html: string): string {

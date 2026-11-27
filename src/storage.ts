@@ -85,6 +85,15 @@ export async function atomicWrite(file: string, content: string): Promise<void> 
 /** Call under withProjectLock. Stage every output before changing owned files;
  * retain a recovery journal until the manifest and all outputs are committed. */
 export async function commitOutputs(outDir: string, updates: Map<string, string | null>): Promise<void> {
+  const changes: { name: string; content: string | null; existed: boolean }[] = [];
+  for (const [name, content] of updates) {
+    if (!outputName(name)) throw new Error(`Invalid generated output: ${name}`);
+    let previous: string | null = null;
+    try { previous = await readFile(path.join(outDir, name), 'utf8'); }
+    catch (error) { if (!missing(error)) throw error; }
+    if (previous !== content) changes.push({ name, content, existed: previous !== null });
+  }
+  if (!changes.length) return;
   const stage = `.skelcast-stage-${randomUUID()}`;
   const directory = path.join(outDir, stage);
   const journal: Journal = { stage, files: [] };
@@ -92,20 +101,15 @@ export async function commitOutputs(outDir: string, updates: Map<string, string 
   await mkdir(path.join(directory, 'backup'));
   let journalWritten = false;
   try {
-    for (const [name, content] of updates) {
-      if (!outputName(name)) throw new Error(`Invalid generated output: ${name}`);
-      let previous: string | null = null;
-      try { previous = await readFile(path.join(outDir, name), 'utf8'); }
-      catch (error) { if (!missing(error)) throw error; }
-      if (previous === content) continue;
-      if (previous !== null) await copyFile(path.join(outDir, name), path.join(directory, 'backup', name));
+    for (const { name, content, existed } of changes) {
+      if (existed) await copyFile(path.join(outDir, name), path.join(directory, 'backup', name));
       if (content !== null) await writeFile(path.join(directory, 'next', name), content);
-      journal.files.push({ name, existed: previous !== null });
+      journal.files.push({ name, existed });
     }
     await atomicWrite(path.join(outDir, journalName), JSON.stringify(journal));
     journalWritten = true;
-    for (const { name } of journal.files) {
-      if (updates.get(name) === null) await unlink(path.join(outDir, name));
+    for (const { name, content } of changes) {
+      if (content === null) await unlink(path.join(outDir, name));
       else await rename(path.join(directory, 'next', name), path.join(outDir, name));
     }
     await unlink(path.join(outDir, journalName));

@@ -15,6 +15,21 @@ const expression = (node: ExpressionNode | undefined): string | undefined => nod
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
   node.props.find((prop): prop is DirectiveNode => prop.type === 7 && names.includes(prop.name));
 const repeatedContent = (node: VueNode): boolean => node.type === 1 && (!!directive(node, ['for']) || node.children.some(repeatedContent));
+const rootCache = new WeakMap<VueNode[], Set<string>>();
+/** Cache syntax only: loop values and branch choices still use the current context. */
+function collectionRoots(nodes: VueNode[], ctx: RenderContext): Set<string> {
+  let roots = rootCache.get(nodes);
+  if (roots) return roots;
+  roots = new Set<string>();
+  for (const node of nodes) if (node.type === 1) {
+    const loop = expression(directive(node, ['for'])?.exp)?.match(/\s+(?:in|of)\s+([\s\S]+)$/);
+    const root = loop && collectionRoot(loop[1], ctx);
+    if (root) roots.add(root);
+    for (const childRoot of collectionRoots(node.children, ctx)) roots.add(childRoot);
+  }
+  rootCache.set(nodes, roots);
+  return roots;
+}
 function slotParameter(host:RenderHost,slot:DirectiveNode|undefined,ctx:RenderContext,node:VueNode):Ast|undefined{
  if(!expression(slot?.exp))return;
  try{const fn=parseExpression(`(${expression(slot?.exp)})=>0`,{plugins:['typescript']});if(fn.type==='ArrowFunctionExpression')return fn.params[0];}catch{host.diagnose('SLOT_UNKNOWN','Cannot parse scoped slot parameters',ctx,node);}
@@ -30,8 +45,6 @@ export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: Re
   let html = '';
   let inChain = false, selected = false;
   const choices=new Map<string,string>();
-  const roots=new Set<string>();
-  const collect=(node:VueNode)=>{if(node.type!==1)return;const loop=expression(directive(node,['for'])?.exp)?.match(/\s+(?:in|of)\s+([\s\S]+)$/);if(loop){const root=collectionRoot(loop[1]);if(root)roots.add(root);}node.children.forEach(collect);};nodes.forEach(collect);
   for (const node of nodes) {
     const selection=this.selectVueNode(node,ctx);
     if(selection==='skip')continue;
@@ -43,19 +56,19 @@ export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: Re
         if (selected && inChain) continue;
         const expr = expression(condition.exp) ?? 'true';
         let result = evaluateString(expr, ctx);
-        const exclusive=ctx.loading&&!ctx.control?exclusiveChoice(expr):undefined;
+        const exclusive=ctx.loading&&!ctx.control?exclusiveChoice(expr,ctx):undefined;
         if(exclusive){
           if(result===true||result===UNKNOWN&&!choices.has(exclusive.key))choices.set(exclusive.key,exclusive.value);
           else if(result===UNKNOWN&&choices.get(exclusive.key)!==exclusive.value){this.record('branch',expr,'Exclude an incompatible alternative in the representative loading frame',ctx,node);continue;}
         }
-        const presence=hasStateBinding(expr,ctx)?undefined:loadingPresence(expr,ctx);
-        if(presence&&roots.has(presence.root)&&collectionEmpty(presence.root,ctx)&&projectsCollection(presence.root,ctx)){
+        const boundState=hasStateBinding(expr,ctx),presence=boundState?undefined:loadingPresence(expr,ctx);
+        if(presence&&collectionRoots(nodes,ctx).has(presence.root)&&collectionEmpty(presence.root,ctx)&&projectsCollection(presence.root,ctx)){
           result=presence.present;
           ctx={...ctx,projectedCollections:new Set([...ctx.projectedCollections??[],presence.root])};
           this.diagnose('LOADING_PROJECTION','Render the source collection template for loading; future result count and values remain unknown',ctx,node);
         }
         if (result !== UNKNOWN && !result) {
-          if (this.target.kind === 'request' && this.hints.state!=='source' && repeatedContent(node) && !hasStateBinding(expr, ctx)) this.diagnose('EMPTY_STATE', 'Source-default branch excludes repeated request content; declare a finite populated/empty variant when needed', ctx, node);
+          if (this.target.kind === 'request' && this.hints.state!=='source' && repeatedContent(node) && !boundState) this.diagnose('EMPTY_STATE', 'Source-default branch excludes repeated request content; declare a finite populated/empty variant when needed', ctx, node);
           continue;
         }
         if (result === UNKNOWN) this.diagnose('BRANCH_DEFAULT', `Unknown condition ${expr}: include this branch`, ctx, node);
@@ -106,7 +119,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
   if(selection==='target'){
     const binding=node.props.find((p):p is DirectiveNode=>p.type===7&&p.name==='bind'&&p.arg?.type===4&&p.arg.content==='pending');
     const value=expression(binding?.exp);
-    const content={...(value?boundaryContentContext(ctx,value):ctx),loading:this.hints.state==='loading'||this.hints.state!=='source'&&(value?value!=='false':!!ctx.loading)};
+    const content=boundaryContentContext(ctx,value,this.hints.state,!!ctx.loading);
     return this.captureVueRegion(()=>this.vueNodes(node.children,content));
   }
   if(selection==='ancestor'&&node.tagType!==1&&node.tag!=='slot'){
@@ -181,8 +194,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') {
       const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');
       const value = expression(pending?.exp);
-      const content=()=>this.vueNodes(node.children, {...(value ? boundaryContentContext(ctx, value) : ctx),loading:this.hints.state==='loading'||this.hints.state!=='source'&&!!value&&value!=='false'});
-      return content();
+      return this.vueNodes(node.children, boundaryContentContext(ctx, value, this.hints.state));
     }
     if (unknownGeometry(props.style)) unknownLayout = true;
     if (unknownLayout&&selection!=='ancestor') return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import type { BoundaryLayoutReport, LayoutTolerance } from './browser.js';
 import type { SkeletonArtifact } from './types.js';
+import { escapeHTML as escape } from './shared.js';
 
 export interface AuditOptions extends LayoutTolerance {
   url: string;
@@ -116,7 +117,6 @@ export async function auditProject(options: AuditOptions): Promise<AuditReport> 
   } finally { await browser.close(); }
 }
 
-const escape = (value: unknown) => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 export function renderAuditReport(result: AuditReport): string {
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SkelCast layout audit</title>
 <style>body{font:16px system-ui;margin:24px;color:#172334;background:#f7f9fc}section{background:white;padding:20px;margin:20px 0;border:1px solid #ccd4df;border-radius:8px}.scroll{overflow:auto}.overlay{position:relative;background:#eee}.overlay img{position:absolute;inset:0;max-width:none}.skeleton{opacity:.5}label{display:block;margin:12px 0}input{width:240px}li{margin:6px 0}a{color:#145cc5}</style>

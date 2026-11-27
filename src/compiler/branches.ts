@@ -1,14 +1,15 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName, walk } from './ast.js';
-import { UNKNOWN, bindPattern, evaluate, type ExpressionContext, type Value } from './expression.js';
-import { parseExpression } from '@babel/parser';
+import { UNKNOWN, bindPattern, evaluate, parseSourceExpression, type ExpressionContext, type Value } from './expression.js';
+import type { SkeletonHints } from '../types.js';
+import type { RenderContext } from './context.js';
 
 /** Explicit state bindings also count when they name an input to a condition. */
 export function hasStateBinding(text: string, context: ExpressionContext): boolean {
   if (Object.hasOwn(context.bindings, text)) return true;
   let found = false;
   try {
-    walk(parseExpression(text, { plugins: ['typescript'] }), (node, ancestors) => {
+    walk(parseSourceExpression(text, context), (node, ancestors) => {
       const parent = ancestors.at(-1);
       if (node.type === 'Identifier' && parent?.type === 'MemberExpression' && !parent.computed && parent.property === node) return;
       if (node.type === 'Identifier' || node.type === 'MemberExpression') if (Object.hasOwn(context.bindings, text.slice(node.start!, node.end!))) found = true;
@@ -17,20 +18,26 @@ export function hasStateBinding(text: string, context: ExpressionContext): boole
   return found;
 }
 
-/** Nested boundaries contribute their content branch to a page skeleton, even
- * when newly added guards are absent from that page's original hints. */
-export function boundaryContentContext<T extends ExpressionContext>(context: T, pending: string): T {
+export function loadingFrame(state: SkeletonHints['state'], fallback: boolean): boolean {
+  return state === 'loading' || state !== 'source' && fallback;
+}
+
+/** Nested boundaries contribute their content branch to a page skeleton. Selected
+ * Vue regions may inherit loading when pending is absent; other boundaries do not. */
+export function boundaryContentContext(context: RenderContext, pending: string | undefined, state: SkeletonHints['state'], fallbackLoading = false): RenderContext {
+  const loading = loadingFrame(state, pending ? pending !== 'false' : fallbackLoading);
+  if (!pending) return { ...context, loading };
   const bindings = { ...context.bindings, [pending]: false };
   try {
-    let expression: t.Expression = parseExpression(pending, { plugins: ['typescript'] });
+    let expression = parseSourceExpression(pending, context);
     let value = false;
-    while (expression.type === 'UnaryExpression' && expression.operator === '!') {
+    while (expression?.type === 'UnaryExpression' && expression.operator === '!') {
       expression = expression.argument;
       value = !value;
       bindings[pending.slice(expression.start!, expression.end!)] = value;
     }
   } catch { /* An opaque pending expression remains a single finite binding. */ }
-  return { ...context, bindings };
+  return { ...context, bindings, loading };
 }
 
 function branchReturn(branch: t.Statement | null | undefined): t.ReturnStatement | undefined {

@@ -16,7 +16,9 @@ export function planCollection(
   response = 'response count',
 ) {
   const bound = sourceCapacity(list);
-  const projected = collectionEmpty(text, ctx) && !hasStateBinding(text, ctx) && projectsCollection(collectionRoot(text), ctx);
+  const root = collectionRoot(text, ctx);
+  const boundState = hasStateBinding(text, ctx);
+  const projected = collectionEmpty(root, ctx) && !boundState && projectsCollection(root, ctx);
   let count = host.hints.repeat;
   if (count == null) {
     if (projected) count = repeatCapacity(text, ctx);
@@ -25,7 +27,7 @@ export function planCollection(
   }
   if (bound != null) host.diagnose('LOADING_PROJECTION', 'Use a representative source collection bound; later mutations, result count and item values remain unknown', ctx, node);
   if (projected) host.diagnose('LOADING_PROJECTION', `Render ${count} masked source items; this is loading capacity, not a ${response}`, ctx, node);
-  if (host.target.kind === 'request' && host.hints.state !== 'source' && count === 0 && !hasStateBinding(text, ctx)) {
+  if (host.target.kind === 'request' && host.hints.state !== 'source' && count === 0 && !boundState) {
     host.diagnose('EMPTY_STATE', 'Source-default collection is empty; declare a finite populated/empty variant when needed', ctx, node);
   }
   host.record('repeat', text, `Generate ${count} placeholders`, ctx, node);

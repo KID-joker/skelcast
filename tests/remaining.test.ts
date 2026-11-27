@@ -19,6 +19,20 @@ test('loading projects only response-linked collection guards, retains source/ex
  });
 });
 
+test('selected and nested boundaries retain their loading defaults and explicit state overrides', async () => {
+ for (const pending of ['', ':pending="false"', ':pending="true"', ':pending="!ready"']) {
+  await fixture({'View.vue':`<script setup>import{ref}from'vue';import{LoadingBoundary}from'skelcast/vue';import artifact from'virtual:skelcast/view';const rows=ref([]),ready=ref(false);function receive(response){rows.value=response.items;}</script><template><LoadingBoundary :artifact="artifact" ${pending}><section v-if="rows.length>0"><article v-for="row in rows">{{row.title}}</article></section></LoadingBoundary></template>`}, async root => {
+   for (const region of [undefined, 'artifact']) {
+    const {artifact}=await compileTarget(root,{id:'defaults',source:'View.vue',kind:'request',region,variants:{default:{},loading:{state:'loading'},source:{state:'source'}}});
+    const count=(variant:string)=>(artifact.variants[variant].html.match(/<article /g)??[]).length;
+    assert.equal(count('default'),pending===':pending="false"'||!pending&&!region?0:4,`${pending || 'absent pending'}, ${region || 'nested boundary'}`);
+    assert.equal(count('loading'),4);
+    assert.equal(count('source'),0);
+   }
+  });
+ }
+});
+
 test('permission guards, unrelated counts and static empty collections are never promoted to results',async()=>{
  await fixture({'View.vue':`<script setup>import{ref}from'vue';const rows=ref([]),allowed=false,total=0;function receive(response){rows.value=response.items;}</script><template><div v-if="allowed"><article v-for="row in rows">Forbidden</article></div><section v-if="total>0"><article v-for="row in rows">Unrelated</article></section></template>`},async root=>{
   const {artifact}=await compileTarget(root,{id:'safe',source:'View.vue',kind:'request'});assert.doesNotMatch(artifact.variants.default.html,/Forbidden|Unrelated|<article/);

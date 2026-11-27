@@ -1,4 +1,5 @@
 import type { SkeletonView } from '../types.js';
+import { sharedStyleSeparator } from '../shared.js';
 
 /** Read before application code runs; the module holding this snapshot outlives the shell. */
 export function captureInitialView(id: string): SkeletonView & { baseCSS: string } {
@@ -9,5 +10,5 @@ export function captureInitialView(id: string): SkeletonView & { baseCSS: string
   const base = root?.querySelector<HTMLStyleElement>('style[data-sk-initial-base]');
   if (!element || !local) throw new Error(`Missing initial skeleton ${id}. Preserve the generated shell until modules run, or use skelcastPlugin({ reuseInitial: false }).`);
   const baseCSS = base?.textContent ?? '';
-  return { html: element.outerHTML, css: (local.textContent ?? '') + (base ? '/* skelcast-shared-base */' + baseCSS : ''), baseCSS };
+  return { html: element.outerHTML, css: (local.textContent ?? '') + (base ? sharedStyleSeparator + baseCSS : ''), baseCSS };
 }

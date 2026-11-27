@@ -1,10 +1,10 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName } from './ast.js';
-import { prepareRenderFunction } from './branches.js';
+import { loadingFrame, prepareRenderFunction } from './branches.js';
 import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { parse as parseDOM, type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
+import { type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation, SkeletonView } from '../types.js';
 import { diagnosticDetails } from './diagnostics.js';
 import { UNKNOWN, bindPattern, evaluate, evaluateString, expressionText, sourceCapacity, type Ast, type Value } from './expression.js';
@@ -30,6 +30,7 @@ import {tableWrapper} from './table-wrapper.js';
 import {VueRegion,bindSlotArgument,bindSlotInitial,projectSelectedSlots} from './regions.js';
 import{presentationInputs}from'./initial-state.js';
 import { SourceFiles } from './source-files.js';
+import { sharedStyleSeparator } from '../shared.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -39,6 +40,7 @@ export class SourceCompiler extends SourceModules {
   private inlineStyles = new Map<string, { value: string; file: string }>();
   private sourceIds=new Set<string>();
   private region?:VueRegion;
+  private expressions = new Map<string, t.Expression | null>();
   selectVueNode(node:VueNode,ctx:RenderContext){return this.region?.mode(node,ctx);}
   captureVueRegion(render:()=>Promise<string>){return this.region?this.region.capture(render):render();}
   hasSelectedSlot(slot:SourceSlot){return !!this.region?.active&&this.region.carries(slot);}
@@ -114,7 +116,7 @@ export class SourceCompiler extends SourceModules {
         }
       }
     }
-    return { module: mod, code: mod.code, env, bindings,initialValues, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth, loading:this.hints.state==='loading'||this.hints.state!=='source'&&(parent?.loading??this.target.kind==='request') };
+    return { module: mod, code: mod.code, env, bindings, expressions: this.expressions, initialValues, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth, loading: loadingFrame(this.hints.state, parent?.loading ?? this.target.kind === 'request') };
   }
   private fallthroughAttrs(mod: ModuleInfo, props: Record<string, Value>): Record<string, Value> {
     return fallthroughAttrs(mod, props);
@@ -178,7 +180,7 @@ export class SourceCompiler extends SourceModules {
       const template = mod.descriptor.template;
       if (!template) return opaque('Vue component has no static template');
       if (template.lang && template.lang !== 'html') return opaque(`Template language ${template.lang} needs an adapter`);
-      const ast = parseDOM(template.content);
+      const ast = this.files.template(mod.file, template.content);
       ctx.code = template.content;
       const roots = ast.children.filter(child => child.type === 1 || child.type === 5 || child.type === 2 && child.content.trim());
       const root = roots.length === 1 && roots[0].type === 1 && roots[0].tag !== 'template' && !mod.boundaries.has(roots[0].tag) ? roots[0] : undefined;
@@ -363,7 +365,7 @@ export class SourceCompiler extends SourceModules {
     let css = '';
     try { const styles=[compiledStyles.css, await utilityCSS(html, this.options.styles)].join('\n');({ html, css } = scopeArtifactStyles(this.options.styles?.prune===false?styles:pruneCSS(styles,html), html, this.target.id)); }
     catch (error) { this.diagnostics.push({ code: 'STYLE_PARSE', message: String(error), file: this.target.source, line: 1 }); }
-    return { view: { html, css: `${css}\n/* skelcast-shared-base */${baseCSS.replace(/sk-pulse/g, 'skelcast-base-pulse-v1')}`,sourceIds:[...this.sourceIds].sort() }, dependencies: this.dependencies };
+    return { view: { html, css: `${css}\n${sharedStyleSeparator}${baseCSS.replace(/sk-pulse/g, 'skelcast-base-pulse-v1')}`,sourceIds:[...this.sourceIds].sort() }, dependencies: this.dependencies };
   }
 }
 export async function compileTarget(root: string, target: SkeletonTarget, aliases: Record<string, string> = {}, options: CompilerOptions = {}): Promise<{ artifact: SkeletonArtifact; dependencies: Record<string, string> }> {

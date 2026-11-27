@@ -43,3 +43,27 @@ test('scans and variants share source reads and ASTs while keeping binding envir
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('repeated Vue components share template syntax without sharing props, variants or later source edits', async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-template-cache-')));
+  try {
+    const source = `<script setup>import Child from './Child.vue';const groups=[{label:'First',limit:2},{label:'Second',limit:3}]</script><template><main><Child v-for="group in groups" :label="group.label" :limit="group.limit"/></main></template>`;
+    await writeFile(path.join(root, 'View.vue'), source);
+    await writeFile(path.join(root, 'Child.vue'), `<script setup>import{ref}from'vue';const props=defineProps(['label','limit']);const rows=ref([]);function receive(response){rows.value=response.items;}</script><template><section :data-label="label"><div v-if="rows.length>0"><article v-for="row in rows.slice(0,limit)">{{row.title}}</article></div></section></template>`);
+    const templates = t.mock.method(SourceFiles.prototype, 'template');
+    const target = { id: 'cache', source: 'View.vue', kind: 'request' as const, variants: { loading: {}, source: { state: 'source' as const }, empty: { bindings: { 'Child.vue::rows': [] } } } };
+    const first = await compileTarget(root, target);
+    const html = first.artifact.variants.loading.html;
+    assert.equal((html.match(/<article /g) ?? []).length, 5);
+    assert.match(html, /data-label="First"/);
+    assert.match(html, /data-label="Second"/);
+    for (const variant of ['source', 'empty']) assert.doesNotMatch(first.artifact.variants[variant].html, /<article /);
+    const childTemplates = templates.mock.calls.filter(call => call.arguments[0] === path.join(root, 'Child.vue'));
+    assert.equal(childTemplates.length, 6);
+    assert.equal(new Set(childTemplates.map(call => call.result)).size, 1, 'instances and variants reuse one immutable template');
+    await writeFile(path.join(root, 'View.vue'), source.replace('limit:2', 'limit:1'));
+    const second = await compileTarget(root, target);
+    assert.equal((second.artifact.variants.loading.html.match(/<article /g) ?? []).length, 4);
+    assert.notEqual(first.dependencies['View.vue'], second.dependencies['View.vue']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

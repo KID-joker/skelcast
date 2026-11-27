@@ -1,6 +1,6 @@
 import { UNKNOWN } from './expression.js';
 
-export const escapeHTML = (v: unknown) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export { escapeHTML } from '../shared.js';
 export const voids = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 export const nonVisual = new Set(['script', 'style', 'link', 'meta', 'iframe', 'object', 'embed']);
 export const unitless = new Set(['opacity', 'zIndex', 'fontWeight', 'lineHeight', 'flex', 'flexGrow', 'flexShrink', 'order', 'gridColumn', 'gridRow', 'aspectRatio']);

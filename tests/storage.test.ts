@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, stat, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, stat, rm, utimes } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { checkProject, loadProject, saveHints, syncProject } from '../src/generator.js';
-import { withProjectLock } from '../src/storage.js';
+import { commitOutputs, withProjectLock } from '../src/storage.js';
 import { qualityProject } from '../src/quality.js';
 import { diagnoseProject } from '../src/diagnose.js';
 
@@ -24,6 +24,28 @@ async function fixture(run: (root: string) => Promise<void>) {
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('unchanged outputs do not create transaction files or touch output timestamps', async () => fixture(async root => {
+  const project = await loadProject(root);
+  await syncProject(project);
+  const artifactFile = path.join(project.outDir, 'one.mjs');
+  const artifact = await readFile(artifactFile, 'utf8');
+  const before = (await stat(artifactFile)).mtimeMs;
+  await withProjectLock(project.outDir, async () => {
+    await utimes(project.outDir, 1, 1);
+    const directoryTime = (await stat(project.outDir)).mtimeMs;
+    await commitOutputs(project.outDir, new Map([
+      ['one.mjs', artifact],
+      ['manifest.json', await readFile(path.join(project.outDir, 'manifest.json'), 'utf8')],
+      ['absent.mjs', null],
+    ]));
+    await commitOutputs(project.outDir, new Map());
+    assert.equal((await stat(project.outDir)).mtimeMs, directoryTime, 'no staging directory or journal was created');
+    assert.equal((await stat(artifactFile)).mtimeMs, before);
+    assert.equal(await readFile(artifactFile, 'utf8'), artifact);
+  });
+  assert.ok((await checkProject(project)).every(row => row.state === 'ready'));
+}));
 
 test('single-target checks, quality and diagnosis do not inspect unrelated target inputs', async () => fixture(async root => {
   const project = await loadProject(root);

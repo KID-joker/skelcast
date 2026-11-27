@@ -1,5 +1,6 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { parse as parseSFC } from '@vue/compiler-sfc';
+import { parse as parseDOM } from '@vue/compiler-dom';
 import { parseSource } from './ast.js';
 import { digest } from './styles.js';
 
@@ -9,6 +10,7 @@ export class SourceFiles {
   private files = new Map<string, Promise<{ file: string; bytes: Buffer; hash: string }>>();
   private scripts = new Map<string, { code: string; sfc?: ReturnType<typeof parseSFC> }>();
   private asts = new Map<string, ReturnType<typeof parseSource>>();
+  private templates = new Map<string, ReturnType<typeof parseDOM>>();
 
   read(file: string) {
     let result = this.files.get(file);
@@ -39,6 +41,15 @@ export class SourceFiles {
       this.scripts.set(file, result);
     }
     return result;
+  }
+
+  template(file: string, code: string) {
+    let ast = this.templates.get(file);
+    if (!ast) {
+      ast = parseDOM(code);
+      this.templates.set(file, ast);
+    }
+    return ast;
   }
 
   ast(file: string, code: string, jsx = !/\.(?:[cm]?ts|vue)$/.test(file)) {
