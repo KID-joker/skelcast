@@ -262,10 +262,10 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
   if (tag === 'img') return this.image(props, local, node);
   if (Object.hasOwn(props, 'innerHTML')) return typeof props.innerHTML === 'string' ? this.element(tag, props, this.staticHTML(props.innerHTML, local, node), local, node) : this.fallback(local, node, 'Unknown h() innerHTML needs a finite binding');
   const content = Object.hasOwn(props, 'textContent') ? this.contentText(props.textContent, local, node) : await children();
-  let html = this.element(tag, props, content, local, node);
-  if (!content && ['div', 'section', 'article', 'main', 'canvas'].includes(tag) && Object.hasOwn(props, 'ref')) {
+  const opaque = !content && ['div', 'section', 'article', 'main', 'canvas'].includes(tag) && Object.hasOwn(props, 'ref');
+  const html = this.element(tag, props, content, local, node, { opaque, leaf: opaque && this.masked(local) });
+  if (opaque) {
     this.diagnose('FALLBACK', 'Opaque native mount point: preserve source container geometry', local, node);
-    html = html.replace(' data-sk-node=', ` data-sk-opaque${this.masked(local) ? ' data-sk-leaf' : ''} data-sk-node=`);
   }
   return html;
 }

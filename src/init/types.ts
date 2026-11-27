@@ -1,6 +1,8 @@
 import type { SkeletonConfig, SkeletonTarget } from '../types.js';
 import type { RenderFunction } from '../compiler/ast.js';
 import type { Edit } from './ast.js';
+import type { File } from '@babel/types';
+import type { SFCParseResult } from '@vue/compiler-sfc';
 
 export interface InitDiagnostic { code: string; message: string; file: string; line?: number }
 export interface InitChange { file: string; before: string | null; after: string; reason: string }
@@ -24,6 +26,8 @@ export interface AnalysisContext {
   routes: string[];
   existing: SkeletonConfig;
   usedIds: Set<string>;
+  ast?: File;
+  sfc?: SFCParseResult;
 }
 export function targetId(ctx: AnalysisContext, suffix: string): string {
   const base = ctx.file.replace(/^(?:src\/)?(?:pages|views)\//, '').replace(/^src\//, '').replace(/\.(?:tsx?|jsx?|vue)$/, '').replace(/\/index$/, '').replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/[^a-zA-Z0-9]+/g, '.').toLowerCase();

@@ -37,6 +37,34 @@ const presetOptions = {
   )[],
 };
 
+test('preset-owned elements retain layout markers without changing source slot box models or duplicating leaf markers', async () => {
+  await fixture({
+    'View.vue': `<script setup>
+      import {ElCard,ElTable,ElTableColumn,ElInput,ElPagination,ElStatistic} from 'element-plus';
+      import {NCode,NGrid,NScrollbar,NFormItem} from 'naive-ui';
+    </script><template>
+      <ElCard header="Heading"><article class="source-content">Source text</article></ElCard>
+      <ElTable><ElTableColumn label="Name"/></ElTable>
+      <ElInput readonly/><ElInput data-sk-mask/><ElStatistic :value="12"/>
+      <ElPagination layout="total, sizes, prev, pager, next, jumper, ->, slot"><aside class="source-content">Footer</aside></ElPagination>
+      <NCode code="first&#10;second"/><NGrid cols="1 s:2"><section class="source-content">Grid</section></NGrid>
+      <NScrollbar x-scrollable><NFormItem label="Field"><input readonly></NFormItem></NScrollbar>
+    </template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { id: 'markers', source: 'View.vue' }, {}, { componentPresets: ['element-plus', 'naive-ui'] });
+    const els = elements(artifact.variants.default.html);
+    const owned = els.filter(node => !has(node, 'data-sk-node') && !has(node, 'data-sk-artifact'));
+    assert.ok(owned.length > 20);
+    assert.ok(owned.every(node => has(node, 'data-sk-layout')), 'primitive wrappers use border-box');
+    const source = els.filter(node => node.props.some((p: any) => p.name === 'class' && p.value?.content === 'source-content'));
+    assert.equal(source.length, 3);
+    assert.ok(source.every(node => !has(node, 'data-sk-layout')), 'source slots keep their source box model');
+    assert.ok(els.every(node => node.props.filter((p: any) => p.name === 'data-sk-leaf').length <= 1));
+    assert.ok(els.some(node => node.props.some((p: any) => p.name === 'class' && p.value?.content === 'el-pagination__total is-first')));
+    assert.deepEqual(artifact.diagnostics.filter(row => row.code === 'FALLBACK'), []);
+  });
+});
+
 test('Element Plus keeps controls and masks only table data, with import-identity gating', async () => {
   await fixture(
     {

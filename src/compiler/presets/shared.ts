@@ -68,14 +68,14 @@ export function calendar(children: string): Presentation {
   return {
     tag: 'section',
     style: 'min-width:0;width:100%;padding:12px;border:1px solid #d9d9d9;border-radius:4px',
-    children: `<header style="min-height:32px">${
+    children: `<header data-sk-layout style="min-height:32px">${
       children || 'Calendar'
-    }</header><div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr))">${weekdays
-      .map((day) => `<span style="padding:4px;text-align:center;font-size:12px">${day}</span>`)
+    }</header><div data-sk-layout style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr))">${weekdays
+      .map((day) => `<span data-sk-layout style="padding:4px;text-align:center;font-size:12px">${day}</span>`)
       .join('')}${Array.from(
       { length: 42 },
       () =>
-        '<span data-sk-calendar-cell style="min-width:0;min-height:32px;border-top:1px solid #eee"></span>',
+        '<span data-sk-layout data-sk-calendar-cell style="min-width:0;min-height:32px;border-top:1px solid #eee"></span>',
     ).join('')}</div>`,
     notes: [
       'Calendar uses an inert neutral date grid; current dates and custom event-cell renderers are not inferred.',
@@ -162,19 +162,19 @@ export function table(
   const header = cols
     .map(
       (c) =>
-        `<th data-sk-control style="padding:${element?'8px 0':'10px'};text-align:${c.headerAlign??c.align??'left'};font-weight:500;border-bottom:1px solid #e4e7ed;color:var(--skeleton-control-color,#606266)">${element?'<div class="cell" style="padding:0 12px;line-height:23px;overflow-wrap:break-word">':''}${
-          c.type==='selection'?'<input type="checkbox" disabled tabindex="-1" data-sk-control style="width:14px;height:14px;margin:0;vertical-align:middle">':c.type==='expand'?'':escape(c.label) || text
+        `<th data-sk-layout data-sk-control style="padding:${element?'8px 0':'10px'};text-align:${c.headerAlign??c.align??'left'};font-weight:500;border-bottom:1px solid #e4e7ed;color:var(--skeleton-control-color,#606266)">${element?'<div data-sk-layout class="cell" style="padding:0 12px;line-height:23px;overflow-wrap:break-word">':''}${
+          c.type==='selection'?'<input data-sk-layout type="checkbox" disabled tabindex="-1" data-sk-control style="width:14px;height:14px;margin:0;vertical-align:middle">':c.type==='expand'?'':escape(c.label) || text
         }${element?'</div>':''}</th>`,
     )
     .join('');
   const body = Array.from(
     { length: rows },
     (_,index) =>
-      `<tr>${cols
+      `<tr data-sk-layout>${cols
         .map((c) => {
           const row=Array.isArray(data)?data[index]:glyphs?.[index],value=row&&typeof row==='object'&&Object.hasOwn(row,c.field)?(row as Record<string,unknown>)[c.field]:undefined;
-          const content=c.type==='selection'?'<input type="checkbox" disabled tabindex="-1" data-sk-control style="width:14px;height:14px;margin:0;vertical-align:middle">':c.type==='expand'?'<span data-sk-control>›</span>':c.content||((typeof value==='string'||typeof value==='number')?`<span data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escape(value)}"></span>`:text);
-          return `<td style="padding:${element?'8px 0':'12px 10px'};text-align:${c.align??'left'};border-bottom:1px solid #eee">${element?'<div class="cell" style="padding:0 12px;line-height:23px;overflow-wrap:break-word">':''}${content}${element?'</div>':''}</td>`;
+          const content=c.type==='selection'?'<input data-sk-layout type="checkbox" disabled tabindex="-1" data-sk-control style="width:14px;height:14px;margin:0;vertical-align:middle">':c.type==='expand'?'<span data-sk-layout data-sk-control>›</span>':c.content||((typeof value==='string'||typeof value==='number')?`<span data-sk-layout data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escape(value)}"></span>`:text);
+          return `<td data-sk-layout style="padding:${element?'8px 0':'12px 10px'};text-align:${c.align??'left'};border-bottom:1px solid #eee">${element?'<div data-sk-layout class="cell" style="padding:0 12px;line-height:23px;overflow-wrap:break-word">':''}${content}${element?'</div>':''}</td>`;
         })
         .join('')}</tr>`,
   ).join('');
@@ -182,11 +182,11 @@ export function table(
     tag: 'div',
     className:element?'el-table':undefined,
     style: `min-width:0;max-width:100%;overflow-x:auto;${element?'font-size:14px;':''}${element&&pixelColumns&&flexWidth>0&&props.fit!==false?'container-type:inline-size;':''}${props.height!=null?'height:'+dimension(props.height,'auto')+';':''}${props.maxHeight!=null?'max-height:'+dimension(props.maxHeight,'none')+';':''}`,
-    children: `<table data-sk-data-table style="width:${element&&props.fit===false?`${width}px`:'100%'};min-width:${width}px;border-collapse:collapse;table-layout:fixed"><colgroup>${cols
-      .map((c) => `<col${columnWidth(c)?` style="width:${columnWidth(c)}"`:''}>`)
-      .join('')}</colgroup>${props.showHeader===false?'':`<thead><tr>${header}</tr></thead>`}<tbody>${
+    children: `<table data-sk-layout data-sk-data-table style="width:${element&&props.fit===false?`${width}px`:'100%'};min-width:${width}px;border-collapse:collapse;table-layout:fixed"><colgroup data-sk-layout>${cols
+      .map((c) => `<col data-sk-layout${columnWidth(c)?` style="width:${columnWidth(c)}"`:''}>`)
+      .join('')}</colgroup>${props.showHeader===false?'':`<thead data-sk-layout><tr data-sk-layout>${header}</tr></thead>`}<tbody data-sk-layout>${
       body ||
-      `<tr><td data-sk-control colspan="${cols.length}" style="padding:24px;text-align:center;color:var(--skeleton-control-color,#909399)">No data</td></tr>`
+      `<tr data-sk-layout><td data-sk-layout data-sk-control colspan="${cols.length}" style="padding:24px;text-align:center;color:var(--skeleton-control-color,#909399)">No data</td></tr>`
     }</tbody></table>`,
     notes: [...new Set(notes)],
   };

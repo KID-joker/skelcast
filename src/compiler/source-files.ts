@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import { parse as parseDOM } from '@vue/compiler-dom';
 import { parseSource } from './ast.js';
@@ -11,6 +11,27 @@ export class SourceFiles {
   private scripts = new Map<string, { code: string; sfc?: ReturnType<typeof parseSFC> }>();
   private asts = new Map<string, ReturnType<typeof parseSource>>();
   private templates = new Map<string, ReturnType<typeof parseDOM>>();
+  private resolutions = new Map<string, Promise<{ file?: string; missing: string[] }>>();
+
+  /** Share probes across scans and variants, retaining every failed candidate
+   * so each compiler can record its own invalidation dependencies. */
+  resolve(candidates: string[]) {
+    const key = JSON.stringify(candidates);
+    let result = this.resolutions.get(key);
+    if (!result) {
+      result = (async () => {
+        const missing: string[] = [];
+        for (const file of candidates) {
+          try { if ((await stat(file)).isFile()) return { file, missing }; }
+          catch (error) { if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+          missing.push(file);
+        }
+        return { missing };
+      })();
+      this.resolutions.set(key, result);
+    }
+    return result;
+  }
 
   read(file: string) {
     let result = this.files.get(file);

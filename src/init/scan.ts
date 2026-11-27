@@ -1,7 +1,7 @@
 import type * as t from '@babel/types';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { parse as parseSFC } from '@vue/compiler-sfc';
+import { parse as parseSFC, type SFCParseResult } from '@vue/compiler-sfc';
 import { evaluate } from '../compiler/expression.js';
 import { resolutionCandidates } from '../compiler/resolution.js';
 import { nodeName, parseCode, unwrap, walk, type Ast } from './ast.js';
@@ -9,7 +9,7 @@ import { reactComponents } from './react.js';
 import type { InitDiagnostic } from './types.js';
 
 const ignored = new Set(['node_modules', '.git', '.skelcast', '.skelcast-init', 'dist', 'build', 'coverage', '.next', '.nuxt', '.output', 'test-results', 'playwright-report', 'vendor', 'tests', '__tests__', '__mocks__']);
-export interface SourceFile { file: string; code: string; ast: t.File; vue: boolean; imports: Map<string, string> }
+export interface SourceFile { file: string; code: string; ast: t.File; sfc?: SFCParseResult; vue: boolean; imports: Map<string, string> }
 export interface ScanResult { files: SourceFile[]; routes: Map<string, Set<string>>; aliases: Record<string, string>; diagnostics: InitDiagnostic[] }
 export const relativePath = (root: string, file: string) => path.relative(root, file).split(path.sep).join('/');
 async function exists(file: string) { try { return (await stat(file)).isFile(); } catch { return false; } }
@@ -92,11 +92,12 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
       const code = await readFile(path.join(root, file), 'utf8');
       let script = code;
       let jsx: boolean | undefined;
+      let sfc: SFCParseResult | undefined;
       if (file.endsWith('.vue')) {
-        const parsed = parseSFC(code, { filename: file });
-        if (parsed.errors.length) throw new Error(String(parsed.errors[0]));
-        script = [parsed.descriptor.script?.content, parsed.descriptor.scriptSetup?.content].filter(Boolean).join('\n');
-        jsx = [parsed.descriptor.script?.lang, parsed.descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx');
+        sfc = parseSFC(code, { filename: file });
+        if (sfc.errors.length) throw new Error(String(sfc.errors[0]));
+        script = [sfc.descriptor.script?.content, sfc.descriptor.scriptSetup?.content].filter(Boolean).join('\n');
+        jsx = [sfc.descriptor.script?.lang, sfc.descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx');
       }
       const ast = parseCode(script, file, jsx), imports = new Map<string, string>();
       for (const node of ast.program.body) if (node.type === 'ImportDeclaration') for (const spec of node.specifiers) imports.set(spec.local.name, node.source.value);
@@ -105,7 +106,7 @@ export async function scanProject(root: string, viteAliases: Record<string, stri
           const request = lazyImport(node.init); if (request) imports.set(node.id.name, request);
         }
       });
-      files.push({ file, code, ast, imports, vue: file.endsWith('.vue') });
+      files.push({ file, code, ast, sfc, imports, vue: file.endsWith('.vue') });
     } catch (error) { diagnostics.push({ code: 'SOURCE_PARSE', file, message: String(error) }); }
   }
   const routes = new Map<string, Set<string>>();

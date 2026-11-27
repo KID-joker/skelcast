@@ -6,6 +6,8 @@ import type { CompilerOptions } from './modules.js';
 import type { ComponentReference } from './presets/types.js';
 
 /** Internal capabilities consumed by framework frontends and HTML output. */
+export interface ElementMarkers { layout?: boolean; leaf?: boolean; opaque?: boolean }
+
 export interface RenderHost {
   readonly root: string;
   readonly target: SkeletonTarget;
@@ -21,7 +23,7 @@ export interface RenderHost {
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string;
   contentContext(ctx: RenderContext, props: Record<string, Value>, tag?: string): RenderContext;
   attributes(props: Record<string, Value>): string;
-  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string;
+  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers?: ElementMarkers): string;
   staticHTML(source: string, ctx: RenderContext, origin: SourceNode): string;
   image(props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string>;
   jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string>;

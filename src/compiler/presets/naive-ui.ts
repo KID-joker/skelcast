@@ -12,7 +12,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, childre
     if (!mask && typeof props.code === 'string') return {tag:'pre',style:'margin:0;font-size:14px;line-height:1.6;font-family:monospace;min-width:0',children:escape(props.code)};
     const code = typeof props.code === 'string' ? props.trim === false ? props.code : props.code.trim() : undefined;
     const lines = code === undefined ? ['', '', ''] : (code.replace(/\r?\n$/, '').split(/\r?\n/)).slice(0, 40);
-    return { tag: 'pre', style: 'margin:0;font-size:14px;line-height:1.6;font-family:monospace;min-width:0', children: lines.map(line => `<span data-sk-code-line style="display:block;height:1.6em"><span${mask ? ' data-sk-leaf' : ''} style="display:inline-block;height:.85em;vertical-align:middle;width:${Math.max(1, Math.min(100, line.length || 1))}ch;max-width:100%"></span></span>`).join('') };
+    return { tag: 'pre', style: 'margin:0;font-size:14px;line-height:1.6;font-family:monospace;min-width:0', children: lines.map(line => `<span data-sk-layout data-sk-code-line style="display:block;height:1.6em"><span data-sk-layout${mask ? ' data-sk-leaf' : ''} style="display:inline-block;height:.85em;vertical-align:middle;width:${Math.max(1, Math.min(100, line.length || 1))}ch;max-width:100%"></span></span>`).join('') };
   }
   if (name === 'ndivider') return { tag: 'hr', style: props.vertical === true || props.vertical === '' ? 'display:inline-block;flex-shrink:0;margin:0 8px;border:0;width:1px;height:1em' : 'margin:20px 0;border:0;height:1px', children: '' };
   if (['ninput', 'ninputnumber', 'nselect', 'ndatepicker', 'ncolorpicker'].includes(name)) return input(props,'34px');
@@ -22,7 +22,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, childre
   if (name === 'ncard') return { tag: 'section', style: 'display:block;padding:20px 24px;border:1px solid #dce1e7;border-radius:4px', children: (props.title ? text : '') + children };
   if (name === 'ninputgroup') return { tag: 'div', style: 'display:flex;align-items:stretch;width:100%', children };
   if (name === 'ninputgrouplabel') return { tag: 'div', style: 'display:flex;align-items:center;padding:0 12px;min-height:34px', children };
-  if (name === 'nformitem') return { tag: 'div', style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:18px', children: (props.label ? `<label style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</label>` : '') + children };
+  if (name === 'nformitem') return { tag: 'div', style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:18px', children: (props.label ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</label>` : '') + children };
   if (name === 'ngrid') {
     const gap = (key: string, kebab: string) => /^\d+(?:\.\d+)?$/.test(String(props[key] ?? props[kebab] ?? 0)) ? Math.min(200, Number(props[key] ?? props[kebab] ?? 0)) : 0;
     const gaps = `column-gap:${gap('xGap', 'x-gap')}px;row-gap:${gap('yGap', 'y-gap')}px`;
@@ -40,7 +40,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, childre
     const screen = props.responsive === 'screen';
     const cls = 'sk-naive-grid-' + steps.map(step => step.join('-')).join('-') + `-${gap('xGap', 'x-gap')}-${gap('yGap', 'y-gap')}-${screen ? 'screen' : 'self'}`;
     const css = `.${cls}{display:grid;min-width:0;grid-template-columns:repeat(24,minmax(0,1fr));${gaps}}` + steps.map(([width, count]) => `${screen ? '@media' : '@container'} (min-width:${width}px){.${cls}{grid-template-columns:repeat(${count},minmax(0,1fr))}}`).join('');
-    return { tag: 'div', style: screen ? 'min-width:0' : 'min-width:0;container-type:inline-size', children: `<div class="${cls}">${children}</div>`, css };
+    return { tag: 'div', style: screen ? 'min-width:0' : 'min-width:0;container-type:inline-size', children: `<div data-sk-layout class="${cls}">${children}</div>`, css };
   }
   if (name === 'ngi' || name === 'ngriditem') return { tag: 'div', style: `min-width:0;grid-column:span ${/^\d+$/.test(String(props.span)) ? Math.max(1, Math.min(24, Number(props.span))) : 1}`, children };
   if (name === 'nspace') return { tag: 'div', style: `display:flex;flex-wrap:wrap;gap:12px;flex-direction:${props.vertical && props.vertical !== UNKNOWN ? 'column' : 'row'}`, children };
@@ -50,7 +50,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, childre
   if (name === 'nstatistic') return { tag: 'div', style: 'display:block;min-height:60px', children: text + text };
   if (name === 'nscrollbar') {
     const horizontal = props['x-scrollable'] === true || props.xScrollable === true;
-    return { tag: 'div', style: `display:block;min-width:0;max-width:100%;overflow-x:${horizontal ? 'auto' : 'hidden'};overflow-y:auto`, children: horizontal ? `<div style="min-width:max-content">${children}</div>` : children };
+    return { tag: 'div', style: `display:block;min-width:0;max-width:100%;overflow-x:${horizontal ? 'auto' : 'hidden'};overflow-y:auto`, children: horizontal ? `<div data-sk-layout style="min-width:max-content">${children}</div>` : children };
   }
   if (['nform', 'nalert'].includes(name)) return { tag: 'div', style: 'display:block', children };
   if (name === 'ntable') return { tag: 'table', style: 'width:100%;border-collapse:collapse', children };

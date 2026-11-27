@@ -1,22 +1,24 @@
 import { parse as parseSFC } from '@vue/compiler-sfc';
 import { parse as parseDOM, type ElementNode, type TemplateChildNode, type DirectiveNode } from '@vue/compiler-dom';
 import { applyEdits, boundaryImports, startOf, nodeName, importOffset, loadingName, objectConfig, parseCode, pendingCondition, pureCondition, sameCondition, uniqueName, walk, type Edit } from './ast.js';
-import { targetId, type AnalysisContext, type FileAnalysis } from './types.js';
-import type { SkeletonTarget } from '../types.js';
+import { type AnalysisContext, type FileAnalysis } from './types.js';
+import { targetBuilder } from './targets.js';
 
 const directive = (node: ElementNode, name: string) => node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === name);
 const contentOf = (text: string, node: ElementNode) => text.slice(node.loc.start.offset, node.loc.end.offset);
 const loader = (node: ElementNode) => /loader|loading|spinner|skeleton|progress/i.test(node.tag ?? '') || /loading|加载|请稍候/i.test((node.children ?? []).filter(n => n.type === 2).map(n => n.content).join(''));
 export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
-  const { descriptor, errors } = parseSFC(ctx.source, { filename: ctx.file });
+  const { descriptor, errors } = ctx.sfc ?? parseSFC(ctx.source, { filename: ctx.file });
   if (errors.length) throw new Error(String(errors[0]));
   const template = descriptor.template;
   if (!template || template.src || template.lang && template.lang !== 'html') {
     result.diagnostics.push({ code: 'VUE_TEMPLATE_UNSUPPORTED', file: ctx.file, message: 'External or preprocessed templates need an adapter' }); return result;
   }
   const scripts = [descriptor.script, descriptor.scriptSetup].filter((script): script is NonNullable<typeof descriptor.script> => script != null);
-  const scriptAsts = new Map(scripts.map(script => [script, parseCode(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx')]));
+  // A single script has the same local offsets as the scan AST. With both
+  // script forms, edits need block-local offsets rather than the combined AST.
+  const scriptAsts = new Map(scripts.map(script => [script, scripts.length === 1 && ctx.ast ? ctx.ast : parseCode(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx')]));
   const scriptAst = (script: NonNullable<typeof descriptor.script>) => scriptAsts.get(script)!;
   const boundaryNames = new Set<string>();
   for (const script of scripts) for (const name of boundaryImports(scriptAst(script), 'vue')) boundaryNames.add(name);
@@ -45,18 +47,14 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   const text = template.content;
   const ast = parseDOM(text);
   const edits: Edit[] = [];
-  const imports: string[] = [];
+  const { imports, add: addTarget } = targetBuilder(ctx, result.targets);
   const allBindings: Record<string, boolean> = {};
   let index = 0;
   const rootNodes = ast.children.filter(n => n.type !== 3 && !(n.type === 2 && !n.content.trim()));
   const hasPage = rootNodes.some(n => n.type === 1 && isBoundary(n));
   const add = (start: number, end: number, html: string, pending: string, bindings: Record<string, boolean>, kind: 'page' | 'request') => {
-    const id = targetId(ctx, kind === 'page' ? 'page' : `loading-${++index}`);
-    const artifact = uniqueName(ctx.source + imports.join('\n'), `__skelcast${result.targets.length}`);
-    imports.push(`import ${artifact} from 'virtual:skelcast/${id}';`);
-    const target: SkeletonTarget = { id, source: ctx.file, kind, region: artifact, hints: { bindings } };
-    if (kind === 'page' && ctx.routes.length) target.route = ctx.routes.length === 1 ? ctx.routes[0] : ctx.routes;
-    result.targets.push(target); Object.assign(allBindings, bindings);
+    const artifact = addTarget({ suffix: kind === 'page' ? 'page' : `loading-${++index}`, kind, bindings });
+    Object.assign(allBindings, bindings);
     edits.push({ start, end, text: `<${boundary} :artifact="${artifact}" :pending="${pending.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><!-- skelcast:init -->${html}</${boundary}>` });
   };
   const scan = (nodes: TemplateChildNode[], managed: string[] = []) => {
@@ -116,12 +114,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   };
   scan(ast.children);
   if (ctx.page && !hasPage && !result.targets.some(t => t.kind === 'page')) {
-    const id = targetId(ctx, 'page');
-    const artifact = uniqueName(ctx.source + imports.join('\n'), `__skelcast${result.targets.length}`);
-    imports.push(`import ${artifact} from 'virtual:skelcast/${id}';`);
-    const target: SkeletonTarget = { id, source: ctx.file, kind: 'page', region: artifact, hints: { bindings: allBindings } };
-    if (ctx.routes.length) target.route = ctx.routes.length === 1 ? ctx.routes[0] : ctx.routes;
-    result.targets.push(target);
+    const artifact = addTarget({ suffix: 'page', kind: 'page', bindings: allBindings });
     edits.push({ start: 0, end: 0, text: `<${boundary} :artifact="${artifact}" :pending="false"><!-- skelcast:init -->` }, { start: text.length, end: text.length, text: `</${boundary}>` });
   }
   if (!result.targets.length) return result;

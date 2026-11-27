@@ -96,7 +96,7 @@ export const elementPlusPreset: ComponentPreset = {
     const n = name.replace(/^el/, '');
     if (n === 'button') return button(children, props);
     if (n === 'dropdown') return {tag:'div',className:'el-dropdown',style:'display:inline-flex;align-items:center;vertical-align:top',children};
-    if (n === 'link') return {tag:'a',className:'el-link',children:`<span class="el-link__inner">${children}</span>`,css:':where(.el-link){display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;position:relative;text-decoration:none;outline:none;padding:0;font-size:var(--el-link-font-size,14px);font-weight:500}'};
+    if (n === 'link') return {tag:'a',className:'el-link',children:`<span data-sk-layout class="el-link__inner">${children}</span>`,css:':where(.el-link){display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;position:relative;text-decoration:none;outline:none;padding:0;font-size:var(--el-link-font-size,14px);font-weight:500}'};
     if (['input', 'inputnumber', 'select', 'datepicker', 'timepicker'].includes(n)) return input(props);
     if (n === 'option')
       return { tag: 'option', children: children || escape(scalar(props.label ?? props.value)) };
@@ -105,7 +105,7 @@ export const elementPlusPreset: ComponentPreset = {
       return {
         tag: 'label',
         style: 'display:inline-flex;align-items:center;gap:6px',
-        children: `<input type="${n}" disabled tabindex="-1">${children}`,
+        children: `<input data-sk-layout type="${n}" disabled tabindex="-1">${children}`,
       };
     if (n === 'pagination')return elementPagination(props,children);
     if (n === 'switch' || n === 'slider')
@@ -160,7 +160,7 @@ export const elementPlusPreset: ComponentPreset = {
         style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:18px',
         children:
           (props.label
-            ? `<label style="color:var(--skeleton-control-color,#606266)">${escape(
+            ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
                 scalar(props.label),
               )}</label>`
             : '') + children,
@@ -172,7 +172,7 @@ export const elementPlusPreset: ComponentPreset = {
         tag: 'div',
         style: 'display:flex;gap:12px;padding:8px 0',
         children:
-          `<span style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</span>` +
+          `<span data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(scalar(props.label))}</span>` +
           children,
       };
     if (n === 'scrollbar') return elementScrollbar(props,children);

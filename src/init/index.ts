@@ -82,7 +82,7 @@ export async function initProject(directory = process.cwd(), options: InitOption
       else report.diagnostics.push({ code: 'ROUTE_UNKNOWN', file: source.file, message: 'Page boundary identified; initial HTML route must be configured manually' });
     }
     try {
-      const ctx = { file: source.file, source: source.code, page, routes, existing, usedIds };
+      const ctx = { file: source.file, source: source.code, ast: source.ast, sfc: source.sfc, page, routes, existing, usedIds };
       const analysis = source.vue ? analyzeVue(ctx) : analyzeReact(ctx);
       report.diagnostics.push(...analysis.diagnostics);
       if (!analysis.targets.length) continue;

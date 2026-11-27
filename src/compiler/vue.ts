@@ -279,7 +279,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     // An empty imperative mount host has no source-visible internal tree.
     // Mask only its existing box; do not invent widget-specific geometry.
     this.diagnose('FALLBACK', 'Opaque native mount point: preserve source container geometry', ctx, node, this.nodeId(ctx, node));
-    return this.element(tag, props, '', ctx, node).replace(' data-sk-node=', ` data-sk-opaque${this.masked(ctx) ? ' data-sk-leaf' : ''} data-sk-node=`);
+    return this.element(tag, props, '', ctx, node, { opaque: true, leaf: this.masked(ctx) });
   }
   return this.element(tag, props, children, ctx, node);
 }

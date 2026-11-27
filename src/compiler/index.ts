@@ -18,6 +18,7 @@ import { vueOptions, vueOptionProps, vueRenderFunction, vueSetupFunction, prepar
 import { ambiguousExport, type ModuleInfo, type RenderContext, type SourceSlot, type SourceNode } from './context.js';
 import { escapeHTML, styleString, visit } from './html.js';
 import { renderAttributes, renderElement, renderStaticHTML } from './output.js';
+import type { ElementMarkers } from './render-host.js';
 import { renderJSX } from './react.js';
 import { renderVueNodes, renderVueNode } from './vue.js';
 import postcss from 'postcss';
@@ -297,21 +298,19 @@ export class SourceCompiler extends SourceModules {
     const children = slots.map(key=>renderedSlots[key]).join('');
     const presentation = preset.present(name, props, children, this.masked(local) ? this.text(local,node) : this.contentText(props.value ?? props.title ?? UNKNOWN,local,node), {...this.hints,state:this.hints.state??(local.loading?'loading':'source')}, {mask:this.masked(local),slots:renderedSlots,columns:this.tableColumns});
     if (!presentation) return;
-    // Own primitive wrappers use border-box; source slot nodes keep the source
-    // box model instead of being globally forced to border-box.
-    presentation.children=presentation.children.replace(/<[a-z][^<>]*>/gi,tag=>tag.includes('data-sk-node=')||tag.includes('data-sk-layout')?tag:tag.replace(/\/?\>$/,end=>' data-sk-layout'+end));
     this.record('component',tag,`Use ${preset.id} ${role} adapter for ${reference!.request}::${reference!.exported}`,ctx,node);
     for (const note of presentation.notes ?? []) this.diagnose('PRESET_LIMIT',note,ctx,node);
-    let html = this.element(presentation.tag, { ...props, class: [props.class ?? props.className,presentation.className], className: undefined, style: `${presentation.style ?? ''};${styleString(props.style)}` },presentation.children,local,node);
-    html=html.replace(' data-sk-node=',' data-sk-layout data-sk-node=');
+    const html = this.element(presentation.tag, { ...props, class: [props.class ?? props.className,presentation.className], className: undefined, style: `${presentation.style ?? ''};${styleString(props.style)}` }, presentation.children, local, node, {
+      layout: true,
+      leaf: !!presentation.leaf && this.masked(local) || ctx.mode === 'mask' && role === 'control',
+    });
     // One source node can render multiple instances with different props. Keep
     // every distinct presentation stylesheet and deduplicate identical ones.
     if (presentation.css) this.css.set(`preset:${digest(presentation.css)}`,presentation.css);
-    if ((presentation.leaf && this.masked(local) || ctx.mode === 'mask' && role === 'control') && !html.match(/^<[^>]* data-sk-leaf/)) html = html.replace(' data-sk-node=',' data-sk-leaf data-sk-node=');
     return html;
   }
   attributes(props: Record<string, Value>): string { if((typeof props.id==='string'||typeof props.id==='number')&&String(props.id))this.sourceIds.add(String(props.id));return renderAttributes.call(this, props); }
-  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string {
+  element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers?: ElementMarkers): string {
     let value = styleString(props.style);
     if (/(?:^|;)\s*display\s*:\s*inline(?:-flex|-grid|-block)?\s*(?:;|$)/.test(value)) {
       value += ';--sk-inline-footprint:1em';
@@ -322,7 +321,7 @@ export class SourceCompiler extends SourceModules {
       this.inlineStyles.set(key, { value, file: ctx.module.file });
       props = { ...props, style: `--sk-inline-${key}:0` };
     }
-    return renderElement.call(this, tag, props, children, ctx, node);
+    return renderElement.call(this, tag, props, children, ctx, node, markers);
   }
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string> { return renderVueNodes.call(this, nodes, ctx); }
   vueNode(node: VueNode, ctx: RenderContext, skipFor = false): Promise<string> { return renderVueNode.call(this, node, ctx, skipFor); }

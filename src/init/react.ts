@@ -1,7 +1,7 @@
 import type * as t from '@babel/types';
 import { applyEdits, boundaryImports, endOf, nodeName, startOf, importOffset, isFunction, isLoader, loadingName, parseCode, pendingCondition, pureCondition, sameCondition, slice, uniqueName, unwrap, walk, type Ast } from './ast.js';
-import { targetId, type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
-import type { SkeletonTarget } from '../types.js';
+import { type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
+import { targetBuilder } from './targets.js';
 
 export function reactComponents(ast: t.File): ComponentInfo[] {
   const functions = new Map<string, ComponentInfo['node']>();
@@ -41,7 +41,7 @@ interface EarlyLoader { guard: t.IfStatement; returned: t.ReturnStatement }
 interface Region { node: Ast; pending: string; content: string; bindings: Record<string, boolean>; early?: EarlyLoader[] }
 export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
-  const code = ctx.source, ast = parseCode(code, ctx.file);
+  const code = ctx.source, ast = ctx.ast ?? parseCode(code, ctx.file);
   const components = reactComponents(ast);
   const boundaryNames = boundaryImports(ast, 'react');
   const boundary = [...boundaryNames][0] ?? uniqueName(code, '__SkelCastBoundary');
@@ -50,7 +50,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
     const prop = node.openingElement.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'pending');
     return prop?.type === 'JSXAttribute' && prop.value?.type === 'JSXExpressionContainer' ? slice(code, prop.value.expression) : '';
   };
-  const imports: string[] = [];
+  const { imports, add: addTarget } = targetBuilder(ctx, result.targets);
   let artifactIndex = 0;
   for (const component of components) {
     const fn = component.node;
@@ -128,12 +128,8 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
     const pageBindings: Record<string, boolean> = {};
     let pageRegion = false;
     const add = (node: Ast, kind: 'page' | 'request', pending: string, content: string, bindings: Record<string, boolean>, early?: EarlyLoader[]) => {
-      const id = targetId(ctx, kind === 'page' ? 'page' : `${component.name === 'default' ? '' : `${component.name.toLowerCase()}.`}loading-${++artifactIndex}`);
-      const artifact = uniqueName(code + imports.join('\n'), `__skelcast${result.targets.length}`);
-      imports.push(`import ${artifact} from 'virtual:skelcast/${id}';`);
-      const target: SkeletonTarget = { id, source: ctx.file, export: component.exported, kind, region: artifact, hints: { bindings } };
-      if (kind === 'page' && ctx.routes.length) target.route = ctx.routes.length === 1 ? ctx.routes[0] : ctx.routes;
-      result.targets.push(target);
+      const suffix = kind === 'page' ? 'page' : `${component.name === 'default' ? '' : `${component.name.toLowerCase()}.`}loading-${++artifactIndex}`;
+      const artifact = addTarget({ suffix, kind, bindings, export: component.exported });
       let child = content;
       if (child && !child.startsWith('{') && !/^\s*</.test(child)) child = `{${child}}`;
       result.edits.push({ start: startOf(node), end: endOf(node), text: `<${boundary} artifact={${artifact}} pending={${pending}}>{/* skelcast:init */}${child}</${boundary}>` });
@@ -153,12 +149,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
       add(region.node, kind, region.pending, region.content, region.bindings, region.early);
     }
     if (isPage && !pageRegion && !early.length) {
-      const id = targetId(ctx, 'page');
-      const artifact = uniqueName(code + imports.join('\n'), `__skelcast${result.targets.length}`);
-      imports.push(`import ${artifact} from 'virtual:skelcast/${id}';`);
-      const target: SkeletonTarget = { id, source: ctx.file, export: component.exported, kind: 'page', region: artifact, hints: { bindings: pageBindings } };
-      if (ctx.routes.length) target.route = ctx.routes.length === 1 ? ctx.routes[0] : ctx.routes;
-      result.targets.push(target);
+      const artifact = addTarget({ suffix: 'page', kind: 'page', bindings: pageBindings, export: component.exported });
       result.edits.push({ start: startOf(root), end: startOf(root), text: `<${boundary} artifact={${artifact}} pending={false}>{/* skelcast:init */}{` }, { start: endOf(root), end: endOf(root), text: `}</${boundary}>` });
     }
   }

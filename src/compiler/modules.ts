@@ -1,6 +1,5 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName, unwrapExpression } from './ast.js';
-import { stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import type { Diagnostic, SkeletonConfig, SkeletonHints } from '../types.js';
@@ -105,12 +104,10 @@ export class SourceModules {
     }
   }
   async resolve(from: string, request: string): Promise<string | undefined> {
-    for (const candidate of resolutionCandidates(this.root, from, request, this.aliases, true)) {
-      try { if ((await stat(candidate)).isFile()) return candidate; }
-      catch (error: any) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
-      // Earlier candidates also matter: creating one can change which file wins.
-      this.dependencies[this.relative(candidate)] = '!missing';
-    }
+    const { file, missing } = await this.files.resolve(resolutionCandidates(this.root, from, request, this.aliases, true));
+    // Earlier candidates also matter: creating one can change which file wins.
+    for (const candidate of missing) this.dependencies[this.relative(candidate)] = '!missing';
+    return file;
   }
   protected globalComponents() {
     return this.registry ??= (async () => {

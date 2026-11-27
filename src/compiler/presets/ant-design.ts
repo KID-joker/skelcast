@@ -138,7 +138,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
         return {
           tag: 'label',
           style: 'display:inline-flex;align-items:center;gap:6px',
-          children: `<input type="${name}" disabled tabindex="-1">${children}`,
+          children: `<input data-sk-layout type="${name}" disabled tabindex="-1">${children}`,
         };
       if (name === 'switch' || name === 'slider' || name === 'pagination')
         return {
@@ -172,7 +172,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           style: 'min-height:60px',
           children:
             (props.title
-              ? `<div style="color:var(--skeleton-control-color,#606266)">${escape(
+              ? `<div data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
                   scalar(props.title),
                 )}</div>`
               : '') + text,
@@ -188,7 +188,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           style: 'margin:0;padding:0;list-style:none',
           children:
             children ||
-            (count ? Array.from({length:count}, () => `<li style="padding:12px 0;border-bottom:1px solid #eee">${text}</li>`).join('') : '<li data-sk-control style="padding:24px;text-align:center">No data</li>'),
+            (count ? Array.from({length:count}, () => `<li data-sk-layout style="padding:12px 0;border-bottom:1px solid #eee">${text}</li>`).join('') : '<li data-sk-layout data-sk-control style="padding:24px;text-align:center">No data</li>'),
           notes:
             props.renderItem != null
               ? ['List renderItem is not invoked; use a source adapter for a custom row layout.']
@@ -218,7 +218,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:24px',
           children:
             (props.label
-              ? `<label style="color:var(--skeleton-control-color,#606266)">${escape(
+              ? `<label data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
                   scalar(props.label),
                 )}</label>`
               : '') + children,
@@ -228,7 +228,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           tag: 'div',
           style: 'display:flex;gap:12px;padding:8px 0',
           children:
-            `<span style="color:var(--skeleton-control-color,#606266)">${escape(
+            `<span data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
               scalar(props.label),
             )}</span>` + children,
         };

@@ -3,7 +3,7 @@ import { UNKNOWN, type Value } from './expression.js';
 import { escapeHTML, voids, nonVisual, styleString, classString } from './html.js';
 import { sourceIdAttribute, utilityAttribute } from './styles.js';
 import type { RenderContext, SourceNode } from './context.js';
-import type { RenderHost } from './render-host.js';
+import type { ElementMarkers, RenderHost } from './render-host.js';
 import { imageRatio } from './images.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
@@ -24,13 +24,14 @@ export function renderAttributes(this: RenderHost, props: Record<string, Value>)
   }
   return attrs;
 }
-export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined): string {
+export function renderElement(this: RenderHost, tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers: ElementMarkers = {}): string {
   for (const [key, value] of Object.entries(props)) {
     if (layoutAttribute(key) && (value === UNKNOWN || value != null && !['string', 'number', 'boolean'].includes(typeof value))) {
       this.diagnose('LAYOUT_ATTRIBUTE_UNKNOWN', `Cannot resolve ${key}; attribute selectors may not match. Supply an explicit binding`, ctx, node);
     }
   }
-  let attrs = `${this.attributes(props)} data-sk-node="${this.nodeId(ctx, node)}"${ctx.scopes.map(s => ` ${s}`).join('')}`;
+  const leaf = markers.leaf || this.masked(ctx) && ['img', 'input', 'textarea', 'button', 'select'].includes(tag);
+  let attrs = `${this.attributes(props)}${markers.layout ? ' data-sk-layout' : ''}${markers.opaque ? ' data-sk-opaque' : ''}${leaf ? ' data-sk-leaf' : ''} data-sk-node="${this.nodeId(ctx, node)}"${ctx.scopes.map(s => ` ${s}`).join('')}`;
   if (ctx.control || ctx.mode === 'preserve') attrs += ' data-sk-control';
   if (props['data-sk-preserve'] != null) attrs += ' data-sk-preserve';
   if (tag === 'img') {
@@ -40,13 +41,13 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
     const intrinsic = props.__skImageSize as { width: number; height: number } | undefined;
     const size = ratio ? { width: ratio * 100, height: 100 } : intrinsic ?? (width > 0 && height > 0 ? { width, height } : { width: 400, height: 300 });
     if (props['data-sk-image-ratio'] != null && !ratio) this.diagnose('PLACEHOLDER_HINT', 'data-sk-image-ratio must be a positive number or WIDTH / HEIGHT', ctx, node);
-    attrs += ` data-sk-image${this.masked(ctx) ? ' data-sk-leaf' : ''} alt="" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27${size.width}%27 height=%27${size.height}%27/%3E"`;
+    attrs += ` data-sk-image alt="" src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27${size.width}%27 height=%27${size.height}%27/%3E"`;
     if (ratio) attrs = / style="/.test(attrs)
       ? attrs.replace(/ style="([^"]*)"/, (_match, style: string) => ` style="${style};aspect-ratio:${ratio}"`)
       : `${attrs} style="aspect-ratio:${ratio}"`;
   }
   if (['input', 'textarea', 'button', 'select'].includes(tag)) {
-    attrs += `${this.masked(ctx) ? ' data-sk-leaf' : ''} tabindex="-1"`;
+    attrs += ' tabindex="-1"';
     for (const key of ['type','placeholder','value','checked','disabled','readonly','multiple','min','max','step']) {
       let value = props[key] ?? (key === 'value' ? props.modelValue : key === 'readonly' ? props.readOnly : undefined);
       if (value === UNKNOWN || value == null || value === false || typeof value === 'object' || typeof value === 'symbol') continue;

@@ -7,6 +7,9 @@ import { initProject } from '../src/init/index.js';
 import { checkProject, loadProject, readArtifact } from '../src/generator.js';
 import { parseCode } from '../src/init/ast.js';
 import { matchesRoute, selectPageTarget, withSkelCast } from '../src/vite.js';
+import { scanProject } from '../src/init/scan.js';
+import { analyzeReact } from '../src/init/react.js';
+import { analyzeVue } from '../src/init/vue.js';
 
 const manifest = { name: 'existing-app', type: 'module', dependencies: { react: '^19', vue: '^3', vite: '^8' }, devDependencies: { skelcast: '^0.1.0' } };
 test('initial page matching prefers specific routes over an earlier Vue catch-all', () => {
@@ -31,6 +34,27 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('reusing scanned syntax preserves init edits, target names and block-local Vue offsets', async () => {
+  await fixture({
+    'src/App.tsx': `'use client';const __skelcast0 = 1;export default function App(){return <main>{loading ? <Spinner/> : <section>Content</section>}</main>}`,
+    'src/Setup.vue': `<script setup lang="ts">const __skelcast0 = 1;const loading = true;</script><template><main><p v-if="loading">Loading</p><section v-else>Content</section></main></template>`,
+    'src/Options.vue': `<script>export default {name:'Options'}</script><template><main>Content</main></template>`,
+    'src/Mixed.vue': `<script lang="ts">export default {name:'Mixed'}</script>\n<script setup lang="tsx">const loading = true;const icon = <span/>;</script><template><main v-loading="loading">Content</main></template>`,
+  }, async root => {
+    const scan = await scanProject(root);
+    assert.equal(scan.files.length, 4);
+    for (const source of scan.files) {
+      const analyze = source.vue ? analyzeVue : analyzeReact;
+      const ctx = { file: source.file, source: source.code, page: true, routes: ['/first', '/second'], existing: { targets: [] }, usedIds: new Set(['app.page']) };
+      const expected = analyze(ctx);
+      const syntax = JSON.stringify(source.ast);
+      const actual = analyze({ ...ctx, usedIds: new Set(['app.page']), ast: source.ast, sfc: source.sfc });
+      assert.deepEqual(actual, expected, source.file);
+      assert.equal(JSON.stringify(source.ast), syntax, 'shared scan syntax stays immutable');
+    }
+  });
+});
 test('Vue init accepts native input, br and img without self-closing syntax', async () => {
   await fixture({ 'src/App.vue': '<script setup></script><template><main><input><br><img src="/photo.png"></main></template>' }, async root => {
     const report = await initProject(root);

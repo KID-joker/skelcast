@@ -12,6 +12,7 @@ export interface Presentation {
   tag: string;
   style?: string;
   leaf?: boolean;
+  /** Preset-owned tags carry data-sk-layout; source slot markup stays unchanged. */
   children: string;
   css?: string;
   className?: string;
