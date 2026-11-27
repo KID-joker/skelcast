@@ -184,6 +184,10 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
   if (!node) return '';
   const expression = unwrapExpression(node);
   if (expression && expression !== node) return this.vueExpression(expression, ctx);
+  // Delegation used to check both frontends. Charge that existing cost once so
+  // large render trees keep the same fallback location without two checks.
+  if (node.type !== 'ConditionalExpression' && node.type !== 'LogicalExpression' && node.type !== 'ArrayExpression'
+    && node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') return this.jsx(node, ctx, 2);
   const exhausted = this.budget(ctx, node);
   if (exhausted !== undefined) return exhausted;
   if (node.type === 'ConditionalExpression') {
@@ -202,7 +206,6 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
     for (const child of node.elements) html += await this.vueExpression(child, ctx);
     return html;
   }
-  if (node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') return this.jsx(node, ctx);
   return renderCall.call(this, node, ctx, 'render');
 }
 

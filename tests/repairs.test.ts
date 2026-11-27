@@ -4,7 +4,8 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
-import { buildRepairGuide } from '../src/repairs.js';
+import { buildRepairGuide, createRepairGuideBuilder } from '../src/repairs.js';
+import type { Evidence, SkeletonArtifact } from '../src/types.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-repairs-'));
@@ -13,6 +14,29 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('batch repair guides retain evidence order, variant scope and diagnostic source locations', () => {
+  const fact = (expression: string, fields: Partial<Evidence> = {}): Evidence => ({ kind: 'style', expression, decision: 'Source fact', file: 'View.vue', line: 2, ...fields });
+  const artifact: SkeletonArtifact = {
+    id: 'repair', kind: 'request', render: 'light', source: 'View.vue', defaultVariant: 'wide',
+    variants: { wide: { html: '', css: '' }, tall: { html: '', css: '' } },
+    sources: { first: { file: 'View.vue', line: 2 } },
+    diagnostics: [
+      { code: 'FALLBACK', message: 'Wide region', node: 'second', file: 'View.vue', line: 2, variants: ['wide'] },
+      { code: 'FALLBACK', message: 'Tall region', node: 'second', file: 'View.vue', line: 3, variants: ['tall'] },
+    ],
+    evidence: [fact('shared-before'), fact('first-only', { node: 'first' }), fact('second-wide', { node: 'second', variants: ['wide'] }),
+      fact('shared-after'), fact('other-line', { line: 3 }), fact('first-tall', { node: 'first', variants: ['tall'] })],
+  };
+  const guide = createRepairGuideBuilder(artifact);
+  const expressions = (node: string, variant: string) => guide(node, variant).evidence.map(item => item.expression);
+  assert.deepEqual(expressions('first', 'wide'), ['shared-before', 'first-only', 'shared-after']);
+  assert.deepEqual(expressions('first', 'tall'), ['shared-before', 'first-only', 'shared-after', 'first-tall']);
+  assert.deepEqual(expressions('second', 'wide'), ['shared-before', 'second-wide', 'shared-after']);
+  assert.deepEqual(expressions('second', 'tall'), ['other-line']);
+  assert.equal(guide('second', 'tall').source?.line, 3);
+  assert.deepEqual(guide('missing', 'wide').evidence, []);
+});
 
 for (const [source, code] of [
   ['View.tsx', `const layout=privateLayout(); throw new Error('never execute');\nexport default ()=> <section style={{width:layout.width}}/>`],

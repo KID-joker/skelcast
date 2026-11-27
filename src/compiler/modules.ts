@@ -217,12 +217,13 @@ export class SourceModules {
     for (const statement of ast.program.body) if (statement.type === 'ImportDeclaration' && ['clsx', 'classnames'].includes(statement.source.value) && statement.importKind !== 'type') {
       for (const specifier of statement.specifiers) if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && ['clsx', 'default'].includes(nodeName(specifier.imported) ?? '')) classHelpers.add(specifier.local.name);
     }
-    const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), exports: new Map(), reexports: new Map(), exportAll: [], env: Object.create(null), scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
+    const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), exports: new Map(), reexports: new Map(), exportAll: [], env: Object.create(null), setupDeclarations: [], scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
     const ec = { code, env: mod.env, bindings: this.hints.bindings ?? {} };
     for (const statement of ast.program.body) {
       const decl = statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportNamedDeclaration' ? statement.declaration ?? statement : statement;
       if (decl.type === 'FunctionDeclaration' && decl.id) { mod.functions.set(decl.id.name, decl); mod.env[decl.id.name] = UNKNOWN; }
       if (decl.type === 'VariableDeclaration') for (const d of decl.declarations) {
+        if (descriptor?.scriptSetup) mod.setupDeclarations.push(d);
         let init: t.Node | null | undefined = unwrapExpression(d.init);
         if (init?.type === 'CallExpression' && ['memo', 'forwardRef'].includes(nodeName(init.callee) ?? '')) init = init.arguments[0];
         if (d.id.type === 'Identifier' && init && (isRenderFunction(init) || init.type === 'CallExpression' || init.type === 'ObjectExpression' || init.type === 'Identifier')) mod.functions.set(d.id.name, init);
@@ -334,6 +335,7 @@ export class SourceModules {
         if (style.module) mod.env[typeof style.module === 'string' ? style.module : '$style'] = mapping;
       }
     }
+    mod.setupDeclarations = mod.setupDeclarations.filter(declaration => declaration.id.type !== 'Identifier' || !mod.propBindings.includes(declaration.id.name));
     return mod;
   }
   protected async resolveExport(file: string, exported: string, allowLocal = false, seen = new Set<string>(), budget = { remaining: 1000 }): Promise<ResolvedComponent | typeof ambiguousExport | undefined> {

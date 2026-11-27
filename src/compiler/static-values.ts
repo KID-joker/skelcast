@@ -186,15 +186,26 @@ export class StaticValues {
    if(other&&other.expression!==expression&&(other.expression?.start??0)>=(expression.start??Infinity)){env[dependency]=UNKNOWN;continue;}
    if(index.declarations.has(dependency)||mod.imports.has(dependency))env[dependency]=await this.local(mod,dependency,next,budget);
   }
-  let value=evaluate(expression,{code:mod.code,env,bindings:{},budget});
+  const context={code:mod.code,env,bindings:{},budget};
+  const remaining=budget.remaining;
+  let value=evaluate(expression,context);
+  const cost=remaining-budget.remaining;
   if(value===UNKNOWN){
    const capacity=(node:t.Node,depth=0):number|undefined=>{
     if(depth>16)return;
-    const known=sourceCapacity(evaluate(node,{code:mod.code,env,bindings:{},budget}));if(known!=null)return known;
+    // The root is already unknown. Reuse that fact while charging the same work
+    // so budget-limited environments retain their existing resolution order.
+    if(node===expression&&budget.remaining>=cost)budget.remaining-=cost;
+    else {
+     const known=sourceCapacity(evaluate(node,context));
+     if(known!=null)return known;
+    }
     if(node.type!=='CallExpression'||node.callee.type!=='MemberExpression'||node.callee.computed)return;
     const method=nodeName(node.callee.property);
     if(['map','filter'].includes(method??''))return capacity(node.callee.object,depth+1);
-    if(method==='slice'&&node.arguments.length===2){const from=evaluate(node.arguments[0],{code:mod.code,env,bindings:{},budget}),to=evaluate(node.arguments[1],{code:mod.code,env,bindings:{},budget});if(typeof from==='number'&&typeof to==='number'&&Number.isInteger(from)&&Number.isInteger(to)&&from>=0&&to>from&&to-from<=256)return Math.min(to-from,capacity(node.callee.object,depth+1)??256);}
+    if(method!=='slice'||node.arguments.length!==2)return;
+    const from=evaluate(node.arguments[0],context),to=evaluate(node.arguments[1],context);
+    if(typeof from==='number'&&typeof to==='number'&&Number.isInteger(from)&&Number.isInteger(to)&&from>=0&&to>from&&to-from<=256)return Math.min(to-from,capacity(node.callee.object,depth+1)??256);
    };
    const count=capacity(expression);if(count!=null)value={[SOURCE_COLLECTION]:count};
   }

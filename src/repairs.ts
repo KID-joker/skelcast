@@ -14,11 +14,43 @@ export interface RepairGuide {
   examples: RepairExample[];
 }
 
+function indexBy<T>(items: T[], keyOf: (item: T) => string | undefined): Map<string, T[]> {
+  const index = new Map<string, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (key === undefined) continue;
+    const group = index.get(key);
+    if (group) group.push(item); else index.set(key, [item]);
+  }
+  return index;
+}
+
+const locationKey = (source: SourceLocation) => JSON.stringify([source.file, source.line]);
+const inVariant = (item: { variants?: string[] }, variant: string) => !item.variants || item.variants.includes(variant);
+
+/** Index one artifact per inspection, preserving evidence order and line-level facts. */
+export function createRepairGuideBuilder(artifact: SkeletonArtifact, target?: SkeletonTarget) {
+  const diagnosticsByNode = indexBy(artifact.diagnostics, item => item.node);
+  const evidence = artifact.evidence.map((item, order) => ({ item, order }));
+  const evidenceByNode = indexBy(evidence, entry => entry.item.node);
+  const evidenceByLocation = indexBy(evidence, entry => !entry.item.node ? locationKey(entry.item) : undefined);
+  return (node: string, variant: string): RepairGuide => {
+    const diagnostics = (diagnosticsByNode.get(node) ?? []).filter(item => inVariant(item, variant));
+    const source = artifact.sources[node] ?? diagnostics[0];
+    const candidates = [...(evidenceByNode.get(node) ?? []), ...(source ? evidenceByLocation.get(locationKey(source)) ?? [] : [])];
+    const selected = candidates.sort((a, b) => a.order - b.order)
+      .filter((entry, index) => (!index || entry.order !== candidates[index - 1].order) && inVariant(entry.item, variant))
+      .map(entry => entry.item);
+    return repairGuide(artifact, variant, target, source, diagnostics, selected);
+  };
+}
+
 /** All snippets are reviewable suggestions; this module never writes project files. */
 export function buildRepairGuide(artifact: SkeletonArtifact, node: string, variant: string, target?: SkeletonTarget): RepairGuide {
-  const diagnostics = artifact.diagnostics.filter(d => d.node === node && (!d.variants || d.variants.includes(variant)));
-  const source = artifact.sources[node] ?? diagnostics[0];
-  const evidence = artifact.evidence.filter(e => (!e.variants || e.variants.includes(variant)) && (e.node === node || !e.node && e.file === source?.file && e.line === source.line));
+  return createRepairGuideBuilder(artifact, target)(node, variant);
+}
+
+function repairGuide(artifact: SkeletonArtifact, variant: string, target: SkeletonTarget | undefined, source: SourceLocation | undefined, diagnostics: Diagnostic[], evidence: Evidence[]): RepairGuide {
   const examples: RepairExample[] = [];
   const bindings: Record<string, unknown> = Object.create(null);
   for (const diagnostic of diagnostics) for (const [expression, value] of Object.entries(diagnostic.bindingExamples ?? {})) {

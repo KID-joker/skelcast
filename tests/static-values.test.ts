@@ -26,6 +26,20 @@ test('static environment caching leaves budget-exhausted passes eligible for fur
  });
 });
 
+test('reusing unknown evaluations preserves the resolution cutoff for later constants', async () => {
+ await fixture({}, async root => {
+  class Modules extends SourceModules { load(file: string) { return this.module(file); } }
+  for (const count of [1999, 2000]) {
+   const source = Array.from({ length: count }, (_, index) => `const unknown${index}=businessValue();`).join('\n');
+   const file = path.join(root, 'data.ts');
+   await writeFile(file, source + '\nexport const height=42;');
+   const modules = new Modules(root, {}), mod = await modules.load(file);
+   const values = await new StaticValues(file => modules.load(file)).environment(mod);
+   assert.equal(values.height, count === 1999 ? 42 : undefined);
+  }
+ });
+});
+
 test('local constants cross aliases, default/named/namespace and diamond reexports without executing source',async()=>{
  await fixture({
   'data.ts':`throw Error('never execute');export const sizes=[20,30,40];export const columns=[{label:'Name',prop:'name',width:180},{label:'Count',prop:'count',width:120}];export default {height:72};`,

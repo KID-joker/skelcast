@@ -76,3 +76,22 @@ test('repeated Vue components share syntax and static environments without shari
     assert.ok(nextEnvironments.every(environment => !childEnvironments.includes(environment)), 'later compilations use fresh environments');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('Vue instance declarations retain props and exact expression overrides when reusing module literals', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-instance-values-'));
+  try {
+    await writeFile(path.join(root, 'Child.vue'), `<script setup>const props=defineProps(['width','label']);const gap=10;const width=props.width+gap;const label=props.label;const style={width}</script><template><section :style="style" :data-label="label"/></template>`);
+    await writeFile(path.join(root, 'View.vue'), `<script setup>import Child from './Child.vue'</script><template><main><Child :width="30" label="First"/><Child :width="50" label="Second"/></main></template>`);
+    const { artifact } = await compileTarget(root, {
+      id: 'instances', source: 'View.vue', variants: {
+        original: {}, literal: { bindings: { 'Child.vue::10': 20 } }, member: { bindings: { 'Child.vue::props.label': 'Override' } },
+      },
+    });
+    assert.deepEqual(artifact.diagnostics, []);
+    assert.match(artifact.variants.original.html, /width:40px[^>]*data-label="First"/);
+    assert.match(artifact.variants.original.html, /width:60px[^>]*data-label="Second"/);
+    assert.match(artifact.variants.literal.html, /width:50px[^>]*data-label="First"/);
+    assert.match(artifact.variants.literal.html, /width:70px[^>]*data-label="Second"/);
+    assert.equal((artifact.variants.member.html.match(/data-label="Override"/g) ?? []).length, 2);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

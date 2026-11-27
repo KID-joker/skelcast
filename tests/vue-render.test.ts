@@ -4,6 +4,25 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { compileTarget } from '../src/compiler/index.js';
+import { digest } from '../src/compiler/styles.js';
+
+test('large h trees preserve the existing expansion cutoff and fallback source node', async () => {
+  const prefix = `import {h}from'vue';export default()=>h('div',null,[`;
+  const child = `h('span',null,'x')`;
+  await fixture({}, async root => {
+    for (const count of [1999, 2100]) {
+      await writeFile(path.join(root, 'Huge.ts'), prefix + Array(count).fill(child).join(',') + '])');
+      const { artifact } = await compileTarget(root, { id: 'huge', source: 'Huge.ts' });
+      const budget = artifact.diagnostics.filter(item => item.message.includes('expansion budget'));
+      assert.equal(budget.length, count === 1999 ? 0 : 1);
+      assert.equal((artifact.variants.default.html.match(/data-sk-measured/g) ?? []).length, 1999);
+      if (budget.length) {
+        const offset = prefix.length + 1999 * (child.length + 1) + child.indexOf("'x'");
+        assert.equal(budget[0].node, digest(`Huge.ts:${offset}`).slice(0, 12));
+      }
+    }
+  });
+});
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-render-'));

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation, SkeletonView } from '../types.js';
 import { diagnosticDetails } from './diagnostics.js';
-import { UNKNOWN, bindPattern, evaluate, evaluateString, expressionText, sourceCapacity, type Ast, type Value } from './expression.js';
+import { UNKNOWN, evaluateString, expressionText, type Ast, type Value } from './expression.js';
 import { baseCSS, digest, scopeArtifactStyles, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
@@ -33,6 +33,7 @@ import {VueRegion,bindSlotArgument,bindSlotInitial,projectSelectedSlots} from '.
 import{presentationInputs}from'./initial-state.js';
 import { SourceFiles } from './source-files.js';
 import { sharedStyleSeparator } from '../shared.js';
+import { bindSetupDeclarations } from './instance-values.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -76,8 +77,9 @@ export class SourceCompiler extends SourceModules {
     if (multiline && (this.hints.lines ?? 1) > 1) return `<span data-sk-node="${id}" data-sk-multiline>${Array.from({ length: this.hints.lines! }, () => '<span></span>').join('')}</span>`;
     return `<span data-sk-node="${id}" data-sk-text data-sk-leaf${ctx.textWidth ? ` style="width:${ctx.textWidth};min-width:0"` : ''}>&nbsp;</span>`;
   }
-  budget(ctx: RenderContext, node: SourceNode | undefined): string | undefined {
-    if (++this.renderedNodes <= 6000) return;
+  budget(ctx: RenderContext, node: SourceNode | undefined, cost = 1): string | undefined {
+    this.renderedNodes += cost;
+    if (this.renderedNodes <= 6000) return;
     if (this.budgetReported) return '';
     this.budgetReported = true;
     return this.fallback(ctx, node, 'Static expansion budget reached; simplify the boundary or supply a local adapter');
@@ -90,7 +92,7 @@ export class SourceCompiler extends SourceModules {
     for (const node of nodes) html += await this.jsx(node, ctx);
     return html;
   }
-  private context(mod: ModuleInfo, props: Record<string, Value> = {}, parent?: RenderContext): RenderContext {
+  private context(mod: ModuleInfo, sourceValues: Record<string, Value>, props: Record<string, Value> = {}, parent?: RenderContext): RenderContext {
     const file = this.relative(mod.file);
     const prefix = `${file}::`;
     const scoped = Object.fromEntries(Object.entries(this.hints.bindings ?? {}).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
@@ -102,25 +104,7 @@ export class SourceCompiler extends SourceModules {
     const env: Record<string, Value> = { ...mod.env, ...values, $slots: props.__skSlots ?? {}, $attrs: this.fallthroughAttrs(mod, props) };
     for (const name of mod.propBindings){env[name] = values;for(const[key,value]of Object.entries(input.initial))initialValues[name+'.'+key]=value;}
     for (const [name, value] of Object.entries(bindings)) if (/^[\w$]+$/.test(name)) env[name] = value;
-    if (mod.descriptor?.scriptSetup) {
-      for (const statement of mod.ast.program.body) {
-        const declaration = statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration' ? statement.declaration ?? statement : statement;
-        if (declaration.type !== 'VariableDeclaration') continue;
-        for (const item of declaration.declarations) {
-          if (item.id.type === 'Identifier' && mod.propBindings.includes(item.id.name)) continue;
-          if(item.id.type==='Identifier'&&mod.sourceValues&&Object.hasOwn(mod.sourceValues,item.id.name)){
-            const value=mod.sourceValues[item.id.name];
-            if(sourceCapacity(value)!=null||value===UNKNOWN&&['ObjectExpression','ArrayExpression','Identifier'].includes(item.init?.type??'')){env[item.id.name]=value;continue;}
-          }
-          if (item.id.type === 'ObjectPattern' && item.init?.type === 'CallExpression' && nodeName(item.init.callee) === 'toRefs') {
-            bindPattern(item.id, evaluate(item.init.arguments[0], { code: mod.code, env, bindings, unwrapRefs: true }), env);
-          } else {
-            const value=evaluate(item.init, { code: mod.code, env, bindings, unwrapRefs: true });
-            bindPattern(item.id,value===UNKNOWN&&item.id.type==='Identifier'&&sourceCapacity(mod.env[item.id.name])!=null?mod.env[item.id.name]:value,env);
-          }
-        }
-      }
-    }
+    bindSetupDeclarations(mod, sourceValues, { code: mod.code, env, bindings, unwrapRefs: true });
     return { module: mod, code: mod.code, env, bindings, expressions: this.expressions, initialValues, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth, loading: loadingFrame(this.hints.state, parent?.loading ?? this.target.kind === 'request') };
   }
   private fallthroughAttrs(mod: ModuleInfo, props: Record<string, Value>): Record<string, Value> {
@@ -150,9 +134,9 @@ export class SourceCompiler extends SourceModules {
     const base = component?.module ?? await this.module(file);
     const options = vueOptions(base, component?.fn ?? base.functions.get('default'));
     const sourceValues=await this.moduleValues(base);
-    const mod = {...base,sourceValues,env:{...base.env,...sourceValues},propDefaults:{...base.propDefaults}};
+    const mod = {...base,env:{...base.env,...sourceValues},propDefaults:{...base.propDefaults}};
     if (options) vueOptionProps(mod, options);
-    const ctx = this.context(mod, props, parent);
+    const ctx = this.context(mod, sourceValues, props, parent);
     const origin = parent && node ? parent : ctx;
     const opaque = (message: string) => this.fallback(origin, node, message, this.attributes(props));
     if (ctx.depth > 16) return opaque('Component recursion limit reached');
@@ -219,7 +203,7 @@ export class SourceCompiler extends SourceModules {
     }
     return body ? this.jsx(body, ctx) : this.fallback(ctx, fn.body, `No supported render return in ${exported}`);
   }
-  jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string> { return renderJSX.call(this, node, ctx); }
+  jsx(node: Ast | null | undefined, ctx: RenderContext, cost = 1): Promise<string> { return renderJSX.call(this, node, ctx, cost); }
   vueExpression(node: Ast | null | undefined, ctx: RenderContext): Promise<string> { return renderVueExpression.call(this, node, ctx); }
   masked(ctx: RenderContext) { return ctx.mode === 'mask' || ctx.mode !== 'preserve' && !ctx.control; }
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string {

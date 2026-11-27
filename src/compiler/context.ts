@@ -15,7 +15,7 @@ export interface ModuleInfo {
   reexports: Map<string, ComponentReference>;
   exportAll: ComponentReference[];
   env: Record<string, Value>;
-  sourceValues?:Record<string,Value>;
+  setupDeclarations: t.VariableDeclarator[];
   descriptor?: ReturnType<typeof parseSFC>['descriptor'];
   scopes: string[];
   boundaries: Set<string>;

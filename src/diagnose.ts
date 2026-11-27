@@ -1,6 +1,6 @@
 import { readProjectState, type Project } from './generator.js';
 import { analyzeQuality } from './quality.js';
-import { buildRepairGuide } from './repairs.js';
+import { createRepairGuideBuilder } from './repairs.js';
 
 export interface DiagnoseOptions { node?: string; variant?: string }
 
@@ -21,11 +21,12 @@ export async function diagnoseProject(project: Project, id: string, options: Dia
   const names = options.variant ? [options.variant] : Object.keys(artifact.variants);
   if (options.node && !Object.hasOwn(artifact.sources, options.node) && !artifact.diagnostics.some(d => d.node === options.node)) throw new Error(`Unknown source node ${options.node} for ${id}`);
   const quality = analyzeQuality(artifact);
+  const repairGuide = createRepairGuideBuilder(artifact, target);
   const variants = Object.fromEntries(names.map(variant => {
     const diagnostics = artifact.diagnostics.filter(d => (!d.variants || d.variants.includes(variant)) && (!options.node || d.node === options.node));
     const nodes = options.node ? [options.node] : [...new Set(diagnostics.flatMap(d => d.node ? [d.node] : []))];
     const locations = nodes.map(node => {
-      const guide = buildRepairGuide(artifact, node, variant, target);
+      const guide = repairGuide(node, variant);
       return { node, ...guide, examples: guide.diagnostics.length ? guide.examples : [] };
     });
     const evidence = artifact.evidence.filter(e => (!e.variants || e.variants.includes(variant)) && (!options.node || e.node === options.node));

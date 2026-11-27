@@ -13,7 +13,7 @@ export interface RenderHost {
   readonly target: SkeletonTarget;
   readonly hints: SkeletonHints;
   readonly options: CompilerOptions;
-  budget(ctx: RenderContext, node: SourceNode | undefined): string | undefined;
+  budget(ctx: RenderContext, node: SourceNode | undefined, cost?: number): string | undefined;
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string): Diagnostic;
   record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: SourceNode): void;
   nodeId(ctx: RenderContext, node?: SourceNode): string;
@@ -26,7 +26,7 @@ export interface RenderHost {
   element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers?: ElementMarkers): string;
   staticHTML(source: string, ctx: RenderContext, origin: SourceNode): string;
   image(props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string>;
-  jsx(node: Ast | null | undefined, ctx: RenderContext): Promise<string>;
+  jsx(node: Ast | null | undefined, ctx: RenderContext, cost?: number): Promise<string>;
   vueExpression(node: Ast | null | undefined, ctx: RenderContext): Promise<string>;
   jsxNodes(nodes: (Ast | null)[], ctx: RenderContext): Promise<string>;
   vueNode(node: VueNode, ctx: RenderContext, skipFor?: boolean): Promise<string>;
