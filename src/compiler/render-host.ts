@@ -1,5 +1,5 @@
 import type { TemplateChildNode as VueNode } from '@vue/compiler-dom';
-import type { Evidence, SkeletonHints, SkeletonTarget } from '../types.js';
+import type { Diagnostic, Evidence, SkeletonHints, SkeletonTarget } from '../types.js';
 import type { Ast, Value } from './expression.js';
 import type { RenderContext, SourceSlot, SourceNode } from './context.js';
 import type { CompilerOptions } from './modules.js';
@@ -12,7 +12,7 @@ export interface RenderHost {
   readonly hints: SkeletonHints;
   readonly options: CompilerOptions;
   budget(ctx: RenderContext, node: SourceNode | undefined): string | undefined;
-  diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string): void;
+  diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string): Diagnostic;
   record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: SourceNode): void;
   nodeId(ctx: RenderContext, node?: SourceNode): string;
   fallback(ctx: RenderContext, node: SourceNode | undefined, message: string, attrs?: string): string;

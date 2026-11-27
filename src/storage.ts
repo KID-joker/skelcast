@@ -58,7 +58,7 @@ export async function withProjectLock<T>(outDir: string, action: () => Promise<T
 }
 
 interface Journal { stage: string; files: { name: string; existed: boolean }[] }
-const outputName = (name: string) => name === 'manifest.json' || /^[a-zA-Z0-9][a-zA-Z0-9._-]*\.mjs$/.test(name);
+const outputName = (name: string) => name === 'manifest.json' || name === 'init-report.json' || /^[a-zA-Z0-9][a-zA-Z0-9._-]*\.mjs$/.test(name);
 async function recoverOutputs(outDir: string): Promise<void> {
   let journal: Journal;
   try { journal = JSON.parse(await readFile(path.join(outDir, journalName), 'utf8')); }

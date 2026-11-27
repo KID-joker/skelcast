@@ -49,7 +49,9 @@ export class SourceCompiler extends SourceModules {
   constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}, files?: SourceFiles) { super(root, hints, aliases, options, files); }
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string) {
     const line = this.sourceLine(ctx, node);
-    this.diagnostics.push({ code, message, file: this.relative(ctx.module.file), line, node: id ?? (node ? this.nodeId(ctx, node) : undefined), ...diagnosticDetails(ctx, node) });
+    const diagnostic = { code, message, file: this.relative(ctx.module.file), line, node: id ?? (node ? this.nodeId(ctx, node) : undefined), ...diagnosticDetails(ctx, node) };
+    this.diagnostics.push(diagnostic);
+    return diagnostic;
   }
   record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: SourceNode) {
     this.evidence.push({ kind, expression, decision, file: this.relative(ctx.module.file), line: this.sourceLine(ctx, node), node: node ? this.nodeId(ctx, node) : undefined });

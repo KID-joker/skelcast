@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedView, setPreview, subscribe, subscribeBoundary } from '../src/runtime/core.js';
+import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedView, setPreview, snapshot, subscribe, subscribeBoundary } from '../src/runtime/core.js';
 import type { SkeletonArtifact } from '../src/types.js';
 
 test('initial shell retires for a different SPA entry route and stays retired across navigation', () => {
@@ -30,6 +30,26 @@ test('initial shell retires for a different SPA entry route and stays retired ac
 });
 
 const artifact = (id: string): SkeletonArtifact => ({ id, kind: 'request', render: 'light', source: 'Page.vue', defaultVariant: 'default', variants: { default: { html: '<div/>', css: '' }, list: { html: '<section/>', css: '' } }, diagnostics: [], evidence: [], sources: {} });
+
+test('identical normalized preview states preserve identity and do not notify subscribers', () => {
+  const original = getPreview();
+  setPreview({ target: 'stable', comparison: 'overlay', opacity: 1 });
+  const stable = getPreview(), before = snapshot();
+  let inspectors = 0, boundaries = 0;
+  const stop = subscribe(() => inspectors++);
+  const stopBoundary = subscribeBoundary('stable', 'request', () => boundaries++);
+  try {
+    for (let i = 0; i < 10; i++) setPreview({ ...stable, opacity: 2 });
+    setPreview({});
+    assert.equal(getPreview(), stable);
+    assert.equal(snapshot(), before);
+    assert.equal(inspectors, 0);
+    assert.equal(boundaries, 0);
+    setPreview({ opacity: 0.25 });
+    assert.equal(inspectors, 1);
+    assert.equal(boundaries, 1);
+  } finally { stop(); stopBoundary(); setPreview(original); }
+});
 
 test('pending updates do not notify 1000 unrelated boundary subscribers', () => {
   let notifications = 0, inspectorUpdates = 0;

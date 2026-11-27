@@ -4,6 +4,50 @@ import { readFile } from 'node:fs/promises';
 import type { BoundaryLayoutReport } from '../../src/browser.js';
 
 const browserModule = `/@fs/${path.join(process.cwd(), 'dist/browser.js')}`;
+test('layout capture shares measurements within a capture and refreshes after DOM changes', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/');
+  const result = await page.evaluate(async url => {
+    const { captureLayout } = await import(url);
+    const root = document.createElement('div');
+    root.style.cssText = 'position:fixed;top:0;left:0;width:300px;height:200px;overflow:hidden';
+    root.innerHTML = '<div data-sk-anchor="item" data-sk-leaf style="width:100px;height:40px;background:gray"></div><span>Unmarked</span><div data-sk-anchor="clipped" style="position:absolute;left:400px;width:20px;height:20px"></div><div data-shadow></div>';
+    document.body.append(root);
+    const item = root.firstElementChild as HTMLElement;
+    const shadow = root.querySelector('[data-shadow]')!.attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div data-sk-anchor="shadow" style="height:20px;width:40px"></div>';
+    const reads = new Map<Element, number>(), styles = new Map<Element, number>();
+    const originalBox = Element.prototype.getBoundingClientRect, originalStyle = window.getComputedStyle;
+    Element.prototype.getBoundingClientRect = function () {
+      reads.set(this, (reads.get(this) ?? 0) + 1);
+      return originalBox.call(this);
+    };
+    window.getComputedStyle = function (element, pseudo) {
+      styles.set(element, (styles.get(element) ?? 0) + 1);
+      return originalStyle.call(window, element, pseudo);
+    };
+    try {
+      const first = captureLayout(root);
+      const maximumBoxReads = Math.max(...reads.values()), maximumStyleReads = Math.max(...styles.values());
+      item.style.width = '150px';
+      const second = captureLayout(root);
+      item.style.visibility = 'hidden';
+      const hidden = captureLayout(root);
+      return { first, second, hidden, maximumBoxReads, maximumStyleReads };
+    } finally {
+      Element.prototype.getBoundingClientRect = originalBox;
+      window.getComputedStyle = originalStyle;
+      root.remove();
+    }
+  }, browserModule);
+  expect(result.maximumBoxReads).toBe(1);
+  expect(result.maximumStyleReads).toBe(1);
+  expect(result.first.anchors!['anchor:item'][0].width).toBe(100);
+  expect(result.first.anchors!['anchor:shadow']).toHaveLength(1);
+  expect(result.first.anchors!['anchor:clipped']).toBeUndefined();
+  expect(result.second.anchors!['anchor:item'][0].width).toBe(150);
+  expect(result.hidden.anchors!['anchor:item']).toBeUndefined();
+  expect(result.hidden.visiblePlaceholders).toBe(0);
+});
 test('layout audit tolerates metadata-only artifact refresh while rejecting changed layout', async ({ page }) => {
   const entry = path.join(process.cwd(), 'dist/runtime/index.js');
   const core = (await readFile(entry, 'utf8')).match(/from "([^"]+)"/)![1];

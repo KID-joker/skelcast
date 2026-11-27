@@ -1,4 +1,4 @@
-import { defineComponent, h, onMounted, onUpdated, onBeforeUnmount, ref, watch, type PropType } from 'vue';
+import { computed, defineComponent, h, onMounted, onUpdated, onBeforeUnmount, ref, watch, type PropType } from 'vue';
 import { applyPresentationDisplay, boundaryPresentation } from '../runtime/presentation.js';
 import type { SkeletonArtifact } from '../types.js';
 import { createSkeletonMount, currentArtifact, registerBoundary, subscribeBoundary } from '../runtime/core.js';
@@ -14,12 +14,16 @@ export const LoadingBoundary = defineComponent({
     const root = ref<HTMLElement>();
     const skeleton = ref<HTMLElement>();
     const revision = ref(0);
+    const state = computed(() => {
+      void revision.value;
+      const artifact = currentArtifact(props.artifact);
+      return { artifact, presentation: boundaryPresentation(artifact.id, artifact.kind, props.pending) };
+    });
     const mount = createSkeletonMount();
     let unsubscribe: (() => void) | undefined;
     let registration: ReturnType<typeof registerBoundary> | undefined;
     const updateSkeleton = () => {
-      const artifact = currentArtifact(props.artifact);
-      const presentation = boundaryPresentation(artifact.id, artifact.kind, props.pending);
+      const { artifact, presentation } = state.value;
       const show = presentation.skeletonVisible;
       if (root.value && skeleton.value) applyPresentationDisplay(root.value, skeleton.value, presentation);
       if (skeleton.value) mount.update(skeleton.value, show, artifact, props.variant);
@@ -38,9 +42,7 @@ export const LoadingBoundary = defineComponent({
     watch(() => [props.pending, props.artifact, props.variant], () => { registration?.update({ id: props.artifact.id, kind: props.artifact.kind, pending: props.pending, variant: props.variant, artifact: props.artifact }); });
     onBeforeUnmount(() => { unsubscribe?.(); registration?.dispose(); mount.dispose(); });
     return () => {
-      void revision.value;
-      const artifact = currentArtifact(props.artifact);
-      const presentation = boundaryPresentation(artifact.id, artifact.kind, props.pending);
+      const { artifact, presentation } = state.value;
       const show = presentation.skeletonVisible;
       return h('div', { ref: root, style: presentation.rootStyle, 'data-sk-comparison': presentation.comparison, 'data-sk-boundary': artifact.id, 'data-sk-visible': String(show), 'aria-busy': props.pending }, [
         h('div', { 'aria-hidden':!presentation.contentVisible||undefined, style: presentation.contentStyle, inert: !presentation.contentVisible || undefined, 'data-sk-content': '' }, slots.default?.()),

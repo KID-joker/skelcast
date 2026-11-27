@@ -232,6 +232,22 @@ test('failed generation restores artifacts from a partially completed sync', asy
     assert.equal(await readFile(path.join(root, '.skelcast/manifest.json'), 'utf8'), originalManifest);
   });
 });
+test('an init report failure leaves generated files intact and rolls back source changes', async () => {
+  const source = 'export default ()=> <main>Original</main>';
+  await fixture({ 'src/App.tsx': source }, async root => {
+    const outDir = path.join(root, '.skelcast');
+    await mkdir(path.join(outDir, 'init-report.json'), { recursive: true });
+    await writeFile(path.join(outDir, 'manifest.json'), 'previous manifest');
+    const vite = await readFile(path.join(root, 'vite.config.ts'), 'utf8');
+    await assert.rejects(initProject(root), /EISDIR/);
+    assert.equal(await readFile(path.join(root, 'src/App.tsx'), 'utf8'), source);
+    assert.equal(await readFile(path.join(root, 'vite.config.ts'), 'utf8'), vite);
+    assert.equal(await readFile(path.join(outDir, 'manifest.json'), 'utf8'), 'previous manifest');
+    assert.deepEqual((await readdir(outDir)).sort(), ['init-backups', 'init-report.json', 'manifest.json']);
+    assert.ok(!(await readdir(root)).includes('skelcast.config.mjs'));
+    assert.ok(!(await readdir(path.join(root, 'src'))).includes('skelcast-env.d.ts'));
+  });
+});
 test('withSkelCast preserves object, async factory and Promise configs', async () => {
   const plugin = { name: 'existing' };
   const config: any = withSkelCast({ plugins: [plugin], server: { port: 5555 } });

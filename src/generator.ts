@@ -161,9 +161,15 @@ async function readArtifactUnlocked(project: Project, id: string, files = new Pr
   return JSON.parse(match[1]);
 }
 export async function syncProject(project: Project): Promise<{ id: string; state: 'generated' | 'reused'; diagnostics: number }[]> {
-  return withProjectLock(project.outDir, () => syncProjectUnlocked(project));
+  return withProjectLock(project.outDir, async () => {
+    const { updates, result } = await prepareProjectSync(project);
+    await commitOutputs(project.outDir, updates);
+    return result;
+  });
 }
-async function syncProjectUnlocked(project: Project): Promise<{ id: string; state: 'generated' | 'reused'; diagnostics: number }[]> {
+/** Prepare without changing owned outputs. Call under withProjectLock, then
+ * commit together with any init report so all generated files share recovery. */
+export async function prepareProjectSync(project: Project) {
   const files = new ProjectFiles();
   const old = await readManifest(project);
   const manifest: Manifest = { version: GENERATOR_VERSION, targets: {} };
@@ -187,8 +193,7 @@ async function syncProjectUnlocked(project: Project): Promise<{ id: string; stat
   for (const id of Object.keys(old?.targets ?? {})) if (!Object.hasOwn(manifest.targets, id) && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) updates.set(artifactFilename(id), null);
   // The manifest is the final file in the transaction.
   updates.set('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
-  await commitOutputs(project.outDir, updates);
-  return result;
+  return { updates, result };
 }
 export async function saveHints(project: Project, id: string, hints: SkeletonHints): Promise<void> {
   if (!project.config.targets.some(t => t.id === id)) throw new Error(`Unknown skeleton ${id}`);

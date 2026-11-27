@@ -61,9 +61,11 @@ export function subscribeBoundary(id: string, kind: BoundaryInfo['kind'], listen
   return () => { boundaryListeners.delete(entry); };
 }
 export function setPreview(value: Partial<PreviewState>) {
+  const next = { ...preview, ...value };
+  next.opacity = Number.isFinite(next.opacity) ? Math.max(0, Math.min(1, next.opacity)) : 0.5;
+  if ((Object.keys(next) as (keyof PreviewState)[]).every(key => next[key] === preview[key])) return;
   const before = new Map([...boundaryListeners].map(entry => [entry, boundarySnapshot(entry.id, entry.kind)]));
-  preview = { ...preview, ...value };
-  preview.opacity = Number.isFinite(preview.opacity) ? Math.max(0, Math.min(1, preview.opacity)) : 0.5;
+  preview = next;
   for (const [entry, previous] of before) if (previous !== boundarySnapshot(entry.id, entry.kind)) entry.listener();
   emit();
 }

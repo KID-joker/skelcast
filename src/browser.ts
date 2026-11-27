@@ -39,25 +39,49 @@ function parentElement(element: Element): Element | null {
   const root = element.getRootNode();
   return root instanceof ShadowRoot ? root.host : null;
 }
-function visible(element: Element): boolean {
-  const box = element.getBoundingClientRect();
-  if (!box.width || !box.height || !element.getClientRects().length) return false;
-  let left = box.left, right = box.right, top = box.top, bottom = box.bottom;
-  for (let node: Element | null = element; node; node = parentElement(node)) {
-    const style = getComputedStyle(node);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
-    // Ignore viewport clipping, but reject boxes fully clipped by local containers.
-    if (node === element || node === element.ownerDocument.scrollingElement) continue;
-    const clip = node.getBoundingClientRect();
-    if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)) {
-      left = Math.max(left, clip.left); right = Math.min(right, clip.right);
+/** Measurements are stable during one synchronous capture, but never across
+ * captures: preview, styles and scroll positions may change between them. */
+function layoutMeasurements() {
+  const measurements = new Map<Element, { box: DOMRect; style: CSSStyleDeclaration }>();
+  const visibility = new Map<Element, boolean>();
+  const read = (element: Element) => {
+    let value = measurements.get(element);
+    if (!value) {
+      value = { box: element.getBoundingClientRect(), style: getComputedStyle(element) };
+      measurements.set(element, value);
     }
-    if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) {
-      top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom);
+    return value;
+  };
+  const measureVisibility = (element: Element): boolean => {
+    const { box } = read(element);
+    if (!box.width || !box.height || !element.getClientRects().length) return false;
+    let left = box.left, right = box.right, top = box.top, bottom = box.bottom;
+    for (let node: Element | null = element; node; node = parentElement(node)) {
+      const { box: clip, style } = read(node);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+      // Ignore viewport clipping, but reject boxes fully clipped by local containers.
+      if (node === element || node === element.ownerDocument.scrollingElement) continue;
+      if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)) {
+        left = Math.max(left, clip.left); right = Math.min(right, clip.right);
+      }
+      if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) {
+        top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom);
+      }
+      if (right <= left || bottom <= top) return false;
     }
-    if (right <= left || bottom <= top) return false;
-  }
-  return true;
+    return true;
+  };
+  return {
+    read,
+    visible(element: Element) {
+      if (!visibility.has(element)) visibility.set(element, measureVisibility(element));
+      return visibility.get(element)!;
+    },
+    box(element: Element): LayoutBox {
+      const { x, y, width, height } = read(element).box;
+      return { x, y, width, height };
+    },
+  };
 }
 function descendants(root: Element): Element[] {
   const elements: Element[] = [];
@@ -73,26 +97,21 @@ function layoutBox(element: Element): LayoutBox {
   const { x, y, width, height } = element.getBoundingClientRect();
   return { x, y, width, height };
 }
-function paintedPlaceholder(element: Element): boolean {
-  if (!visible(element)) return false;
-  const style = getComputedStyle(element);
-  return style.backgroundImage !== 'none' || !['transparent', 'rgba(0, 0, 0, 0)'].includes(style.backgroundColor);
-}
-
 /** Measure rendered geometry, including open Shadow DOM, without viewport clipping. */
 export function captureLayout(root: HTMLElement, sourceIds?:ReadonlySet<string>): LayoutSnapshot {
+  const measure = layoutMeasurements();
   const elements = descendants(root);
   const placeholders = elements.filter(element => element.matches('[data-sk-leaf], [data-sk-multiline] > span'));
-  const style = getComputedStyle(root);
+  const { style } = measure.read(root);
   const containsOverflow = ['auto', 'scroll', 'hidden', 'clip'].includes(style.overflowX);
-  const box = layoutBox(root);
+  const box = measure.box(root);
   const anchors: Record<string, LayoutBox[]> = Object.create(null);
-  const tables=elements.filter((node):node is HTMLTableElement=>node.tagName==='TABLE'&&!!(node as HTMLTableElement).tHead&&visible(node)&&visible((node as HTMLTableElement).tHead!)).map(table=>{
+  const tables=elements.filter((node):node is HTMLTableElement=>node.tagName==='TABLE'&&!!(node as HTMLTableElement).tHead&&measure.visible(node)&&measure.visible((node as HTMLTableElement).tHead!)).map(table=>{
     const occupied:number[]=[],rows=[...table.tHead!.rows];let columns=0;
     rows.forEach((row,index)=>{
       let column=0;
       for(const cell of row.cells){
-        if(cell.getAttribute('aria-hidden')==='true'||['presentation','none'].includes(cell.getAttribute('role')??'')||getComputedStyle(cell).display==='none'||cell.getBoundingClientRect().width===0)continue;
+        if(cell.getAttribute('aria-hidden')==='true'||['presentation','none'].includes(cell.getAttribute('role')??'')||measure.read(cell).style.display==='none'||measure.read(cell).box.width===0)continue;
         while((occupied[column]??0)>index)column++;
         const span=Math.min(256,Math.max(1,cell.colSpan));
         for(let offset=0;offset<span;offset++)occupied[column+offset]=index+Math.min(256,Math.max(1,cell.rowSpan));
@@ -103,19 +122,22 @@ export function captureLayout(root: HTMLElement, sourceIds?:ReadonlySet<string>)
   for (const element of elements) {
     // Only the visible branch of nested boundaries participates. Skipping the
     // entire boundary would lose anchors that exist in the page artifact.
-    if (!visible(element)) continue;
     const explicit = element.getAttribute('data-sk-anchor');
     const id = element.getAttribute('data-sk-source-id') ?? element.id;
     const key = explicit ? `anchor:${explicit}` : id&&(!sourceIds||sourceIds.has(id)) ? `id:${id}` : undefined;
-    if (!key) continue;
-    const child = layoutBox(element);
+    if (!key || !measure.visible(element)) continue;
+    const child = measure.box(element);
     (anchors[key] ??= []).push({ ...child, x: child.x - box.x, y: child.y - box.y });
   }
   return {
-    box, visible: visible(root), anchors, tables,
+    box, visible: measure.visible(root), anchors, tables,
     overflowX: containsOverflow ? 0 : Math.max(0, root.scrollWidth - root.clientWidth),
     placeholders: placeholders.length,
-    visiblePlaceholders: placeholders.filter(paintedPlaceholder).length,
+    visiblePlaceholders: placeholders.filter(element => {
+      if (!measure.visible(element)) return false;
+      const { style } = measure.read(element);
+      return style.backgroundImage !== 'none' || !['transparent', 'rgba(0, 0, 0, 0)'].includes(style.backgroundColor);
+    }).length,
   };
 }
 

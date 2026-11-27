@@ -119,6 +119,32 @@ test('a later compilation failure preserves every previous output and the manife
   assert.deepEqual((await readdir(project.outDir)).sort(), files.sort());
 }));
 
+test('a failed commit restores the init report, deleted outputs and manifest together', async t => fixture(async root => {
+  const project = await loadProject(root);
+  await syncProject(project);
+  const reportFile = path.join(project.outDir, 'init-report.json');
+  await writeFile(reportFile, 'previous report');
+  const before = new Map(await Promise.all(['one.mjs', 'two.mjs', 'manifest.json', 'init-report.json'].map(async name =>
+    [name, await readFile(path.join(project.outDir, name), 'utf8')] as const)));
+  const rename = fs.rename;
+  let failed = false;
+  const mocked = t.mock.method(fs, 'rename', async (...args: Parameters<typeof rename>) => {
+    if (!failed && args[1] === path.join(project.outDir, 'manifest.json')) {
+      failed = true;
+      throw new Error('Simulated manifest commit failure');
+    }
+    return rename(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(withProjectLock(project.outDir, () => commitOutputs(project.outDir, new Map([
+      ['init-report.json', 'new report'], ['one.mjs', null], ['new.mjs', 'new artifact'], ['manifest.json', 'new manifest'],
+    ]))), /Simulated manifest commit failure/);
+    for (const [name, content] of before) assert.equal(await readFile(path.join(project.outDir, name), 'utf8'), content);
+    assert.deepEqual((await readdir(project.outDir)).sort(), [...before.keys()].sort());
+  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+}));
+
 test('independent processes serialize sync and readers; hint edits do not lose other targets', async () => fixture(async root => {
   const project = await loadProject(root);
   const marker = path.join(root, 'requested');

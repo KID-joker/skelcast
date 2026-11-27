@@ -24,6 +24,8 @@ test('dynamic Vue tags retain native controls, source slots, spread order and co
     'Child.vue': `<script setup>defineProps(['title'])</script><template><section><h2>{{title}}</h2><slot/><slot name="extra"/></section></template>`,
     'View.vue': `<script setup>import Child from './Child.vue'</script><template><component :is="tag" v-for="i in 2" v-bind="attrs" :class="'local'" title="Heading"><span>Default</span><template #extra><b>Extra</b></template></component></template>`,
     'Opaque.vue': `<template><component is="Child" v-bind="unknown"/></template>`,
+    'Directive.vue': `<script setup>import Child from './Child.vue'</script><template><component is="Child" v-demo /></template>`,
+    'Hidden.vue': `<template><component is="Child" v-bind="unknown" v-show="false"/></template>`,
     'Cycle.vue': `<template><component v-bind="{is:'component'}"/></template>`,
   }, async root => {
     const { artifact } = await compileTarget(root, {
@@ -38,7 +40,12 @@ test('dynamic Vue tags retain native controls, source slots, spread order and co
     for (const text of ['Heading', 'Default', 'Extra']) assert.match(child, new RegExp(`data-sk-text-content="${text}"`));
     assert.deepEqual(artifact.diagnostics, []);
     const opaque = await compileTarget(root, { id: 'opaque', source: 'Opaque.vue' });
-    assert.deepEqual(opaque.artifact.diagnostics.filter(d => d.code === 'SPREAD_UNKNOWN').map(d => d.component), [undefined, 'Child']);
+    assert.deepEqual(opaque.artifact.diagnostics.filter(d => d.code === 'SPREAD_UNKNOWN').map(d => d.component), ['Child']);
+    const directive = await compileTarget(root, { id: 'directive', source: 'Directive.vue' });
+    assert.deepEqual(directive.artifact.diagnostics.map(d => [d.code, d.component]), [['DIRECTIVE_UNKNOWN', 'Child']]);
+    const hidden = await compileTarget(root, { id: 'hidden', source: 'Hidden.vue' });
+    assert.deepEqual(hidden.artifact.diagnostics.map(d => d.code), ['SPREAD_UNKNOWN']);
+    assert.doesNotMatch(hidden.artifact.variants.default.html, /data-sk-fallback/);
     const cycle = await compileTarget(root, { id: 'cycle', source: 'Cycle.vue' });
     assert.match(cycle.artifact.variants.default.html, /data-sk-fallback/);
     assert.deepEqual(cycle.artifact.diagnostics.map(d => d.code), ['SPREAD_UNKNOWN', 'FALLBACK']);

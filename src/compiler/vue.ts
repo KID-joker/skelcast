@@ -1,3 +1,4 @@
+import type { Diagnostic } from '../types.js';
 import path from 'node:path';
 import { UNKNOWN,SOURCE_INITIAL, bindPattern, evaluateString, sourceCapacity, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry, styleString } from './html.js';
@@ -132,10 +133,11 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
   type Prop = ElementNode['props'][number];
   const values = node.tag === 'component' ? new Map<Prop, { key?: string; value: Value }>() : undefined;
   const initialProps = values ? new Map<Prop, Value>() : undefined;
-  const notes = new Map<Prop, { code: string; message: string }[]>();
-  const diagnose = (prop: Prop, code: string, message: string) => {
-    this.diagnose(code, message, ctx, node);
-    if (values) notes.set(prop, [...notes.get(prop) ?? [], { code, message }]);
+  // Record once and enrich the diagnostic when a dynamic component is known.
+  const notes: Diagnostic[] = [];
+  const diagnose = (code: string, message: string) => {
+    const diagnostic = this.diagnose(code, message, ctx, node);
+    if (values) notes.push(diagnostic);
   };
   const assign = (prop: Prop, key: string | undefined, value: Value) => {
     values?.set(prop, { key, value });
@@ -150,18 +152,18 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     else if (p.name === 'bind' && !p.arg) {
       const spread = evaluateString(expression(p.exp) ?? '', ctx);
       assign(p, undefined, spread);
-      if (!spread || spread === UNKNOWN || typeof spread !== 'object' || Array.isArray(spread)) diagnose(p, 'SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings');
+      if (!spread || spread === UNKNOWN || typeof spread !== 'object' || Array.isArray(spread)) diagnose('SPREAD_UNKNOWN', 'Cannot resolve Vue v-bind object; provide source bindings');
     }
     else if (p.name === 'bind' && p.arg?.type === 4 && p.arg.isStatic) {
       const key = p.arg.content;
       let value = evaluateString(expression(p.exp) ?? key, ctx);
       if(value===UNKNOWN&&ctx.loading&&node.tagType===1&&!['class','style'].includes(key)){
         const initial=initialString(expression(p.exp)??key,ctx);
-        if(initial!==UNKNOWN){initialProps?.set(p,value);value={[SOURCE_INITIAL]:initial};diagnose(p,'LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
+        if(initial!==UNKNOWN){initialProps?.set(p,value);value={[SOURCE_INITIAL]:initial};diagnose('LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
       }
       if (value === UNKNOWN && ['class', 'style', 'width', 'height'].includes(key)) {
         value = evaluateString(expression(p.exp) ?? key, { ...ctx, defaultBranches: true });
-        diagnose(p, 'LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`);
+        diagnose('LAYOUT_UNKNOWN', value === UNKNOWN ? `Cannot resolve :${key}; using a local fallback` : `Unknown :${key} condition: use the first static branch`);
         if (value === UNKNOWN) unknownLayout = true;
       }
       assign(p, key, value);
@@ -178,7 +180,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       if (typeof value !== 'string' || value.length > 32768) return this.fallback(ctx, node, 'Dynamic v-html content needs an adapter', this.attributes(props));
       htmlContent = value;
     }
-    else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose(p, 'DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
+    else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose('DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
   }
   const fallthrough = ctx.fallthrough;
   if (fallthrough && fallthrough.node === node) {
@@ -213,13 +215,13 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       let tagType: ElementNode['tagType'] = 0;
       if (tag === 'slot') tagType = 2;
       else if (!parserOptions.isNativeTag!(tag)) tagType = 1;
+      if (tagType === 1 && tag !== 'component') for (const note of notes) note.component = tag;
       node = { ...node, tag, tagType, props: node.props.filter(p => p.name !== 'is' && !(p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is') && p.name !== 'for') } as ElementNode;
       if (this.selectVueNode(node, ctx) === 'skip') return '';
       const exhausted = this.budget(ctx, node);
       if (exhausted !== undefined) return exhausted;
       props = Object.create(null);
       for (const prop of node.props) {
-        for (const note of notes.get(prop) ?? []) if (note.code !== 'LOADING_PROJECTION' || tagType === 1) this.diagnose(note.code, note.message, ctx, node);
         const entry = values!.get(prop);
         if (!entry) continue;
         const { key } = entry;
