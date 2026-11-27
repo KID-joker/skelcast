@@ -5,6 +5,7 @@ import type { ConfigEnv, Plugin, UserConfig, UserConfigExport, ViteDevServer } f
 import { checkProject, loadProject, readArtifact, readProjectState, syncProject, type Project } from './generator.js';
 import type { SkeletonArtifact, SkeletonTarget } from './types.js';
 import { createArtifactOptimizer, sharedStyleModule } from './compiler/optimize.js';
+import { previewArtifact } from './compiler/artifact.js';
 import { digest } from './compiler/styles.js';
 import { parse, type ElementNode, type RootNode } from '@vue/compiler-dom';
 import { sharedStyleSeparator as separator } from './shared.js';
@@ -16,7 +17,6 @@ const initialModule = 'virtual:skelcast-initial';
 const initialInternal = '\0skelcast-initial';
 const transientPatterns = ['**/.skelcast-lock/**', '**/.skelcast-lock-recovery/**', '**/.skelcast-stage-*/**', '**/.skelcast-transaction.json'];
 const transientFile = (file: string) => file.split(/[\\/]/).some(part => /^\.skelcast-(?:lock(?:-recovery)?|stage-.+|transaction\.json)$/.test(part)) || file.endsWith('.tmp');
-const previewArtifact = (artifact: SkeletonArtifact): SkeletonArtifact => ({ ...artifact, diagnostics: [], evidence: [], sources: {}, source: '' });
 const escapeStyle = (s: string) => s.replace(/<\/style/gi, '<\\/style');
 const escapeAttribute = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const wildcard = (part: string) => part === '*' || /^:[\w]+\(\.\*\)[*+]?$/.test(part);
@@ -159,13 +159,13 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
         return sharedStyleModule(css, initial?.baseCSS === css ? initialModule : undefined);
       }
       if (!id.startsWith(internalPrefix)) return;
-      const artifact = previewArtifact(await readArtifact(project, id.slice(internalPrefix.length)));
+      const artifact = await readArtifact(project, id.slice(internalPrefix.length));
       if (optimize()) return optimizer.module(artifact, css => {
         const id = sharedPrefix + digest(css);
         sharedStyles.set(id, css);
         return id;
       }, initial?.target.id === artifact.id ? initialModule : undefined);
-      return `export default ${JSON.stringify(artifact)};`;
+      return `export default ${JSON.stringify(previewArtifact(artifact))};`;
     },
     transformIndexHtml: {
       order: 'pre',

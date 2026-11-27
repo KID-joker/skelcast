@@ -175,8 +175,12 @@ export class SourceModules {
     if(name!==request)return;
     const directory=path.join(this.root,'node_modules',name),file=path.join(directory,'package.json');
     try{
-      const text=await this.read(file);this.dependencies[this.relative(file)]=digest(text);
-      const meta=JSON.parse(text),dependencies={...meta.dependencies,...meta.peerDependencies};
+      const packageFile = await this.files.read(file);
+      // Keep both paths: package-manager symlinks can change their target while
+      // the previously resolved package still exists. Reuse the byte hash.
+      this.dependencies[this.relative(packageFile.file)] = packageFile.hash;
+      this.dependencies[this.relative(file)] = packageFile.hash;
+      const meta=JSON.parse(packageFile.bytes.toString('utf8')),dependencies={...meta.dependencies,...meta.peerDependencies};
       if(libraryPlugin&&!this.options.componentPresets?.some(name=>Object.hasOwn(dependencies,name)))return;
       const entry=meta.module??meta.exports?.['.']?.import??meta.main;
       if(typeof entry!=='string'||!entry.startsWith('.')&&path.isAbsolute(entry))return;

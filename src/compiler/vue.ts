@@ -277,8 +277,12 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     if (defaults.length){const own=directive(node,['slot']),name=slotName(this,own,ctx,node);if(name!==undefined)slots[name]={nodes:defaults,context:ctx,framework:'vue',parameter:slotParameter(this,own,ctx,node)};}
     props.__skSlots = slots;
   }
-  const presentation = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'vue' }, node, imported);
-  if (presentation !== undefined) return presentation;
+  // Keep reference discovery (including native-name overrides and missing-file
+  // dependencies), but plain native elements do not need component dispatch.
+  if (node.tagType === 1 || imported || this.target.adapters?.[tag]) {
+    const presentation = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'vue' }, node, imported);
+    if (presentation !== undefined) return presentation;
+  }
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, ctx, node);

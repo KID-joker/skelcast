@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName } from './ast.js';
+import { isRenderFunction, nodeName, type RenderFunction } from './ast.js';
 import { loadingFrame, prepareRenderFunction } from './branches.js';
 import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
 import { realpath } from 'node:fs/promises';
@@ -93,7 +93,9 @@ export class SourceCompiler extends SourceModules {
     for (const node of nodes) html += await this.jsx(node, ctx);
     return html;
   }
-  private context(mod: ModuleInfo, sourceValues: Record<string, Value>, props: Record<string, Value> = {}, parent?: RenderContext): RenderContext {
+  private context(base: ModuleInfo, sourceValues: Record<string, Value>, props: Record<string, Value>, parent?: RenderContext, options?: t.ObjectExpression): RenderContext {
+    const mod = { ...base, env: { ...base.env, ...sourceValues }, propDefaults: { ...base.propDefaults } };
+    if (options) vueOptionProps(mod, options);
     const file = this.relative(mod.file);
     const prefix = `${file}::`;
     const scoped = Object.fromEntries(Object.entries(this.hints.bindings ?? {}).filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]));
@@ -130,26 +132,25 @@ export class SourceCompiler extends SourceModules {
     const component = resolved === ambiguousExport ? undefined : resolved;
     const base = component?.module ?? await this.module(file);
     const options = vueOptions(base, component?.fn ?? base.functions.get('default'));
-    const sourceValues=await this.moduleValues(base);
-    const mod = {...base,env:{...base.env,...sourceValues},propDefaults:{...base.propDefaults}};
-    if (options) vueOptionProps(mod, options);
-    const ctx = this.context(mod, sourceValues, props, parent);
+    // Static analysis can discover dependencies even for a fallback. Retain it,
+    // but only build an instance environment when rendering or diagnosing needs it.
+    const sourceValues = await this.moduleValues(base);
+    const depth = (parent?.depth ?? 0) + 1;
+    if (depth > 16 || !component) {
+      const origin = parent && node ? parent : this.context(base, sourceValues, props, parent, options);
+      const message = depth > 16 ? 'Component recursion limit reached'
+        : `${resolved === ambiguousExport ? 'Ambiguous' : 'Cannot locate'} exported component ${exported}`;
+      return this.fallback(origin, node, message, this.attributes(props));
+    }
+    const ctx = this.context(base, sourceValues, props, parent, options);
+    const mod = ctx.module;
     const origin = parent && node ? parent : ctx;
     const opaque = (message: string) => this.fallback(origin, node, message, this.attributes(props));
-    if (ctx.depth > 16) return opaque('Component recursion limit reached');
-    if (!component) return opaque(`${resolved === ambiguousExport ? 'Ambiguous' : 'Cannot locate'} exported component ${exported}`);
     const setup = !mod.descriptor?.template ? vueSetupFunction(mod, component.fn ?? mod.functions.get('default')) : undefined;
     const render = setup ? prepareVueSetup.call(this,setup,ctx,props) : vueRenderFunction(mod, component.fn ?? mod.functions.get('default'));
-    if(setup&&!render){
-      const projection=tableWrapper(mod,setup,this.options.componentPresets,{...mod.propDefaults,...props},!!ctx.loading);
-      if(projection){
-        let html=await this.preset(exported,projection.reference,projection.columns?{...props,columns:projection.columns}:props,{framework:'render',nodes:[],context:ctx},setup);
-        if(html!==undefined){
-          if(projection.viewportOffset!==undefined){html=html.replace(' data-sk-node=',` data-sk-viewport-bottom="${projection.viewportOffset}" data-sk-node=`);this.record('component','viewport height','Follow a source-proved own-table viewport constraint',origin,node);}
-          if(projection.pagination){const pager=await this.preset('pagination',projection.pagination.reference,projection.pagination.props,{framework:'render',nodes:[],context:ctx},setup);if(pager!==undefined)html=`<div style="width:100%">${html}${pager}</div>`;}
-          this.diagnose('PRESET_LIMIT','Source-proven table frame: wrapper callbacks, conditional UI and runtime style overrides remain unresolved',origin,node);return this.inheritRootScopes(html,parent?.scopes??[],{},'');
-        }
-      }
+    if (setup && !render) {
+      const html = await this.renderTableFrame(setup, exported, props, ctx, origin, node);
+      if (html !== undefined) return this.inheritRootScopes(html, parent?.scopes ?? []);
     }
     if (render && !mod.descriptor?.template) {
       const body = prepareVueRender.call(this, render, ctx, setup ? {} : props, !!options && !setup);
@@ -158,38 +159,62 @@ export class SourceCompiler extends SourceModules {
       this.record('component', exported, 'Statically expand a Vue render function without executing business code', origin, node);
       return this.inheritRootScopes(await this.vueExpression(body, ctx), parent?.scopes ?? [], mod.inheritAttrs ? fallthroughAttrs(mod, props) : {});
     }
-    if (mod.descriptor) {
-      const rootStyle = this.cssVariables(ctx);
-      if (!mod.descriptor.scriptSetup && mod.descriptor.script) {
-        this.diagnose('VUE_OPTIONS', 'Options API script values are not interpreted; use bindings for dynamic layout', ctx);
-      }
-      const template = mod.descriptor.template;
-      if (!template) return opaque('Vue component has no static template');
-      if (template.lang && template.lang !== 'html') return opaque(`Template language ${template.lang} needs an adapter`);
-      const ast = this.files.template(mod.file, template.content);
-      ctx.code = template.content;
-      const roots = ast.children.filter(child => child.type === 1 || child.type === 5 || child.type === 2 && child.content.trim());
-      const root = roots.length === 1 && roots[0].type === 1 && roots[0].tag !== 'template' && !mod.boundaries.has(roots[0].tag) ? roots[0] : undefined;
-      if (mod.inheritAttrs && root) ctx.fallthrough = { node: root, props: fallthroughAttrs(mod, props) };
-      if (this.target.region && ctx.depth === 1) {
-        let region: ElementNode | undefined;
-        const find = (n: RootNode | VueNode | ExpressionNode) => {
-          if (n.type === 1 && mod.boundaries.has(n.tag) && n.props.some(p => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'artifact' && p.exp?.type === 4 && p.exp.content === this.target.region)) region = n;
-          if ('children' in n) for (const child of n.children) if (typeof child === 'object') find(child);
-        };
-        find(ast);
-        if (!region) return this.fallback(ctx, node, `Missing source region ${this.target.region}`);
-        const previous=this.region,selection=new VueRegion(mod.file,region);this.region=selection;
-        try{
-          await this.vueNodes(ast.children,ctx);
-          return this.inheritRootScopes(selection.result??this.fallback(ctx,region,'Cannot resolve the loading region through its source slot context'),[],{},rootStyle);
-        }finally{this.region=previous;}
-      }
-      return this.inheritRootScopes(await this.vueNodes(ast.children, ctx), parent?.scopes ?? [], mod.inheritAttrs && !root ? fallthroughAttrs(mod, props) : {}, rootStyle);
-    }
+    if (mod.descriptor) return this.renderVueTemplate(ctx, props, parent?.scopes ?? [], node, opaque);
     const fn = component.fn;
     if (!fn) return opaque(`Cannot locate exported component ${exported}`);
     if (!isRenderFunction(fn)) return opaque(`Unsupported component declaration ${fn.type}`);
+    return this.renderReactComponent(fn, ctx, props, exported, node);
+  }
+  private async renderTableFrame(setup: RenderFunction, exported: string, props: Record<string, Value>, ctx: RenderContext, origin: RenderContext, node?: SourceNode): Promise<string | undefined> {
+    const projection = tableWrapper(ctx.module, setup, this.options.componentPresets, { ...ctx.module.propDefaults, ...props }, !!ctx.loading);
+    if (!projection) return;
+    const slot: SourceSlot = { framework: 'render', nodes: [], context: ctx };
+    let html = await this.preset(exported, projection.reference, projection.columns ? { ...props, columns: projection.columns } : props, slot, setup);
+    if (html === undefined) return;
+    if (projection.viewportOffset !== undefined) {
+      html = html.replace(' data-sk-node=', ` data-sk-viewport-bottom="${projection.viewportOffset}" data-sk-node=`);
+      this.record('component', 'viewport height', 'Follow a source-proved own-table viewport constraint', origin, node);
+    }
+    if (projection.pagination) {
+      const pager = await this.preset('pagination', projection.pagination.reference, projection.pagination.props, slot, setup);
+      if (pager !== undefined) html = `<div style="width:100%">${html}${pager}</div>`;
+    }
+    this.diagnose('PRESET_LIMIT', 'Source-proven table frame: wrapper callbacks, conditional UI and runtime style overrides remain unresolved', origin, node);
+    return html;
+  }
+  private async renderVueTemplate(ctx: RenderContext, props: Record<string, Value>, scopes: string[], node: SourceNode | undefined, opaque: (message: string) => string): Promise<string> {
+    const mod = ctx.module, descriptor = mod.descriptor!;
+    const rootStyle = this.cssVariables(ctx);
+    if (!descriptor.scriptSetup && descriptor.script) {
+      this.diagnose('VUE_OPTIONS', 'Options API script values are not interpreted; use bindings for dynamic layout', ctx);
+    }
+    const template = descriptor.template;
+    if (!template) return opaque('Vue component has no static template');
+    if (template.lang && template.lang !== 'html') return opaque(`Template language ${template.lang} needs an adapter`);
+    const ast = this.files.template(mod.file, template.content);
+    ctx.code = template.content;
+    const roots = ast.children.filter(child => child.type === 1 || child.type === 5 || child.type === 2 && child.content.trim());
+    const root = roots.length === 1 && roots[0].type === 1 && roots[0].tag !== 'template' && !mod.boundaries.has(roots[0].tag) ? roots[0] : undefined;
+    if (mod.inheritAttrs && root) ctx.fallthrough = { node: root, props: fallthroughAttrs(mod, props) };
+    if (this.target.region && ctx.depth === 1) {
+      let region: ElementNode | undefined;
+      const find = (n: RootNode | VueNode | ExpressionNode) => {
+        if (n.type === 1 && mod.boundaries.has(n.tag) && n.props.some(p => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'artifact' && p.exp?.type === 4 && p.exp.content === this.target.region)) region = n;
+        if ('children' in n) for (const child of n.children) if (typeof child === 'object') find(child);
+      };
+      find(ast);
+      if (!region) return this.fallback(ctx, node, `Missing source region ${this.target.region}`);
+      const previous = this.region, selection = new VueRegion(mod.file, region);
+      this.region = selection;
+      try {
+        await this.vueNodes(ast.children, ctx);
+        return this.inheritRootScopes(selection.result ?? this.fallback(ctx, region, 'Cannot resolve the loading region through its source slot context'), [], {}, rootStyle);
+      } finally { this.region = previous; }
+    }
+    return this.inheritRootScopes(await this.vueNodes(ast.children, ctx), scopes, mod.inheritAttrs && !root ? fallthroughAttrs(mod, props) : {}, rootStyle);
+  }
+  private async renderReactComponent(fn: RenderFunction, ctx: RenderContext, props: Record<string, Value>, exported: string, node?: SourceNode): Promise<string> {
+    const mod = ctx.module;
     const body = this.prepareFunction(fn, ctx, props);
     if (this.target.region && ctx.depth === 1) {
       let region: t.JSXElement | undefined;

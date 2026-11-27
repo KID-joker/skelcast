@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, stat, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, stat, rm, symlink, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
@@ -56,6 +56,65 @@ test('h component dispatch retains its existing source path when a JSX/template 
     assert.deepEqual(configured, plain);
     assert.match(configured.artifact.variants.default.html, /<section class="source"/);
     assert.doesNotMatch(configured.artifact.variants.default.html, /class="adapter"/);
+  });
+});
+
+test('Vue native tags retain declaration, configured, imported and adapter overrides in order', async () => {
+  await fixture({
+    'View.vue': `<template><main>Static</main><component is="main">Dynamic</component><input/></template>`,
+    'Declared.vue': `<template><aside class="declared"><slot/></aside></template>`,
+    'Configured.vue': `<template><nav class="configured"><slot/></nav></template>`,
+    'Imported.vue': `<template><section class="imported"><slot/></section></template>`,
+    'Adapter.vue': `<template><footer class="adapter"><slot/></footer></template>`,
+  }, async root => {
+    const nativeTarget = { ...target, source: 'View.vue' };
+    const plain = await compileTarget(root, nativeTarget);
+    assert.equal((plain.artifact.variants.default.html.match(/<main /g) ?? []).length, 2);
+    assert.equal(plain.dependencies['components.d.ts'], '!missing');
+    assert.equal(plain.dependencies['src/components.d.ts'], '!missing');
+
+    await writeFile(path.join(root, 'components.d.ts'), `declare module 'vue' { interface GlobalComponents { Main: typeof import('./Declared.vue')['default'] } }`);
+    const options = { components: { main: 'Configured.vue' } };
+    const declared = await compileTarget(root, nativeTarget);
+    const configured = await compileTarget(root, nativeTarget, {}, options);
+    await writeFile(path.join(root, 'View.vue'), `<script setup>import Main from './Imported.vue'</script><template><main>Static</main><component is="main">Dynamic</component><input/></template>`);
+    const imported = await compileTarget(root, nativeTarget, {}, options);
+    const adapted = await compileTarget(root, { ...nativeTarget, adapters: { main: 'Adapter.vue' } }, {}, options);
+    for (const [result, tag, name] of [[declared, 'aside', 'declared'], [configured, 'nav', 'configured'], [imported, 'section', 'imported'], [adapted, 'footer', 'adapter']] as const) {
+      const html = result.artifact.variants.default.html;
+      assert.equal((html.match(new RegExp(`<${tag} class="${name}"`, 'g')) ?? []).length, 2);
+      assert.match(html, /Static/);
+      assert.match(html, /Dynamic/);
+      assert.match(html, /<input/);
+      assert.deepEqual(result.artifact.diagnostics, []);
+    }
+  });
+});
+
+test('package symlink changes invalidate consumers even when the original package remains', async () => {
+  const helper = `export function predicate(value){return typeof value==='function'}`;
+  await fixture({
+    'skelcast.config.mjs': `export default {targets:[{id:'types',source:'View.vue'}]}`,
+    'View.vue': `<script setup>import {predicate} from '@fixture/checks';const label='Name'</script><template><div v-if="predicate(label)">Callable</div><p v-else>Literal</p></template>`,
+    'node_modules/.store/first/package.json': JSON.stringify({ module: 'index.js', version: '1' }),
+    'node_modules/.store/first/index.js': helper,
+    'node_modules/.store/second/package.json': JSON.stringify({ module: 'index.js', version: '2' }),
+    'node_modules/.store/second/index.js': helper,
+  }, async root => {
+    await mkdir(path.join(root, 'node_modules/@fixture'));
+    const link = path.join(root, 'node_modules/@fixture/checks');
+    await symlink(path.join(root, 'node_modules/.store/first'), link, 'dir');
+    const project = await loadProject(root);
+    await syncProject(project);
+    assert.equal((await checkProject(project))[0].state, 'ready');
+    const before = await readArtifact(project, 'types');
+    assert.match(before.variants.default.html, /Literal/);
+    await unlink(link);
+    await symlink(path.join(root, 'node_modules/.store/second'), link, 'dir');
+    assert.equal((await checkProject(project))[0].state, 'stale');
+    await syncProject(project);
+    assert.deepEqual(await readArtifact(project, 'types'), before);
+    assert.equal((await checkProject(project))[0].state, 'ready');
   });
 });
 

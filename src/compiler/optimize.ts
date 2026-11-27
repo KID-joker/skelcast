@@ -4,6 +4,7 @@ import postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';
 import type { SkeletonArtifact, SkeletonView } from '../types.js';
 import { sharedStyleSeparator as separator } from '../shared.js';
+import { previewArtifact } from './artifact.js';
 
 /** Remove only source-location attributes, without reserializing text or whitespace. */
 function withoutSourceNodes(html: string): string {
@@ -62,10 +63,11 @@ export function createArtifactOptimizer(warn: (message: string) => void = () => 
     // Inspection metadata belongs to this view, not the cached presentation.
     return { ...view, ...result };
   };
-  const artifact = (input: SkeletonArtifact): SkeletonArtifact => ({
-    ...input, diagnostics: [], evidence: [], sources: {}, source: '',
-    variants: Object.fromEntries(Object.entries(input.variants).map(([name, view]) => [name, optimizeView(view)])),
-  });
+  const artifact = (input: SkeletonArtifact): SkeletonArtifact => {
+    const result = previewArtifact(input);
+    result.variants = Object.fromEntries(Object.entries(input.variants).map(([name, view]) => [name, optimizeView(view)]));
+    return result;
+  };
   return {
     artifact,
     module(input: SkeletonArtifact, sharedModule: (css: string) => string, initialModule?: string): string {
