@@ -10,8 +10,9 @@ export function parseSource(code: string, filename = '', jsx = !/\.(?:[cm]?ts|vu
   return parse(code, { sourceType: 'module', plugins: [...(jsx ? ['jsx' as const] : []), 'typescript'] });
 }
 
-export function unwrapExpression(node: t.Node | null | undefined): t.Node | undefined {
-  while (node && ['TSAsExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'TSNonNullExpression', 'ParenthesizedExpression'].includes(node.type) && 'expression' in node) node = node.expression as t.Node;
+/** Renderers unwrap one layer at a time to retain their expansion accounting. */
+export function unwrapExpression(node: t.Node | null | undefined, layers = Infinity): t.Node | undefined {
+  while (layers-- > 0 && node && ['TSAsExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'TSNonNullExpression', 'ParenthesizedExpression'].includes(node.type) && 'expression' in node) node = node.expression as t.Node;
   return node ?? undefined;
 }
 

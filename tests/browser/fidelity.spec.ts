@@ -29,6 +29,45 @@ test('opaque source geometry beats fallback defaults in light and shadow roots a
   });
 });
 
+test('fallback inline important dimensions retain CSS priority across all source frontends', async ({ page }) => {
+  await fixture({
+    'Opaque.ts': 'export default makeBusinessWidget();',
+    'layout.css': '.opaque{height:160px!important}',
+    'View.tsx': `import './layout.css';import Opaque from './Opaque';export default()=> <Opaque className="opaque" width={18} style="height:100px!important;height:20px"/>;`,
+    'View.vue': `<script setup>import './layout.css';import Opaque from './Opaque'</script><template><Opaque class="opaque" width="18" style="height:100px!important;height:20px"/></template>`,
+    'View.ts': `import './layout.css';import {h} from 'vue';import Opaque from './Opaque';export default()=>h(Opaque,{class:'opaque',width:18,style:'height:100px!important;height:20px'});`,
+  }, async root => {
+    for (const source of ['View.tsx', 'View.vue', 'View.ts']) {
+      const { artifact } = await compileTarget(root, { id: 'priority', source });
+      const view = artifact.variants.default;
+      for (const shadow of [false, true]) {
+        await page.setContent('<!doctype html><div id="mount"></div>');
+        await page.evaluate(({ view, shadow }) => {
+          const host = document.querySelector('#mount')!;
+          const root = shadow ? host.attachShadow({ mode: 'open' }) : host;
+          root.innerHTML = `<style>${view.css}</style>${view.html}`;
+        }, { view, shadow });
+        await expect(page.locator('.opaque')).toHaveCSS('height', '100px');
+        await expect(page.locator('.opaque')).toHaveCSS('width', '18px');
+      }
+    }
+  });
+});
+
+test('React satisfies wrappers preserve native layout in generated skeletons', async ({ page }) => {
+  await fixture({
+    'View.tsx': `export default()=> (<section style={{width:168,height:44}}><p>Value</p></section>) satisfies JSX.Element;`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { id: 'satisfies', source: 'View.tsx' });
+    expect(artifact.diagnostics).toEqual([]);
+    const view = artifact.variants.default;
+    await page.setContent(`<!doctype html><style>${view.css}</style>${view.html}`);
+    await expect(page.locator('section')).toHaveCSS('width', '168px');
+    await expect(page.locator('section')).toHaveCSS('height', '44px');
+    await expect(page.locator('section > p [data-sk-measured]')).toHaveAttribute('data-sk-text-content', 'Value');
+  });
+});
+
 test('entry SCSS and Tailwind utilities determine standalone geometry without the application stylesheet',async({page})=>{
   await fixture({
     'index.html':'<script type="module" src="/src/main.ts"></script>',

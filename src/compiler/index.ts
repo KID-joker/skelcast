@@ -4,13 +4,14 @@ import { loadingFrame, prepareRenderFunction } from './branches.js';
 import { fallthroughAttrs, inheritRootScopes } from './attributes.js';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { type TemplateChildNode as VueNode, type ElementNode, type RootNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
+import { type TemplateChildNode as VueNode, type ElementNode, type RootNode, type ExpressionNode } from '@vue/compiler-dom';
 import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation, SkeletonView } from '../types.js';
 import { diagnosticDetails } from './diagnostics.js';
 import { UNKNOWN, evaluateString, expressionText, type Ast, type Value } from './expression.js';
 import { baseCSS, digest, scopeArtifactStyles, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
+import { renderPresetSlots } from './presets/slots.js';
 import type { ComponentReference } from './presets/types.js';
 import { TableColumns } from './presets/columns.js';
 import { SourceModules, type CompilerOptions } from './modules.js';
@@ -24,7 +25,7 @@ import { renderVueNodes, renderVueNode } from './vue.js';
 import postcss from 'postcss';
 import { embedStyleAssets } from './css-resources.js';
 import { imageDimensions } from './images.js';
-import { fallbackAttributes } from './fallback.js';
+import { fallbackProps } from './fallback.js';
 import { compileTailwind } from './tailwind.js';
 import { fileURLToPath } from 'node:url';
 import { pruneCSS } from './prune-css.js';
@@ -34,7 +35,7 @@ import{presentationInputs}from'./initial-state.js';
 import { SourceFiles } from './source-files.js';
 import { sharedStyleSeparator } from '../shared.js';
 import { bindSetupDeclarations } from './instance-values.js';
-import { camelizeProp, camelProps } from './props.js';
+import { camelProps, presetProps } from './props.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -67,10 +68,10 @@ export class SourceCompiler extends SourceModules {
     this.sources[id] = { file: this.relative(ctx.module.file), line: this.sourceLine(ctx, node) };
     return id;
   }
-  fallback(ctx: RenderContext, node: SourceNode | undefined, message: string, attrs = '') {
+  fallback(ctx: RenderContext, node: SourceNode | undefined, message: string, props: Record<string, Value> = {}) {
     const id = this.nodeId(ctx, node);
     this.diagnose('FALLBACK', message, ctx, node, id);
-    return `<div data-sk-node="${id}" data-sk-fallback${ctx.mode === 'preserve' ? ' data-sk-control' : ' data-sk-leaf'}${ctx.scopes.map(s => ` ${s}`).join('')}${fallbackAttributes(attrs, this.hints.minHeight)}></div>`;
+    return `<div data-sk-node="${id}" data-sk-fallback${ctx.mode === 'preserve' ? ' data-sk-control' : ' data-sk-leaf'}${ctx.scopes.map(s => ` ${s}`).join('')}${this.attributes(fallbackProps(props, this.hints.minHeight))}></div>`;
   }
   text(ctx: RenderContext, node: SourceNode | undefined, multiline = false): string {
     const id = this.nodeId(ctx, node);
@@ -140,12 +141,12 @@ export class SourceCompiler extends SourceModules {
       const origin = parent && node ? parent : this.context(base, sourceValues, props, parent, options);
       const message = depth > 16 ? 'Component recursion limit reached'
         : `${resolved === ambiguousExport ? 'Ambiguous' : 'Cannot locate'} exported component ${exported}`;
-      return this.fallback(origin, node, message, this.attributes(props));
+      return this.fallback(origin, node, message, props);
     }
     const ctx = this.context(base, sourceValues, props, parent, options);
     const mod = ctx.module;
     const origin = parent && node ? parent : ctx;
-    const opaque = (message: string) => this.fallback(origin, node, message, this.attributes(props));
+    const opaque = (message: string) => this.fallback(origin, node, message, props);
     const setup = !mod.descriptor?.template ? vueSetupFunction(mod, component.fn ?? mod.functions.get('default')) : undefined;
     const render = setup ? prepareVueSetup.call(this,setup,ctx,props) : vueRenderFunction(mod, component.fn ?? mod.functions.get('default'));
     if (setup && !render) {
@@ -279,40 +280,31 @@ export class SourceCompiler extends SourceModules {
     const ctx = slot.context;
     const resolved = resolvePreset(this.options.componentPresets, reference);
     if (!resolved) return;
-    const {preset,name} = resolved;
-    // Vue component props use camelCase even when templates spell them with
-    // hyphens. Keep original keys for adapters that accept library aliases.
-    props = { ...props };
-    for (const [key,value] of Object.entries(props)) if (!/^(?:data|aria)-/.test(key)) {
-      const camel = camelizeProp(key);
-      if (!(camel in props)) props[camel] = value;
-    }
+    const { preset, name } = resolved;
+    props = presetProps(props);
     const role = preset.role(name, props);
     const local = { ...ctx, control: role === 'control' ? true : role === 'data' ? false : ctx.control };
     const slots = preset.slots(name);
-    const renderedSlots: Record<string,string> = {};
-    for (const key of slots) {
-      renderedSlots[key] = slot.framework === 'render'
-        ? slot.slots?.[key] ? await this.renderSlot(slot.slots[key], local) : key === 'default' ? await this.renderSlot(slot, local) : ''
-        : slot.framework === 'jsx'
-        ? key === 'default' ? await this.jsxNodes(slot.nodes, local) : ''
-        : await this.vueNodes(slot.nodes.flatMap(n => {
-          const name = n.type === 1 && n.tag === 'template' ? n.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'slot')?.arg : undefined;
-          return name?.type === 4 && n.type === 1 ? name.content === key ? n.children : [] : key === 'default' ? [n] : [];
-        }), local);
-    }
-    const children = slots.map(key=>renderedSlots[key]).join('');
-    const presentation = preset.present(name, props, children, this.masked(local) ? this.text(local,node) : this.contentText(props.value ?? props.title ?? UNKNOWN,local,node), {...this.hints,state:this.hints.state??(local.loading?'loading':'source')}, {mask:this.masked(local),slots:renderedSlots,columns:this.tableColumns});
+    const renderedSlots = await renderPresetSlots(this, slot, slots, local);
+    const children = slots.map(key => renderedSlots[key]).join('');
+    const mask = this.masked(local);
+    const text = mask ? this.text(local, node) : this.contentText(props.value ?? props.title ?? UNKNOWN, local, node);
+    const hints: SkeletonHints = { ...this.hints, state: this.hints.state ?? (local.loading ? 'loading' : 'source') };
+    const presentation = preset.present(name, props, children, text, hints, { mask, slots: renderedSlots, columns: this.tableColumns });
     if (!presentation) return;
-    this.record('component',tag,`Use ${preset.id} ${role} adapter for ${reference!.request}::${reference!.exported}`,ctx,node);
-    for (const note of presentation.notes ?? []) this.diagnose('PRESET_LIMIT',note,ctx,node);
-    const html = this.element(presentation.tag, { ...props, class: [props.class ?? props.className,presentation.className], className: undefined, style: `${presentation.style ?? ''};${styleString(props.style)}` }, presentation.children, local, node, {
+    this.record('component', tag, `Use ${preset.id} ${role} adapter for ${reference!.request}::${reference!.exported}`, ctx, node);
+    for (const note of presentation.notes ?? []) this.diagnose('PRESET_LIMIT', note, ctx, node);
+    const attributes = {
+      ...props, class: [props.class ?? props.className, presentation.className], className: undefined,
+      style: `${presentation.style ?? ''};${styleString(props.style)}`,
+    };
+    const html = this.element(presentation.tag, attributes, presentation.children, local, node, {
       layout: true,
-      leaf: !!presentation.leaf && this.masked(local) || ctx.mode === 'mask' && role === 'control',
+      leaf: !!presentation.leaf && mask || ctx.mode === 'mask' && role === 'control',
     });
     // One source node can render multiple instances with different props. Keep
     // every distinct presentation stylesheet and deduplicate identical ones.
-    if (presentation.css) this.css.set(`preset:${digest(presentation.css)}`,presentation.css);
+    if (presentation.css) this.css.set(`preset:${digest(presentation.css)}`, presentation.css);
     return html;
   }
   attributes(props: Record<string, Value>): string { if((typeof props.id==='string'||typeof props.id==='number')&&String(props.id))this.sourceIds.add(String(props.id));return renderAttributes.call(this, props); }

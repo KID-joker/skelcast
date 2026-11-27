@@ -211,7 +211,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     } else if (p.name === 'text') { textContent = true; textValue = evaluateString(expression(p.exp) ?? '', ctx); }
     else if (p.name === 'html') {
       const value = evaluateString(expression(p.exp) ?? '', ctx);
-      if (typeof value !== 'string' || value.length > 32768) return this.fallback(ctx, node, 'Dynamic v-html content needs an adapter', this.attributes(props));
+      if (typeof value !== 'string' || value.length > 32768) return this.fallback(ctx, node, 'Dynamic v-html content needs an adapter', props);
       htmlContent = value;
     }
     else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose('DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
@@ -233,7 +233,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       return this.vueNodes(node.children, boundaryContentContext(ctx, value, this.hints.state));
     }
     if (unknownGeometry(props.style)) unknownLayout = true;
-    if (unknownLayout&&selection!=='ancestor') return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
+    if (unknownLayout&&selection!=='ancestor') return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', props);
     if (['template', 'transition', 'Transition', 'transition-group', 'TransitionGroup', 'KeepAlive', 'keep-alive'].includes(tag)) return this.vueNodes(node.children, ctx);
     if (tag === 'slot') {
       const name = typeof props.name === 'string' ? props.name : 'default';
@@ -243,7 +243,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       return ctx.slots?.[name] ? this.renderSlot(ctx.slots[name], ctx,argument,projected?initial:UNKNOWN) : node.children.length ? this.vueNodes(node.children, ctx) : '';
     }
     if (tag === 'component') {
-      if (typeof props.is !== 'string' || !/^[a-zA-Z][\w-]*$/.test(props.is)) return this.fallback(ctx, node, 'Dynamic component requires a finite adapter', this.attributes(props));
+      if (typeof props.is !== 'string' || !/^[a-zA-Z][\w-]*$/.test(props.is)) return this.fallback(ctx, node, 'Dynamic component requires a finite adapter', props);
       this.record('component', expression(node.props.find((p): p is DirectiveNode => p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is')?.exp) ?? 'is', `Select static component ${props.is}`, ctx, node);
       tag = props.is;
       let tagType: ElementNode['tagType'] = 0;
@@ -283,7 +283,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     const presentation = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'vue' }, node, imported);
     if (presentation !== undefined) return presentation;
   }
-  if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
+  if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, props);
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, ctx, node);
   const children = htmlContent !== undefined ? this.staticHTML(htmlContent, ctx, node)

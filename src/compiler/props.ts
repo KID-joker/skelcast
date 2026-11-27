@@ -8,3 +8,15 @@ export const camelizeProp = (name: string): string =>
 export function camelProps(props: Record<string, Value>): Record<string, Value> {
   return Object.fromEntries(Object.entries(props).map(([key, value]) => [camelizeProp(key), value]));
 }
+
+/** Presets retain source keys and explicit camelCase values; DOM attributes
+ * such as data-* and aria-* never become component prop aliases. */
+export function presetProps(props: Record<string, Value>): Record<string, Value> {
+  const result = { ...props };
+  for (const [key, value] of Object.entries(props)) {
+    if (/^(?:data|aria)-/.test(key)) continue;
+    const camel = camelizeProp(key);
+    if (!(camel in result)) result[camel] = value;
+  }
+  return result;
+}

@@ -17,6 +17,7 @@ import { vueOptions } from './vue-render.js';
 import { resolutionCandidates } from './resolution.js';
 import { SourceFiles } from './source-files.js';
 import { resolveReexports } from './exports.js';
+import { appRegistrations, pluginRegistrations } from './registrations.js';
 
 export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'>;
 
@@ -133,41 +134,32 @@ export class SourceModules {
       }
       // Direct registrations and source-proven plugin installers are data, not
       // application execution. Explicit/declaration mappings retain precedence.
-      for(const file of this.entryScripts){
-        const mod=await this.module(file),apps=new Set<string>();
-        for(const statement of mod.ast.program.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations)if(d.id.type==='Identifier'&&d.init?.type==='CallExpression'&&d.init.callee.type==='Identifier'){
-          const ref=mod.imports.get(d.init.callee.name);if(ref?.request==='vue'&&ref.exported==='createApp')apps.add(d.id.name);
-        }
-        const calls:t.CallExpression[]=[];visit(mod.ast,n=>{if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'&&!n.callee.computed)calls.push(n);});
-        const root=(n:t.Node):string|undefined=>n.type==='Identifier'?n.name:n.type==='CallExpression'&&n.callee.type==='MemberExpression'?root(n.callee.object):undefined;
-        for(const call of calls){
-          if(call.callee.type!=='MemberExpression'||!apps.has(root(call.callee.object)??''))continue;
-          const method=nodeName(call.callee.property),first=call.arguments[0];
-          if(method==='component'&&first?.type==='StringLiteral'&&call.arguments[1]?.type==='Identifier'){
-            const ref=mod.imports.get(call.arguments[1].name);if(ref&&!result.has(componentName(first.value)))result.set(componentName(first.value),ref);
-          }
-          if(method!=='use'||first?.type!=='Identifier')continue;
-          const imported=mod.imports.get(first.name);if(!imported||imported.file)continue;
-          const plugin=await this.packageModule(imported.request);if(!plugin)continue;
-          const resolved=await this.resolveExport(plugin.file,imported.exported);if(!resolved||resolved===ambiguousExport||!resolved.fn)continue;
-          const options=vueOptions(resolved.module,resolved.fn);if(!options)continue;
-          const name=options.properties.find(p=>p.type==='ObjectProperty'&&nodeName(p.key)==='name');
-          if(name?.type!=='ObjectProperty'||name.value.type!=='StringLiteral')continue;
-          let registeredName:string|undefined;
-          const registrations:{node:t.CallExpression;parameter:string}[]=[];
-          let definition=plugin.functions.get(plugin.exports.get(imported.exported)??'');const seen=new Set<string>();
-          while(definition?.type==='Identifier'&&!seen.has(definition.name)){seen.add(definition.name);definition=plugin.functions.get(definition.name);}
-          if(definition?.type==='CallExpression'&&definition.arguments[1]?.type==='ObjectExpression')for(const n of definition.arguments[1].properties){
-            const fn=n.type==='ObjectProperty'&&nodeName(n.key)==='install'&&isRenderFunction(n.value)?n.value:n.type==='ObjectMethod'&&nodeName(n.key)==='install'?n:undefined;
-            const parameter=fn?.params[0];if(!fn||parameter?.type!=='Identifier')continue;
-            visit(fn.body,c=>{if(c.type==='CallExpression'&&c.callee.type==='MemberExpression'&&c.callee.object.type==='Identifier'&&c.callee.object.name===parameter.name&&nodeName(c.callee.property)==='component')registrations.push({node:c,parameter:parameter.name});});
-          }
-          for(const {node}of registrations){const value=node.arguments[1];if(value?.type!=='Identifier')continue;const component=await this.resolveExport(plugin.file,value.name,true);if(component&&component!==ambiguousExport&&component.module===resolved.module&&component.fn===resolved.fn){const key=node.arguments[0];if(key?.type==='StringLiteral')registeredName=key.value;else if(key?.type==='MemberExpression'&&key.object.type==='Identifier'&&key.object.name===value.name&&nodeName(key.property)==='name')registeredName=name.value.value;}}
-          if(registeredName&&!result.has(componentName(registeredName)))result.set(componentName(registeredName),{request:imported.request,exported:imported.exported,file:plugin.file});
+      for (const file of this.entryScripts) {
+        const mod = await this.module(file);
+        for (const registration of appRegistrations(mod)) {
+          const entry = registration.kind === 'component' ? registration : await this.pluginComponent(registration.reference);
+          if (entry && !result.has(componentName(entry.name))) result.set(componentName(entry.name), entry.reference);
         }
       }
       return result;
     })();
+  }
+  private async pluginComponent(reference: ComponentReference): Promise<{ name: string; reference: ComponentReference } | undefined> {
+    const plugin = await this.packageModule(reference.request);
+    if (!plugin) return;
+    const resolved = await this.resolveExport(plugin.file, reference.exported);
+    if (!resolved || resolved === ambiguousExport || !resolved.fn) return;
+    const options = vueOptions(resolved.module, resolved.fn);
+    const name = options?.properties.find(prop => prop.type === 'ObjectProperty' && nodeName(prop.key) === 'name');
+    if (name?.type !== 'ObjectProperty' || name.value.type !== 'StringLiteral') return;
+    let registeredName: string | undefined;
+    for (const registration of pluginRegistrations(plugin, reference.exported)) {
+      const component = await this.resolveExport(plugin.file, registration.component, true);
+      if (!component || component === ambiguousExport || component.module !== resolved.module || component.fn !== resolved.fn) continue;
+      if (registration.name !== undefined) registeredName = registration.name;
+      else if (registration.useComponentName) registeredName = name.value.value;
+    }
+    if (registeredName) return { name: registeredName, reference: { ...reference, file: plugin.file } };
   }
   private async packageModule(request:string,libraryPlugin=true):Promise<ModuleInfo|undefined>{
     if(libraryPlugin&&!this.options.componentPresets?.length||request.startsWith('.')||request.startsWith('/'))return;

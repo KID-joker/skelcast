@@ -245,7 +245,7 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
   const props: Record<string, unknown> = { ...value };
   if (propsNode?.type === 'ObjectExpression') for (const prop of propsNode.properties) if (prop.type === 'SpreadElement' && evaluate(prop.argument, ctx) === UNKNOWN) this.diagnose('SPREAD_UNKNOWN', 'Unresolved h() spread props may affect layout', ctx, prop);
   const local = this.contentContext(ctx, props, native ? tag : '');
-  if ((unknownGeometry(props.style) || ['class', 'style', 'width', 'height'].some(key => props[key] === UNKNOWN))&&!Object.values(ctx.slots??{}).some(slot=>this.hasSelectedSlot(slot))) return this.fallback(local, node, 'Unresolved h() layout props', this.attributes(props));
+  if ((unknownGeometry(props.style) || ['class', 'style', 'width', 'height'].some(key => props[key] === UNKNOWN))&&!Object.values(ctx.slots??{}).some(slot=>this.hasSelectedSlot(slot))) return this.fallback(local, node, 'Unresolved h() layout props', props);
   const slots: Record<string, SourceSlot> = {};
   const forward=(value:unknown)=>{
     if(!value||value===UNKNOWN||typeof value!=='object'||Array.isArray(value))return false;
@@ -278,7 +278,7 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
     props.__skSlots = slots;
     const presentation = await renderComponent(this, tag, props, { framework: 'render', nodes: [], slots, context: local }, node, ref);
     if (presentation !== undefined) return presentation;
-    return this.fallback(local, node, `No source adapter for ${tag}`, this.attributes(props));
+    return this.fallback(local, node, `No source adapter for ${tag}`, props);
   }
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, local, node);

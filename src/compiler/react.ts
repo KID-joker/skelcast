@@ -1,11 +1,10 @@
-import { nodeName } from './ast.js';
+import { nodeName, unwrapExpression, walk } from './ast.js';
 import { renderComponent } from './component-render.js';
 import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry } from './html.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
 import { boundaryContentContext, hasStateBinding } from './branches.js';
-import { walk } from './ast.js';
 import {collectionRoot,loadingPresence,projectsCollection,collectionEmpty} from './loading-state.js';
 import { renderCall } from './vue-render.js';
 import { planCollection } from './collections.js';
@@ -24,7 +23,8 @@ export async function renderJSX(this: RenderHost, node: Ast | null | undefined, 
 
 /** Shared node rendering; each frontend accounts for its own expansion cost. */
 export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderContext): Promise<string> {
-  if ((node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression' || node.type === 'ParenthesizedExpression')) return this.jsx(node.expression, ctx);
+  const expression = unwrapExpression(node, 1);
+  if (expression !== node) return this.jsx(expression, ctx);
   if (node.type === 'JSXFragment') return this.jsxNodes(node.children, ctx);
   if (node.type === 'JSXText') {
     // Match JSX's removal of indentation while retaining meaningful spaces.
@@ -105,15 +105,15 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
     return this.jsxNodes(node.children, boundaryContentContext(ctx, expression, this.hints.state));
   }
   if (unknownGeometry(props.style)) unknownLayout = true;
-  if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', this.attributes(props));
+  if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', props);
   if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression') {
     if (node.children.length) props.children = { [slotValue]: { nodes: node.children, context: ctx, framework: 'jsx' } satisfies SourceSlot };
     this.record('component', tag, 'Expand source component', ctx, node);
     const preset = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'jsx' }, node);
     if (preset !== undefined) return preset;
-    return this.fallback(ctx, node, `No source adapter for ${tag}`, this.attributes(props));
+    return this.fallback(ctx, node, `No source adapter for ${tag}`, props);
   }
-  if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, this.attributes(props));
+  if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, props);
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, ctx, node);
   const children = tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true) : await this.jsxNodes(node.children, ctx);

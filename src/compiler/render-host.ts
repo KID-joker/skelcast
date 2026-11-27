@@ -17,7 +17,7 @@ export interface RenderHost {
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string): Diagnostic;
   record(kind: Evidence['kind'], expression: string, decision: string, ctx: RenderContext, node?: SourceNode): void;
   nodeId(ctx: RenderContext, node?: SourceNode): string;
-  fallback(ctx: RenderContext, node: SourceNode | undefined, message: string, attrs?: string): string;
+  fallback(ctx: RenderContext, node: SourceNode | undefined, message: string, props?: Record<string, Value>): string;
   text(ctx: RenderContext, node: SourceNode | undefined, multiline?: boolean): string;
   masked(ctx: RenderContext): boolean;
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string;

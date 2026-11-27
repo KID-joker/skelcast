@@ -1,23 +1,30 @@
-import { parse } from '@vue/compiler-dom';
 import postcss from 'postcss';
+import type { Value } from './expression.js';
+import { UNKNOWN } from './expression.js';
+import { styleString } from './html.js';
 
 /** Native width/height attributes do not size an opaque div. Convert only
  * explicit finite dimensions; leave class/media rules in control of CSS. */
-export function fallbackAttributes(attrs: string, minHeight?: number): string {
-  const element = parse(`<div${attrs}></div>`).children[0];
-  if (element?.type !== 1) return attrs;
-  const values = Object.fromEntries(element.props.filter(p => p.type === 6).map(p => [p.name, p.value?.content ?? '']));
-  const style = postcss.parse(`a{${values.style ?? ''}}`).first!;
-  const declarations = new Map<string, string>();
-  if (style.type === 'rule') style.walkDecls(d => { declarations.set(d.prop, d.value); });
+export function fallbackProps(props: Record<string, Value>, minHeight?: number): Record<string, Value> {
+  const { width, height, style: sourceStyle, ...attrs } = props;
+  const style = postcss.parse(`a{${styleString(sourceStyle)}}`).first as postcss.Rule;
+  const declared = new Set<string>();
+  style.walkDecls(declaration => { declared.add(declaration.prop); });
+  const set = (prop: string, value: string) => {
+    if (!declared.has(prop)) style.append({ prop, value });
+    else style.walkDecls(prop, declaration => { declaration.value = value; declaration.important = false; });
+    declared.add(prop);
+  };
   for (const name of ['width', 'height']) {
-    const value = values[name];
-    if (!declarations.has(name) && value && /^(?:\d+(?:\.\d+)?)(?:px|%|rem|em|vw|vh)?$/.test(value)) declarations.set(name, /^\d+(?:\.\d+)?$/.test(value) ? `${value}px` : value);
+    const raw = name === 'width' ? width : height;
+    const value = raw == null || raw === UNKNOWN ? '' : String(raw);
+    if (!declared.has(name) && /^(?:\d+(?:\.\d+)?)(?:px|%|rem|em|vw|vh)?$/.test(value)) set(name, /^\d+(?:\.\d+)?$/.test(value) ? `${value}px` : value);
   }
-  if (!declarations.has('height') && (declarations.has('min-height') || declarations.has('aspect-ratio'))) declarations.set('--sk-fallback-height', 'auto');
-  if (minHeight !== undefined) declarations.set('min-height', `${minHeight}px`);
-  const css = [...declarations].map(([key, value]) => `${key}:${value}`).join(';').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-  return attrs.replace(/\s(?:style|width|height)="[^"]*"/g, '') + (css ? ` style="${css}"` : '');
+  if (!declared.has('height') && (declared.has('min-height') || declared.has('aspect-ratio'))) set('--sk-fallback-height', 'auto');
+  if (minHeight !== undefined) set('min-height', `${minHeight}px`);
+  const declarations: string[] = [];
+  style.walkDecls(declaration => { declarations.push(`${declaration.prop}:${declaration.value}${declaration.important ? '!important' : ''}`); });
+  return { ...attrs, style: declarations.join(';') };
 }
 
 /** A source min-height/aspect-ratio constrains an empty footprint. Change the
