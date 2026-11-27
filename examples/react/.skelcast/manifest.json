@@ -1,9 +1,9 @@
 {
-  "version": "0.1.0-6acac34f69aa",
+  "version": "0.1.0-1a86fade65c8",
   "targets": {
     "products.page": {
       "hash": "8454a92db4eb90929bc133dc88b3e264e131b3f497bba96e5c7047bbd41b9600",
-      "outputHash": "b5a61663ebd6f041afaf84432331d9a48eab61b239c995e4733be9b68572b402",
+      "outputHash": "791e2060f5639d654ad183ffec5f482fbd5f4de2e296e3da0477a04bd9db152b",
       "dependencies": {
         "index.html": "0ff700ea459fe165374b2cff96da5cb01eb589c364d32b9aedd6d65ca6bff99c",
         "src/main.tsx": "3fe52174c5038afb560965c607c1f6c26376f1a4f0da53f4f1241914e095a6c8",
@@ -16,7 +16,7 @@
     },
     "products.list": {
       "hash": "242b4cfc79a40e1c9211dad86b75429f7636878cef6a0c5b0669f8dc730b00fe",
-      "outputHash": "a54f5de8fc8ab68320238ac09ccb25e5d8282f2383a35976fff41a10ef33da71",
+      "outputHash": "40f0d9dce9317938899fdbdc3c91622758495df02cde5defbdb62b4f034dcdda",
       "dependencies": {
         "index.html": "0ff700ea459fe165374b2cff96da5cb01eb589c364d32b9aedd6d65ca6bff99c",
         "src/main.tsx": "3fe52174c5038afb560965c607c1f6c26376f1a4f0da53f4f1241914e095a6c8",

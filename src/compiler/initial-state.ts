@@ -4,6 +4,21 @@ import{UNKNOWN,evaluate,expressionText,parseSourceExpression,safeKey,type Expres
 
 type InitialContext = ExpressionContext & { initialValues?: Record<string, Value> };
 
+/** Preserve source-order overwrites while stopping once alias facts stabilize. */
+export function propagateInitialAliases(values: Record<string, Value>, aliases: readonly (readonly [string, string])[]): void {
+  for (let pass = 0; pass < aliases.length; pass++) {
+    let changed = false;
+    for (const [alias, source] of aliases) for (const [key, value] of Object.entries(values)) {
+      if (key !== source && !key.startsWith(source + '.')) continue;
+      const target = alias + key.slice(source.length);
+      if (Object.hasOwn(values, target) && Object.is(values[target], value)) continue;
+      values[target] = value;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+}
+
 function path(node:t.Node|undefined|null):string|undefined{
  const value=unwrapExpression(node);
  if(value?.type==='Identifier')return value.name;

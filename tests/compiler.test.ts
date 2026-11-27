@@ -247,6 +247,41 @@ test('Vue fallthrough replaces mapped root IDs and data attributes without dupli
   });
 });
 
+test('dynamic Vue roots retain fallthrough classes, styles, IDs and read-only policy exactly once', async () => {
+  await fixture({
+    'View.vue': `<script setup>import Card from './Card.vue';import Field from './Field.vue'</script><template><Card class="outer" style="width:200px" id="outer" data-layout="grid">Body</Card><Field readonly class="outer"/><Card class="outer" style="width:200px" id="outer" data-layout="grid">Body</Card></template>`,
+    'Field.vue': `<template><input class="field"/></template>`,
+  }, async root => {
+    const roots = [
+      `<section class="inner" style="height:40px" id="inner" data-layout="list"><slot/></section>`,
+      `<component :is="'section'" class="inner" style="height:40px" id="inner" data-layout="list"><slot/></component>`,
+      `<component v-bind="{is:'section',class:'spread',style:'height:10px'}" class="inner" style="height:40px" id="inner" data-layout="list"><slot/></component>`,
+      `<script setup>import Field from './Field.vue'</script><template><component :is="'Field'" class="inner"><slot/></component></template>`,
+    ];
+    for (const rootNode of roots) {
+      await writeFile(path.join(root, 'Card.vue'), rootNode.startsWith('<script') ? rootNode : `<template>${rootNode}</template>`);
+      const { artifact } = await compileTarget(root, { ...target, source: 'View.vue' });
+      const html = artifact.variants.default.html;
+      assert.equal((html.match(/data-sk-source-id="outer"/g) ?? []).length, 2);
+      assert.equal((html.match(/data-layout="grid"/g) ?? []).length, 2);
+      assert.match(html, /class="(?:field )?(?:spread )?inner outer"/);
+      assert.doesNotMatch(html, /outer outer/);
+      assert.match(html, /width:200px/);
+      if (!rootNode.startsWith('<script')) assert.match(html, /height:40px;width:200px/);
+      assert.deepEqual(artifact.diagnostics, []);
+    }
+    await writeFile(path.join(root, 'Field.vue'), `<template><component :is="'input'" class="field"/></template>`);
+    const field = await compileTarget(root, { ...target, source: 'View.vue' });
+    const inputs = field.artifact.variants.default.html.match(/<input[^>]+>/g) ?? [];
+    assert.match(inputs[1], /readonly/);
+    assert.match(inputs[1], /data-sk-leaf/);
+    assert.match(inputs[1], /class="field outer"/);
+    await writeFile(path.join(root, 'Card.vue'), `<script setup>defineOptions({inheritAttrs:false})</script><template><component :is="'section'" class="inner"/></template>`);
+    const isolated = await compileTarget(root, { ...target, source: 'View.vue' });
+    assert.doesNotMatch(isolated.artifact.variants.default.html, /data-sk-source-id="outer"|width:200px|data-layout="grid"/);
+  });
+});
+
 test('saved bindings replace and clear the effective shared bindings while omitted bindings are retained', async () => {
   await fixture({
     'View.tsx': `const mode='grid';export default function View(){return <main className={mode}><span>Title</span></main>}`,

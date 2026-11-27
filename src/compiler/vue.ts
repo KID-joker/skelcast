@@ -217,15 +217,17 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose('DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
   }
   const fallthrough = ctx.fallthrough;
-  if (fallthrough && fallthrough.node === node) {
-    for (const [key, value] of Object.entries(fallthrough.props)) {
-      if (key === 'class' && props.class != null) props.class = [props.class, value];
-      else if (key === 'style' && props.style != null) props.style = `${styleString(props.style)};${styleString(value)}`;
-      else props[key] = value;
-    }
-  }
   let tag = node.tag;
   for (;;) {
+    // Replayed dynamic props are fresh. Merge root attrs after every replay,
+    // retaining the original source node as the fallthrough owner.
+    if (fallthrough && fallthrough.node === source) {
+      for (const [key, value] of Object.entries(fallthrough.props)) {
+        if (key === 'class' && props.class != null) props.class = [props.class, value];
+        else if (key === 'style' && props.style != null) props.style = `${styleString(props.style)};${styleString(value)}`;
+        else props[key] = value;
+      }
+    }
     ctx = this.contentContext(ctx, props, tag);
     if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') {
       const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');

@@ -1,9 +1,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateString, SOURCE_PROJECTION, UNKNOWN } from '../src/compiler/expression.js';
-import { initialString } from '../src/compiler/initial-state.js';
+import { evaluateString, SOURCE_PROJECTION, UNKNOWN, type Value } from '../src/compiler/expression.js';
+import { initialString, propagateInitialAliases } from '../src/compiler/initial-state.js';
 
 const evaluate = (source: string, bindings: Record<string, unknown> = {}) => evaluateString(source, { code: '', env: {}, bindings });
+
+test('initial aliases retain chained, cyclic and source-order facts including absent and nonfinite values', () => {
+  const root = { width: 40 };
+  const values: Record<string, Value> = { root, 'root.value': 40, absent: undefined, invalid: NaN, other: 80 };
+  const aliases: [string, string][] = [['last', 'middle'], ['middle', 'root'], ['root', 'middle'], ['copy', 'absent'], ['nan', 'invalid'], ['middle', 'other']];
+  propagateInitialAliases(values, aliases);
+  assert.equal(values.last, 80);
+  assert.equal(values.middle, 80);
+  assert.equal(values.root, root, 'each pass copies root into middle before copying middle back');
+  assert.equal(values['last.value'], 40);
+  assert.equal(values['middle.value'], 40);
+  assert.ok(Object.hasOwn(values, 'copy'));
+  assert.equal(values.copy, undefined);
+  assert.ok(Number.isNaN(values.nan));
+  const stable = { ...values };
+  propagateInitialAliases(values, aliases);
+  assert.deepEqual(values, stable);
+});
 
 test('finite method chains read each receiver once without sharing values across evaluations or callbacks', () => {
   let reads = 0;

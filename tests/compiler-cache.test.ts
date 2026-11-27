@@ -7,6 +7,50 @@ import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
 import { SourceFiles } from '../src/compiler/source-files.js';
 import { StaticValues } from '../src/compiler/static-values.js';
+import { checkProject, projectFromConfig, readArtifact, syncProject } from '../src/generator.js';
+
+test('one project sync shares source syntax across targets while preserving bindings and later edits', async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-target-cache-')));
+  try {
+    await writeFile(path.join(root, 'layout.css'), '.grid{display:grid}.list{display:flex}');
+    await writeFile(path.join(root, 'View.vue'), `<script setup>import Child from './Child.vue';const mode='grid'</script><template><main :class="mode"><Child :label="mode"/></main></template><style src="./layout.css"/>`);
+    const child = `<script setup>defineProps(['label'])</script><template><p>{{label}} Original</p></template>`;
+    await writeFile(path.join(root, 'Child.vue'), child);
+    const project = await projectFromConfig(root, { targets: [
+      { id: 'first', source: 'View.vue', hints: { bindings: { mode: 'grid' } } },
+      { id: 'second', source: 'View.vue', hints: { bindings: { mode: 'list' } }, variants: { normal: {}, override: { bindings: { mode: 'grid' } } } },
+    ] });
+    const reads = t.mock.method(fs, 'readFile');
+    const asts = t.mock.method(SourceFiles.prototype, 'ast');
+    const templates = t.mock.method(SourceFiles.prototype, 'template');
+    syncBuiltinESMExports();
+    try {
+      assert.deepEqual((await syncProject(project)).map(row => row.state), ['generated', 'generated']);
+      for (const file of ['View.vue', 'Child.vue', 'layout.css']) {
+        assert.equal(reads.mock.calls.filter(call => call.arguments[0] === path.join(root, file)).length, 1, file);
+      }
+      for (const file of ['View.vue', 'Child.vue']) {
+        const parsed = asts.mock.calls.filter(call => call.arguments[0] === path.join(root, file));
+        assert.equal(new Set(parsed.map(call => call.result)).size, 1, `${file} AST`);
+        const rendered = templates.mock.calls.filter(call => call.arguments[0] === path.join(root, file));
+        assert.equal(new Set(rendered.map(call => call.result)).size, 1, `${file} template`);
+      }
+      for (const target of project.config.targets) {
+        const standalone = await compileTarget(root, target);
+        assert.deepEqual(await readArtifact(project, target.id), standalone.artifact, 'shared syntax retains standalone output');
+      }
+      await writeFile(path.join(root, 'Child.vue'), child.replace('Original', 'Updated'));
+      assert.deepEqual((await checkProject(project)).map(row => row.state), ['stale', 'stale']);
+      assert.deepEqual((await syncProject(project)).map(row => row.state), ['generated', 'generated']);
+      for (const id of ['first', 'second']) {
+        for (const view of Object.values((await readArtifact(project, id)).variants)) assert.match(view.html, /Updated/);
+      }
+      assert.deepEqual((await syncProject(project)).map(row => row.state), ['reused', 'reused']);
+    } finally {
+      reads.mock.restore(); asts.mock.restore(); templates.mock.restore(); syncBuiltinESMExports();
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('scans and variants share source reads and ASTs while keeping binding environments independent', async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'skelcast-cache-')));

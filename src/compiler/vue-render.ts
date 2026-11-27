@@ -5,7 +5,7 @@ import { slotValue, type ModuleInfo, type RenderContext, type SourceSlot } from 
 import { nonVisual, unknownGeometry } from './html.js';
 import type { RenderHost } from './render-host.js';
 import {renderSlotCall,bindSlotInitial} from './regions.js';
-import{initialExpression}from'./initial-state.js';
+import{initialExpression,propagateInitialAliases}from'./initial-state.js';
 import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 import { renderComponent } from './component-render.js';
 import { componentInputs } from './props.js';
@@ -114,7 +114,7 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
       }
       if(value!==UNKNOWN){ctx.initialValues[d.id.name]=value;if(['ref','shallowRef'].some(name=>vueHelper(ctx.module,(d.init as t.CallExpression).callee,name)))ctx.initialValues[d.id.name+'.value']=value;}
     }
-    for(let pass=0;pass<aliases.length;pass++)for(const[alias,source]of aliases)for(const[key,value]of Object.entries(ctx.initialValues))if(key===source||key.startsWith(source+'.'))ctx.initialValues[alias+key.slice(source.length)]=value;
+    propagateInitialAliases(ctx.initialValues, aliases);
     for(const name of written)ctx.env[name]=UNKNOWN;
     for(const statement of setup.body.body){
       const declarations=statement.type==='VariableDeclaration'?statement.declarations.map(d=>({name:nodeName(d.id),fn:d.init})):statement.type==='FunctionDeclaration'?[{name:statement.id?.name,fn:statement}]:[];

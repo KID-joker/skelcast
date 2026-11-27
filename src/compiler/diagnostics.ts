@@ -1,8 +1,7 @@
-import { parseExpression } from '@babel/parser';
 import type { ElementNode } from '@vue/compiler-dom';
 import type { Diagnostic } from '../types.js';
 import { nodeName } from './ast.js';
-import { UNKNOWN, evaluate, expressionText, type Ast } from './expression.js';
+import { UNKNOWN, evaluate, expressionText, parseSourceExpression, type Ast } from './expression.js';
 import type { RenderContext, SourceNode } from './context.js';
 
 /** Capture repair context while the original AST and expression environment exist. */
@@ -53,7 +52,7 @@ export function diagnosticDetails(ctx: RenderContext, source?: SourceNode): Pick
       const key = property.arg.content;
       if (!['class', 'style', 'width', 'height'].includes(key)) continue;
       try {
-        inspect(parseExpression(property.exp.content, { plugins: ['typescript'] }), key, { ...ctx, code: property.exp.content });
+        inspect(parseSourceExpression(property.exp.content, ctx), key, { ...ctx, code: property.exp.content });
       } catch { /* malformed expressions keep their source diagnostic */ }
     }
   }

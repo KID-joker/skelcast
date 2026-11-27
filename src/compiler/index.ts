@@ -368,7 +368,12 @@ export class SourceCompiler extends SourceModules {
     return { view: { html, css: `${css}\n${sharedStyleSeparator}${baseCSS.replace(/sk-pulse/g, 'skelcast-base-pulse-v1')}`,sourceIds:[...this.sourceIds].sort() }, dependencies: this.dependencies };
   }
 }
-export async function compileTarget(root: string, target: SkeletonTarget, aliases: Record<string, string> = {}, options: CompilerOptions = {}): Promise<{ artifact: SkeletonArtifact; dependencies: Record<string, string> }> {
+export function compileTarget(root: string, target: SkeletonTarget, aliases: Record<string, string> = {}, options: CompilerOptions = {}) {
+  return compileTargetWithFiles(root, target, aliases, options, new SourceFiles());
+}
+
+/** Share immutable syntax within one generation operation; keep evaluation local. */
+export async function compileTargetWithFiles(root: string, target: SkeletonTarget, aliases: Record<string, string>, options: CompilerOptions, files: SourceFiles): Promise<{ artifact: SkeletonArtifact; dependencies: Record<string, string> }> {
   root = await realpath(root);
   const variants = target.variants && Object.keys(target.variants).length ? target.variants : { default: {} };
   const artifact: SkeletonArtifact = {
@@ -378,7 +383,6 @@ export async function compileTarget(root: string, target: SkeletonTarget, aliase
   let dependencies: Record<string, string> = {};
   const diagnostics = new Map<string, Diagnostic>();
   const evidence = new Map<string, Evidence>();
-  const files = new SourceFiles();
   for (const [name, hints] of Object.entries(variants)) {
     const compiler = new SourceCompiler(root, target, { ...target.hints, ...hints, bindings: { ...target.hints?.bindings, ...hints.bindings } }, aliases, options, files);
     const result = await compiler.compile();

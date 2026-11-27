@@ -4,7 +4,7 @@ import { parse as parseDOM } from '@vue/compiler-dom';
 import { parseSource } from './ast.js';
 import { digest } from './styles.js';
 
-/** Immutable source data shared by scans and variants within one compilation.
+/** Immutable source data shared by scans, targets and variants within one operation.
  * Evaluated module environments and generated styles remain compiler-local. */
 export class SourceFiles {
   private files = new Map<string, Promise<{ file: string; bytes: Buffer; hash: string }>>();

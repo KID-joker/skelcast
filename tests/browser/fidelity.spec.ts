@@ -68,6 +68,30 @@ test('React satisfies wrappers preserve native layout in generated skeletons', a
   });
 });
 
+test('dynamic Vue roots preserve inherited responsive geometry in light and shadow DOM', async ({ page }) => {
+  await fixture({
+    'View.vue': `<script setup>import Card from './Card.vue'</script><template><Card id="panel" class="outer" style="width:200px;height:80px"/></template><style>.outer{border:2px solid;box-sizing:border-box}@media(max-width:500px){.outer{max-width:140px}}</style>`,
+    'Card.vue': `<template><component :is="'section'" class="inner" style="height:40px">Content</component></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { id: 'fallthrough', source: 'View.vue' });
+    expect(artifact.diagnostics).toEqual([]);
+    const view = artifact.variants.default;
+    for (const shadow of [false, true]) for (const width of [390, 1200]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.setContent('<!doctype html><div id="mount"></div>');
+      await page.evaluate(({ view, shadow }) => {
+        const host = document.querySelector('#mount')!;
+        (shadow ? host.attachShadow({ mode: 'open' }) : host).innerHTML = `<style>${view.css}</style>${view.html}`;
+      }, { view, shadow });
+      const panel = page.locator('section.inner.outer');
+      await expect(panel).toHaveAttribute('data-sk-source-id', 'panel');
+      const box = (await panel.boundingBox())!;
+      expect(box.width).toBeCloseTo(width < 500 ? 140 : 200, 1);
+      expect(box.height).toBeCloseTo(80, 1);
+    }
+  });
+});
+
 test('entry SCSS and Tailwind utilities determine standalone geometry without the application stylesheet',async({page})=>{
   await fixture({
     'index.html':'<script type="module" src="/src/main.ts"></script>',
