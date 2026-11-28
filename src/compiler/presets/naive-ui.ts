@@ -5,9 +5,11 @@ import type { ComponentPreset, Presentation } from './types.js';
 
 /** Finite presentation primitives; never imports or invokes Naive UI. */
 function naivePresentation(name: string, props: Record<string, unknown>, children: string, text: string, mask = true): Presentation | undefined {
-  const size = typeof props.size === 'number' || typeof props.size === 'string' && /^\d+(?:px)?$/.test(props.size) ? `${parseFloat(String(props.size))}px` : '1em';
-  if (name==='nicon') return {tag:'span',style:`display:inline-block;width:${size};height:${size};flex-shrink:0;border:1px solid currentColor;border-radius:2px`,children:''};
-  if (name === 'nimage') return { tag: 'span', style: `display:inline-block;width:${name === 'nimage' ? '160px' : size};height:${name === 'nimage' ? '120px' : size};flex-shrink:0`, leaf: true, children: '' };
+  if (name === 'nicon') {
+    const size = typeof props.size === 'number' || typeof props.size === 'string' && /^\d+(?:px)?$/.test(props.size) ? `${parseFloat(String(props.size))}px` : '1em';
+    return {tag:'span',style:`display:inline-block;width:${size};height:${size};flex-shrink:0;border:1px solid currentColor;border-radius:2px`,children:''};
+  }
+  if (name === 'nimage') return { tag: 'span', style: 'display:inline-block;width:160px;height:120px;flex-shrink:0', leaf: true, children: '' };
   if (name === 'nconfigprovider') return { tag: 'div', style: 'display:contents', children };
   if (name === 'ncode') {
     if (!mask && typeof props.code === 'string') return {tag:'pre',style:'margin:0;font-size:14px;line-height:1.6;font-family:monospace;min-width:0',children:escape(props.code)};

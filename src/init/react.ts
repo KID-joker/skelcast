@@ -4,7 +4,12 @@ import { declarationBindings, endOf, nodeName, startOf, isRenderFunction, parseS
 import { type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
 
-export function reactComponents(ast: t.File): ComponentInfo[] {
+// Page discovery and codemods share immutable source syntax within an init run.
+const componentCache = new WeakMap<t.File, readonly ComponentInfo[]>();
+
+export function reactComponents(ast: t.File): readonly ComponentInfo[] {
+  const cached = componentCache.get(ast);
+  if (cached) return cached;
   const functions = new Map<string, ComponentInfo['node']>();
   const exports = new Map<string, string>();
   let anonymous: ComponentInfo['node'] | undefined;
@@ -27,11 +32,13 @@ export function reactComponents(ast: t.File): ComponentInfo[] {
   }
   const result = [...functions].filter(([name]) => /^[A-Z]/.test(name)).map(([name, node]) => ({ name, node, exported: exports.get(name) ?? name }));
   if (anonymous) result.push({ name: 'default', exported: 'default', node: anonymous });
-  return result.filter(({ node }) => {
+  const components = result.filter(({ node }) => {
     let jsx = false;
     walk(node.body, n => { if (n !== node.body && isRenderFunction(n)) return false; if (['JSXElement', 'JSXFragment'].includes(n.type)) jsx = true; });
     return jsx;
   });
+  componentCache.set(ast, components);
+  return components;
 }
 interface EarlyLoader { guard: t.IfStatement; returned: t.ReturnStatement }
 interface Region { node: Ast; pending: string; content: string; bindings: Record<string, boolean>; early?: EarlyLoader[] }

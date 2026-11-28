@@ -1,6 +1,20 @@
-import type {Node} from '@babel/types';
+import type {Identifier, Node} from '@babel/types';
 import {isRenderFunction,unwrapExpression,nodeName} from './ast.js';
 import {evaluate,UNKNOWN,type ExpressionContext} from './expression.js';
+
+/** Object.assign is transparent only when it adds an install callback alone. */
+export function installWrapperArgument(node: Node, env: ExpressionContext['env']): Identifier | undefined {
+  if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression'
+    || node.callee.object.type !== 'Identifier' || node.callee.object.name !== 'Object'
+    || Object.hasOwn(env, 'Object') || nodeName(node.callee.property) !== 'assign'
+    || node.arguments.length !== 2 || node.arguments[0]?.type !== 'Identifier'
+    || node.arguments[1]?.type !== 'ObjectExpression' || node.arguments[1].properties.length !== 1) return;
+  const property = node.arguments[1].properties[0];
+  if ((property.type === 'ObjectMethod' || property.type === 'ObjectProperty')
+    && !property.computed && nodeName(property.key) === 'install'
+    && (property.type === 'ObjectMethod' && property.kind === 'method'
+      || property.type === 'ObjectProperty' && isRenderFunction(property.value))) return node.arguments[0];
+}
 
 /** Prove an identity relationship from a tiny, pure source body. Names such as
  * withInstall/memo are not evidence; mutations, calls and branches are rejected. */

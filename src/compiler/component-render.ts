@@ -1,25 +1,19 @@
 import path from 'node:path';
 import { componentName } from './components.js';
-import type { RenderContext, SourceNode, SourceSlot } from './context.js';
+import type { SourceNode, SourceSlot } from './context.js';
 import type { Value } from './expression.js';
 import type { ComponentReference } from './presets/types.js';
 import type { RenderHost } from './render-host.js';
-
-async function renderAdapter(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string | undefined> {
-  const adapter = host.target.adapters?.[tag];
-  if (!adapter) return;
-  const file = path.resolve(host.root, adapter);
-  await host.scan(file);
-  return host.component(file, 'default', props, ctx, node);
-}
 
 /** Keep frontend policies together: JSX/templates accept explicit adapters;
  * h() retains its source/preset path. Vue callers resolve references for slots. */
 export async function renderComponent(host: RenderHost, tag: string, props: Record<string, Value>, slot: SourceSlot, node: SourceNode, reference?: ComponentReference): Promise<string | undefined> {
   const ctx = slot.context;
-  if (slot.framework !== 'render') {
-    const adapter = await renderAdapter(host, tag, props, ctx, node);
-    if (adapter !== undefined) return adapter;
+  const adapter = slot.framework !== 'render' ? host.target.adapters?.[tag] : undefined;
+  if (adapter) {
+    const file = path.resolve(host.root, adapter);
+    await host.scan(file);
+    return host.component(file, 'default', props, ctx, node);
   }
   if (slot.framework === 'jsx') reference = await host.componentReference(tag, ctx);
   if (reference?.file && (slot.framework === 'render' || /\.(vue|tsx|jsx|ts|js)$/.test(reference.file))) {

@@ -11,7 +11,8 @@ import { parseExpression } from '@babel/parser';
 import { renderJSX } from '../src/compiler/react.js';
 import type { ModuleInfo, RenderContext } from '../src/compiler/context.js';
 import type { RenderHost } from '../src/compiler/render-host.js';
-import { analyzeReact } from '../src/init/react.js';
+import { analyzeReact, reactComponents } from '../src/init/react.js';
+import { isPageFile } from '../src/init/scan.js';
 import { inheritRootScopes, RootMarkup } from '../src/compiler/attributes.js';
 import { renderAttributes, renderElement } from '../src/compiler/output.js';
 import { UNKNOWN } from '../src/compiler/expression.js';
@@ -31,6 +32,72 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('React page discovery reuses component facts without retaining later source versions', () => {
+  for (const source of ['export default () => <main>Ready</main>;', 'export const value = 1;']) {
+    const ast = parseSource(source, 'src/pages/View.tsx');
+    const components = reactComponents(ast);
+    const file = { file: 'src/pages/View.tsx', code: source, ast, vue: false, imports: new Map<string, string>() };
+    assert.equal(isPageFile(file, false), components.length > 0);
+    assert.equal(reactComponents(ast), components, 'both populated and empty analyses are reused');
+    const context = { file: file.file, source, page: true, routes: ['/view'], existing: { targets: [] }, usedIds: new Set<string>() };
+    assert.deepEqual(analyzeReact({ ...context, ast }), analyzeReact({ ...context, usedIds: new Set() }));
+    assert.equal(reactComponents(ast), components);
+  }
+  const before = reactComponents(parseSource('export default () => <main/>;', 'View.tsx'));
+  const after = reactComponents(parseSource('export default () => <aside/>;', 'View.tsx'));
+  assert.notEqual(before, after, 'a fresh AST for the same filename is analyzed independently');
+});
+
+test('component dispatch preserves adapter precedence and h source/fallback behavior', async () => {
+  await fixture({
+    'Adapter.vue': '<template><section data-origin="adapter"/></template>',
+    'Widget.vue': '<template><article data-origin="source"/></template>',
+  }, async root => {
+    for (const request of ['./Widget.vue', 'vendor-widget']) {
+      await writeFile(path.join(root, 'View.tsx'), `import Widget from '${request}';export default () => <Widget/>;`);
+      await writeFile(path.join(root, 'View.vue'), `<script setup>import Widget from '${request}';</script><template><Widget/></template>`);
+      await writeFile(path.join(root, 'View.ts'), `import {h} from 'vue';import Widget from '${request}';export default () => h(Widget);`);
+      for (const source of ['View.tsx', 'View.vue', 'View.ts']) {
+        const { artifact, dependencies } = await compileTarget(root, { id: 'dispatch', source, adapters: { Widget: 'Adapter.vue' } });
+        const rendered = source === 'View.ts';
+        assert.equal(Object.hasOwn(dependencies, 'Adapter.vue'), !rendered);
+        if (!rendered) {
+          assert.match(artifact.variants.default.html, /data-origin="adapter"/);
+          assert.deepEqual(artifact.diagnostics, []);
+        } else if (request.startsWith('.')) {
+          assert.match(artifact.variants.default.html, /data-origin="source"/);
+          assert.deepEqual(artifact.diagnostics, []);
+        } else {
+          assert.ok(artifact.diagnostics.some(d => d.message === 'No source adapter for Widget'));
+        }
+      }
+    }
+  });
+});
+
+test('install wrapper extraction preserves transparent callbacks and rejects changed component shapes', async () => {
+  await fixture({ 'Base.vue': '<template><section style="height:88px"/></template>' }, async root => {
+    for (const [expression, transparent] of [
+      ['Object.assign(Base,{install(app){throw Error("never run")}})', true],
+      ['Object.assign(Base,{install:app=>{throw Error("never run")}})', true],
+      ['Object.assign(Base,{get install(){throw Error("never run")}})', false],
+      ['Object.assign(Base,{["install"]:()=>{}})', false],
+      ['Object.assign(Base,{install(){},render:businessRender})', false],
+      ['Object.assign(Base,{install(){}},{render:businessRender})', false],
+      ['Object.assign(Missing,{install(){}})', false],
+    ] as const) {
+      await writeFile(path.join(root, 'View.ts'), `import Base from './Base.vue';export default ${expression};`);
+      const { artifact } = await compileTarget(root, { id: 'install-wrapper', source: 'View.ts' });
+      assert.equal(artifact.variants.default.html.includes('height:88px'), transparent, expression);
+      assert.equal(artifact.diagnostics.some(d => d.code === 'FALLBACK'), !transparent, expression);
+    }
+    await writeFile(path.join(root, 'View.ts'), `import Base from './Base.vue';const Object={assign:businessAssign};export default Object.assign(Base,{install(){}});`);
+    const { artifact } = await compileTarget(root, { id: 'shadowed-wrapper', source: 'View.ts' });
+    assert.doesNotMatch(artifact.variants.default.html, /height:88px/);
+    assert.ok(artifact.diagnostics.some(d => d.code === 'FALLBACK'));
+  });
+});
 
 test('collection planning skips ineligible root reads and preserves explicit, source and loading views', () => {
   for (const scenario of ['source', 'control', 'bound', 'untracked', 'projected'] as const) {

@@ -37,6 +37,8 @@ export function createRepairGuideBuilder(artifact: SkeletonArtifact, target?: Sk
   return (node: string, variant: string): RepairGuide => {
     const diagnostics = (diagnosticsByNode.get(node) ?? []).filter(item => inVariant(item, variant));
     const source = artifact.sources[node] ?? diagnostics[0];
+    // Empty node keys also enter the location index. Deduplicate index overlap,
+    // while retaining separate occurrences of the same original evidence object.
     const candidates = [...new Set([...(evidenceByNode.get(node) ?? []), ...(source ? evidenceByLocation.get(locationKey(source)) ?? [] : [])])];
     const selected = candidates.sort((a, b) => a.order - b.order)
       .filter(entry => inVariant(entry.item, variant))

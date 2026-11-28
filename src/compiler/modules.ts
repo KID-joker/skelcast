@@ -10,7 +10,7 @@ import { ambiguousExport, type ModuleInfo, type ResolvedComponent } from './cont
 import { resolveStylesheet, stylesheetImports, type StyleSource } from './stylesheet-source.js';
 import { parse as parseDOM } from '@vue/compiler-dom';
 import { StaticValues } from './static-values.js';
-import { identityArgument } from './identity-wrapper.js';
+import { identityArgument, installWrapperArgument } from './identity-wrapper.js';
 import { vueOptions } from './vue-render.js';
 import { resolutionCandidates } from './resolution.js';
 import { SourceFiles } from './source-files.js';
@@ -328,6 +328,22 @@ export class SourceModules {
     mod.setupDeclarations = mod.setupDeclarations.filter(declaration => declaration.id.type !== 'Identifier' || !mod.propBindings.includes(declaration.id.name));
     return mod;
   }
+  /** Recognize wrapper syntax separately from following its component binding. */
+  private async wrapperArgument(mod: ModuleInfo, node: Ast, seen: Set<string>, budget: { remaining: number }): Promise<Ast | undefined> {
+    const installed = installWrapperArgument(node, mod.env);
+    if (installed) return installed;
+    if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') return;
+    const imported = mod.imports.get(node.callee.name);
+    const dependency = imported && !imported.file ? await this.helperModule(imported.request) : undefined;
+    const helper = dependency && imported
+      ? await this.resolveExport(dependency.file, imported.exported, false, seen, budget)
+      : await this.resolveExport(mod.file, node.callee.name, true, seen, budget);
+    if (!helper || helper === ambiguousExport || !helper.fn) return;
+    const index = identityArgument(helper.fn, node.arguments, { code: mod.code, env: mod.env, bindings: {} });
+    const argument = index === undefined ? undefined : unwrapExpression(node.arguments[index]);
+    if (argument?.type === 'Identifier' || argument?.type === 'ObjectExpression'
+      || argument?.type === 'CallExpression' || isRenderFunction(argument)) return argument;
+  }
   protected async resolveExport(file: string, exported: string, allowLocal = false, seen = new Set<string>(), budget = { remaining: 1000 }): Promise<ResolvedComponent | typeof ambiguousExport | undefined> {
     const key = JSON.stringify([file, exported]);
     if (seen.has(key) || seen.size >= 64 || --budget.remaining < 0) return;
@@ -345,20 +361,9 @@ export class SourceModules {
         const fn = mod.functions.get(local);
         if (fn?.type === 'Identifier') { local = fn.name; continue; }
         if (fn) {
-          if(fn.type==='CallExpression'&&fn.callee.type==='MemberExpression'&&fn.callee.object.type==='Identifier'&&fn.callee.object.name==='Object'&&!Object.hasOwn(mod.env,'Object')&&nodeName(fn.callee.property)==='assign'&&fn.arguments.length===2&&fn.arguments[0]?.type==='Identifier'&&fn.arguments[1]?.type==='ObjectExpression'&&fn.arguments[1].properties.length===1){
-            const property=fn.arguments[1].properties[0];
-            if((property.type==='ObjectMethod'||property.type==='ObjectProperty')&&!property.computed&&nodeName(property.key)==='install'&&(property.type==='ObjectMethod'&&property.kind==='method'||property.type==='ObjectProperty'&&isRenderFunction(property.value)))return this.resolveExport(mod.file,fn.arguments[0].name,true,next,budget);
-          }
-          if(fn.type==='CallExpression'&&fn.callee.type==='Identifier'){
-            const imported=mod.imports.get(fn.callee.name);
-            const dependency=imported&&!imported.file?await this.helperModule(imported.request):undefined;
-            const helper=dependency&&imported?await this.resolveExport(dependency.file,imported.exported,false,next,budget):await this.resolveExport(mod.file,fn.callee.name,true,next,budget);
-            const argument=helper&&helper!==ambiguousExport&&helper.fn?identityArgument(helper.fn,fn.arguments,{code:mod.code,env:mod.env,bindings:{}}):undefined;
-            const actual=argument===undefined?undefined:unwrapExpression(fn.arguments[argument]);
-            if(actual?.type==='Identifier')return this.resolveExport(mod.file,actual.name,true,next,budget);
-            if(actual?.type==='ObjectExpression'||actual?.type==='CallExpression'||isRenderFunction(actual))return{module:mod,fn:actual};
-          }
-          return { module: mod, fn };
+          const argument = await this.wrapperArgument(mod, fn, next, budget);
+          if (argument?.type === 'Identifier') return this.resolveExport(mod.file, argument.name, true, next, budget);
+          return { module: mod, fn: argument ?? fn };
         }
         const imported = mod.imports.get(local);
         return imported ? follow(imported) : undefined;
