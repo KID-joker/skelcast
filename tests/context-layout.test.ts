@@ -10,14 +10,14 @@ test('request regions retain lexical scoped arguments through JSX wrappers witho
  await fixture({
   'Frame.tsx':`import{defineComponent}from'vue';export default defineComponent({props:['height','columns'],setup(props,{slots}){return()=> <div style={{width:readBusinessWidth()}} onClick={()=>slots.default({height:999,columns:[]})}>{slots.default({height:props.height,columns:props.columns})}</div>}});`,
   'View.vue':`<script setup>import Frame from'./Frame';import{ElTable}from'element-plus';import{LoadingBoundary}from'skelcast/vue';const columns=[{label:'Title',prop:'title'},{label:'Size',prop:'size'}],rows=[{title:'A',size:2}]</script><template><header>Outside</header><div :class="unknownClass"><Frame :height="72" :columns="columns"><template #default="{height: blockHeight,columns:fields}"><LoadingBoundary :artifact="artifact" :pending="pending"><article :style="{height:blockHeight+'px'}">Inside</article><ElTable :columns="fields" :data="rows"/><p v-if="false">Forbidden</p></LoadingBoundary></template></Frame></div></template>`,
- },async root=>{const{artifact}=await compileTarget(root,{id:'scope',kind:'request',source:'View.vue',region:'artifact'},{},{componentPresets:['element-plus']});const html=artifact.variants.default.html;assert.match(html,/height:72px/);assert.match(html,/>Title<\/div><\/th>/);assert.match(html,/>Size<\/div><\/th>/);assert.doesNotMatch(html,/Outside|Forbidden|999|readBusinessWidth/);assert.deepEqual(artifact.diagnostics,[]);});
+ },async root=>{const{artifact}=await compileTarget(root,{id:'scope',kind:'request',source:'View.vue',region:'artifact'},{},{componentPresets:['element-plus']});const html=artifact.variants.default.html;assert.match(html,/height:72px/);assert.match(html,/>Title<\/th>/);assert.match(html,/>Size<\/th>/);assert.doesNotMatch(html,/Outside|Forbidden|999|readBusinessWidth/);assert.deepEqual(artifact.diagnostics,[]);});
 });
 
 test('template and h scoped slots forward renamed fields and defaults across nested components',async()=>{
  await fixture({
   'Inner.ts':`import{defineComponent,h}from'vue';export default defineComponent({setup(props,{slots}){return()=>h('div',null,slots.default({height:56}))}});`,
   'Outer.vue':`<script setup>import Inner from'./Inner'</script><template><Inner v-slot="{height: value}"><slot :height="value"/></Inner></template>`,
-  'View.vue':`<script setup>import Outer from'./Outer';import{LoadingBoundary}from'skelcast/vue'</script><template><Outer v-slot="{height: size,missing='Default'}"><LoadingBoundary :artifact="artifact" :pending="pending"><p :style="{height:size+'px'}">{{missing}}</p></LoadingBoundary></Outer></template>`,
+  'View.vue':`<script setup>import Outer from'./Outer';import{LoadingBoundary}from'skelcast/vue'</script><template><Outer v-slot="{height: size,missing='Default'}"><LoadingBoundary :artifact="artifact" :pending="pending"><p data-sk-preserve :style="{height:size+'px'}">{{missing}}</p></LoadingBoundary></Outer></template>`,
  },async root=>{const{artifact}=await compileTarget(root,{id:'nested',kind:'request',source:'View.vue',region:'artifact'});assert.match(artifact.variants.default.html,/height:56px/);assert.match(artifact.variants.default.html,/Default/);assert.deepEqual(artifact.diagnostics,[]);});
 });
 
@@ -44,10 +44,10 @@ test('source-proven copying and initial Vue state preserve loading column config
   'View.vue':`<script setup>import Frame from'./Frame';import{ElTable}from'element-plus';import{LoadingBoundary}from'skelcast/vue';const columns=[{label:'Title',prop:'title',cellRenderer:()=>readBusiness()},{label:'Size',prop:'size'}]</script><template><Frame :columns="columns" v-slot="{columns:fields,height,allowed}"><LoadingBoundary :artifact="artifact" :pending="pending"><ElTable :columns="fields"/><aside :style="{height:height+'px'}"/><b v-if="allowed">Forbidden</b></LoadingBoundary></Frame></template>`,
  },async root=>{
   const compile=()=>compileTarget(root,{id:'initial',kind:'request',source:'View.vue',region:'artifact'},{},{componentPresets:['element-plus']});
-  const result=await compile(),html=result.artifact.variants.default.html;assert.match(html,/>Title<\/div><\/th>/);assert.match(html,/>Size<\/div><\/th>/);assert.equal((html.match(/<th /g)||[]).length,2);assert.doesNotMatch(html,/height:72px|height:300px|Forbidden|never import/);assert.ok(result.artifact.diagnostics.some(d=>/initial columns/.test(d.message)));assert.ok(result.artifact.diagnostics.some(d=>d.code==='FALLBACK'));
+  const result=await compile(),html=result.artifact.variants.default.html;assert.match(html,/>Title<\/th>/);assert.match(html,/>Size<\/th>/);assert.equal((html.match(/<th /g)||[]).length,2);assert.doesNotMatch(html,/height:72px|height:300px|Forbidden|never import/);assert.ok(result.artifact.evidence.some(e=>/table outline/.test(e.decision)));assert.ok(result.artifact.diagnostics.some(d=>d.code==='FALLBACK'));
   await writeFile(path.join(root,'copy.ts'),copy.replace('target[key] = copyChild','input[key] = copyChild'));
-  const unsafe=await compile();assert.doesNotMatch(unsafe.artifact.variants.default.html,/>Title<\/div><\/th>/);assert.ok(unsafe.artifact.diagnostics.some(d=>/columns are unknown/.test(d.message)));
-  await writeFile(path.join(root,'copy.ts'),`Object.hasOwn=()=>false;${copy}`);const replaced=await compile();assert.doesNotMatch(replaced.artifact.variants.default.html,/>Title<\/div><\/th>/);assert.equal(Object.hasOwn({value:1},'value'),true);
+  const unsafe=await compile();assert.doesNotMatch(unsafe.artifact.variants.default.html,/>Title<\/th>/);assert.equal((unsafe.artifact.variants.default.html.match(/<th /g)||[]).length,3);
+  await writeFile(path.join(root,'copy.ts'),`Object.hasOwn=()=>false;${copy}`);const replaced=await compile();assert.doesNotMatch(replaced.artifact.variants.default.html,/>Title<\/th>/);assert.equal(Object.hasOwn({value:1},'value'),true);
  });
 });
 

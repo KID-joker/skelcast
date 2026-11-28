@@ -399,7 +399,7 @@ test('source discovery parses plain TypeScript assertions separately from TSX an
     assert.equal(report.scanned, 3);
     assert.deepEqual(report.diagnostics.filter(d => d.code === 'SOURCE_PARSE'), []);
     const project = await loadProject(root);
-    assert.ok((await readArtifact(project, report.targets.find(t => t.source === 'src/App.vue')!.id)).variants.default.html.includes('Data'));
+    assert.ok((await readArtifact(project, report.targets.find(t => t.source === 'src/App.vue')!.id)).variants.default.html.includes('data-sk-text data-sk-leaf'));
   });
 });
 

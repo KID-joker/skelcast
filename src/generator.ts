@@ -9,7 +9,7 @@ import { presetNames } from './compiler/presets/index.js';
 import { atomicWrite, commitOutputs, withProjectLock } from './storage.js';
 
 declare const __SKELETON_COMPILER_HASH__: string;
-export const GENERATOR_VERSION = `0.1.0-${typeof __SKELETON_COMPILER_HASH__ === 'string' ? __SKELETON_COMPILER_HASH__ : 'source'}`;
+export const GENERATOR_VERSION = `0.1.0-${typeof __SKELETON_COMPILER_HASH__ === 'string' ? __SKELETON_COMPILER_HASH__ : 'source-outline-v1'}`;
 export interface Project { root: string; config: SkeletonConfig; configFile: string; hintsFile: string; outDir: string }
 export interface TargetStatus { id: string; state: 'ready' | 'stale' | 'missing' | 'corrupt'; reason?: string }
 export function validateHints(hints: SkeletonHints): void {
@@ -40,6 +40,7 @@ export async function projectFromConfig(root: string, input: SkeletonConfig): Pr
   if (config.components && (Array.isArray(config.components) || typeof config.components !== 'object' || Object.values(config.components).some(v => typeof v !== 'string'))) throw new Error('components must map names to source files');
   if (config.componentBindings && (typeof config.componentBindings !== 'object' || Array.isArray(config.componentBindings) || Object.values(config.componentBindings).some(value => !value || typeof value !== 'object' || Array.isArray(value)))) throw new Error('componentBindings must map component source files to expression values');
   if (config.componentDeclarations && (!Array.isArray(config.componentDeclarations) || config.componentDeclarations.some(v => typeof v !== 'string'))) throw new Error('componentDeclarations must be a list of declaration files');
+  if (config.componentPolicies && (typeof config.componentPolicies !== 'object' || Array.isArray(config.componentPolicies) || Object.values(config.componentPolicies).some(v=>!['live','graphic'].includes(v)))) throw new Error('componentPolicies must map source binding names to live or graphic');
   if (config.componentPresets && (!Array.isArray(config.componentPresets) || config.componentPresets.some(v => !presetNames.includes(v)))) throw new Error(`Supported component presets: ${presetNames.join(', ')}`);
   if (config.styles) {
     if (typeof config.styles !== 'object' || Array.isArray(config.styles)) throw new Error('styles must be an object');
@@ -84,7 +85,7 @@ async function readManifest(project: Project): Promise<Manifest | undefined> {
   } catch { /* absent or invalid manifests are regenerated */ }
 }
 export const artifactFilename = (id: string) => `${id}.mjs`;
-const targetHash = (target: SkeletonTarget, config: SkeletonConfig) => digest(JSON.stringify({ target, aliases: config.aliases, components: config.components, componentBindings: config.componentBindings, componentDeclarations: config.componentDeclarations, componentPresets: config.componentPresets, styles: config.styles }));
+const targetHash = (target: SkeletonTarget, config: SkeletonConfig) => digest(JSON.stringify({ target, aliases: config.aliases, components: config.components, componentBindings: config.componentBindings, componentDeclarations: config.componentDeclarations, componentPresets: config.componentPresets, componentPolicies:config.componentPolicies, styles: config.styles }));
 async function entryStatus(project: Project, target: SkeletonTarget, files: SourceFiles, entry?: ManifestEntry, version?: string): Promise<TargetStatus> {
   if (!entry) return { id: target.id, state: 'missing', reason: 'No generated artifact' };
   if (version !== GENERATOR_VERSION || entry.hash !== targetHash(target, project.config)) return { id: target.id, state: 'stale', reason: 'Config, hints or generator changed' };

@@ -39,6 +39,8 @@ import { viewportStyle, providedValues, providedFrames } from './viewport-style.
 import { initialString } from './initial-state.js';
 import { supportedBody } from './vue-syntax.js';
 import { initializeLayout } from './layout-effects.js';
+import { outlineColumns, tableNames } from './outline.js';
+import { tableOutline } from './presets/table.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -315,11 +317,8 @@ export class SourceCompiler extends SourceModules {
   masked(ctx: RenderContext) { return ctx.mode === 'mask' || ctx.mode !== 'preserve' && !ctx.control; }
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string {
     if (!this.masked(ctx) && (typeof value === 'string' || typeof value === 'number')) return escapeHTML(value);
-    if (this.masked(ctx) && !ctx.textWidth && (typeof value === 'string' || typeof value === 'number' && Number.isFinite(value))) {
-      // Transparent source-visible text keeps the actual font advances, line
-      // breaks and intrinsic size. The browser lays it out without measuring DOM.
-      return value === '' ? '' : `<span data-sk-node="${this.nodeId(ctx, node)}" data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escapeHTML(value)}"></span>`;
-    }
+    const type = (node as {type?:string|number}|undefined)?.type;
+    if (ctx.mode !== 'mask' && !ctx.dataSlot && ['JSXText','StringLiteral',2].includes(type! as string|number) && typeof value === 'string') return escapeHTML(value);
     return this.text(ctx, node);
   }
   contentContext(ctx: RenderContext, props: Record<string, Value>, tag = ''): RenderContext {
@@ -376,9 +375,16 @@ export class SourceCompiler extends SourceModules {
     if (!resolved) return;
     const { preset, name } = resolved;
     props = presetProps(props);
+    if (tableNames.has(name) && this.masked(ctx)) {
+      const columns = await outlineColumns(this, slot);
+      const view = tableOutline(props, columns, {...this.hints,state:this.hints.state??(ctx.loading?'loading':'source')});
+      this.record('component',tag,'Generate representative table outline; skip data rows, cell slots and callbacks',ctx,node);
+      return this.element(view.tag,{...props,class:[props.class??props.className,view.className],className:undefined,style:`${view.style};${styleString(props.style)}`},view.children,ctx,node,{layout:true,outline:true});
+    }
     const role = preset.role(name, props);
     const local = { ...ctx, control: role === 'control' ? true : role === 'data' ? false : ctx.control };
-    const slots = preset.skipSlots?.(name, props) ? [] : preset.slots(name);
+    const simpleControl = ['elinput','elinputnumber','elselect','eltreeselect','elselectv2','elcascader','eldatepicker','eltimepicker','input','input.textarea','inputnumber','select','datepicker','timepicker','ninput','ninputnumber','nselect','ndatepicker','ncolorpicker'].includes(name);
+    const slots = simpleControl || preset.skipSlots?.(name, props) ? [] : preset.slots(name);
     const slotContext = preset.maskSlots?.(name) && local.mode !== 'preserve' ? { ...local, mode: 'mask' as const, dataSlot: true } : local;
     const renderedSlots:Record<string,string>={};
     for(const key of slots){const header=name==='eltablecolumn'&&key==='header';Object.assign(renderedSlots,await renderPresetSlots(this,slot,[key],header?{...local,mode:ctx.mode==='preserve'?'preserve':'auto',control:true,dataSlot:false}:slotContext,header?sourceObject({column:sourceObject({label:props.label,property:props.prop}),$index:UNKNOWN}):{}));}
@@ -392,11 +398,11 @@ export class SourceCompiler extends SourceModules {
       if (capacity !== undefined) { hints.repeat = capacity; this.diagnose('LOADING_PROJECTION', 'Use the adjacent source-declared pagination size as loading capacity; response row count remains unknown', ctx, node); }
     }
     const frames = [];
-    for(const frame of preset.frames?.(name,props,hints)??[]) {const slots=await renderPresetSlots(this,slot,[frame.slot],frame.mask?{...slotContext,mode:'mask'}:slotContext,frame.argument);frames.push({key:frame.key,html:slots[frame.slot]??''});}
+    for(const frame of preset.frames?.(name,props,hints)??[]) {const slots=await renderPresetSlots(this,slot,[frame.slot],frame.mask&&local.mode!=='preserve'?{...slotContext,mode:'mask'}:slotContext,frame.argument);frames.push({key:frame.key,html:slots[frame.slot]??''});}
     // Keep slot traversal (diagnostics, dependencies and expansion costs) in its
     // existing order, but join markup only when the presentation consumes it.
     const presentation = preset.present(name, props, text, hints, {
-      mask, slots: renderedSlots, columns: this.tableColumns, frames,
+      mask, preserve:ctx.mode==='preserve', slots: renderedSlots, columns: this.tableColumns, frames,
       get children() { return children ??= slots.map(key => renderedSlots[key]).join(''); },
     });
     if (!presentation) return;

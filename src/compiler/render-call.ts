@@ -9,7 +9,9 @@ import { renderComponent } from './component-render.js';
 import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
 import { vueHelper, supportedBody } from './vue-syntax.js';
 import { renderBudget } from './render-budget.js';
-import { renderGraphic } from './output.js';
+import { renderAtomic } from './output.js';
+import { nativeTableOutline, shallowPresentation } from './outline.js';
+import { liveElement } from '../policy.js';
 
 async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
   const fn = localRenderFunction(value);
@@ -51,9 +53,14 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
   const value = propsNode && propsNode !== childNode && propsNode.type !== 'NullLiteral' ? evaluate(propsNode, ctx) : {};
   if (!value || value === UNKNOWN || typeof value !== 'object' || Array.isArray(value)) return this.fallback(ctx, node, 'Unresolved h() props need a finite binding');
   const props: Record<string, unknown> = { ...value };
+  if(liveElement(props)){
+    this.diagnose('LIVE_CONTENT_IN_BOUNDARY','Keep this live region outside LoadingBoundary so its real content remains visible',ctx,node);
+    return '';
+  }
   if (propsNode?.type === 'ObjectExpression') for (const prop of propsNode.properties) if (prop.type === 'SpreadElement' && evaluate(prop.argument, ctx) === UNKNOWN) this.diagnose('SPREAD_UNKNOWN', 'Unresolved h() spread props may affect layout', ctx, prop);
   const local = this.contentContext(ctx, props, native ? tag : '');
-  if ((unknownGeometry(props.style) || ['class', 'style', 'width', 'height'].some(key => props[key] === UNKNOWN))&&!Object.values(ctx.slots??{}).some(slot=>this.hasSelectedSlot(slot))) return this.fallback(local, node, 'Unresolved h() layout props', props);
+  const ref=!native?await this.componentReference(tag,ctx):undefined;
+  if ((unknownGeometry(props.style) || ['class', 'style', 'width', 'height'].some(key => props[key] === UNKNOWN))&&!shallowPresentation(this,tag,ref)&&!Object.values(ctx.slots??{}).some(slot=>this.hasSelectedSlot(slot))) return this.fallback(local, node, 'Unresolved h() layout props', props);
   const slots: Record<string, SourceSlot> = {};
   const forward=(value:unknown)=>{
     if(!value||value===UNKNOWN||typeof value!=='object'||Array.isArray(value))return false;
@@ -81,7 +88,6 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
   } else if (childNode && !forward(evaluate(childNode,ctx))) slots.default = { framework: 'render', nodes: [childNode], context: local };
   const children = async () => slots.default ? this.renderSlot(slots.default, local) : '';
   if (!native) {
-    const ref = await this.componentReference(tag, ctx);
     if (vueHelper(ctx.module, tagNode!, 'Fragment')) return children();
     props.__skSlots = slots;
     const presentation = await renderComponent(this, tag, props, { framework: 'render', nodes: [], slots, context: local }, node, ref);
@@ -90,7 +96,11 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
   }
   if (nonVisual.has(tag)&&tag!=='iframe') return '';
   if (tag === 'img') return this.image(props, local, node);
-  const graphic = renderGraphic(this, tag, props, local, node);
+  if(tag==='table'){
+    const outline=await nativeTableOutline(this,props,{framework:'render',nodes:childNode?[childNode]:[],context:local},node);
+    if(outline!==undefined)return outline;
+  }
+  const graphic = renderAtomic(this, tag, props, local, node);
   if (graphic !== undefined) return graphic;
   if (Object.hasOwn(props, 'innerHTML')) return typeof props.innerHTML === 'string' ? this.element(tag, props, this.staticHTML(props.innerHTML, local, node), local, node) : this.fallback(local, node, 'Unknown h() innerHTML needs a finite binding');
   const content = Object.hasOwn(props, 'textContent') ? this.contentText(props.textContent, local, node) : await children();

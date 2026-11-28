@@ -100,7 +100,7 @@ test('local constants cross aliases, default/named/namespace and diamond reexpor
   const html=artifact.variants.default.html;
   assert.match(html,/height:72px/);assert.equal((html.match(/<b /g)||[]).length,2);
   assert.match(html,/width:40px/);assert.match(html,/width:30px/);
-  assert.match(html,/>Name<\/div><\/th>/);assert.match(html,/>Count<\/div><\/th>/);
+  assert.match(html,/>Name<\/th>/);assert.match(html,/>Count<\/th>/);
   assert.ok(dependencies['data.ts']);
  });
 });

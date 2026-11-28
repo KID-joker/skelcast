@@ -38,3 +38,20 @@ test('matching outer geometry cannot hide missing native table columns or header
  assert.ok(compareLayouts(real,{...content,tables:[]}).needsReview);
  assert.equal(compareLayouts(real,{...content,tables:[{columns:11,headerRows:1}]}).needsReview,false);
 });
+
+test('outline audits skip intentional internals while keeping outer and repeated external anchors checked',()=>{
+ const box={x:0,y:0,width:100,height:40};
+ const real:LayoutSnapshot={...content,tables:[{columns:10,headerRows:3}],anchors:{'anchor:table':[box],'anchor:item':[box,{...box,y:160}]},regions:[{kind:'table',key:'anchor:table',outline:false,anchors:[{key:'anchor:item',index:0}]}]};
+ const generated:LayoutSnapshot={...content,tables:[{columns:3,headerRows:1,outline:true}],anchors:{'anchor:table':[box],'anchor:item':[{...box,y:160}]},regions:[{kind:'table',key:'anchor:table',outline:true,anchors:[]}]};
+ assert.equal(compareLayouts(real,generated).needsReview,false);
+ const displaced=structuredClone(generated);displaced.anchors!['anchor:item'][0].y=190;
+ assert.deepEqual(compareLayouts(real,displaced).issues.map(issue=>issue.code),['ANCHOR_MISMATCH']);
+ const missing=structuredClone(generated);delete missing.anchors!['anchor:table'];
+ assert.ok(compareLayouts(real,missing).issues.some(issue=>issue.code==='ANCHOR_MISSING'));
+ const unmatched={...generated,regions:[]};
+ assert.ok(compareLayouts(real,unmatched).issues.some(issue=>issue.code==='ANCHOR_MISSING'));
+ const nested={...real,tables:[{columns:10,headerRows:3},{columns:2,headerRows:1,parent:0}]};
+ assert.equal(compareLayouts(nested,generated).needsReview,false);
+ const ordinary={...generated,tables:[{columns:10,headerRows:3}]};
+ assert.ok(compareLayouts(nested,ordinary).issues.some(issue=>issue.code==='TABLE_STRUCTURE_MISMATCH'));
+});

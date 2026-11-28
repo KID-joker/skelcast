@@ -3,6 +3,7 @@ import { applyEdits, boundaryImports, createConditionAnalyzer, importOffset, isL
 import { declarationBindings, endOf, nodeName, startOf, isRenderFunction, parseSource, unwrapExpression, walk, type Ast } from '../compiler/ast.js';
 import { type AnalysisContext, type ComponentInfo, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
+import { policyBindings, containsLiveJSX, liveJSX, fixedShellJSX } from './policy.js';
 
 // Page discovery and codemods share immutable source syntax within an init run.
 const componentCache = new WeakMap<t.File, readonly ComponentInfo[]>();
@@ -47,6 +48,7 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
   const result: FileAnalysis = { edits: [], targets: [], diagnostics: [] };
   const code = ctx.source, ast = ctx.ast ?? parseSource(code, ctx.file);
   const components = reactComponents(ast);
+  const policies = policyBindings(ast,ctx.existing.componentPolicies);
   const boundaryNames = boundaryImports(ast, 'react');
   const boundary = [...boundaryNames][0] ?? uniqueName(code, '__SkelCastBoundary');
   const isBoundary = (node: Ast): node is t.JSXElement => node.type === 'JSXElement' && boundaryNames.has(nodeName(node.openingElement.name) ?? '');
@@ -126,9 +128,31 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
         }
       }
     });
+    const narrowed: Region[] = [];
+    const narrow = (region: Region) => {
+      if(!containsLiveJSX(region.node,policies)){narrowed.push(region);return;}
+      if(region.early?.length){result.diagnostics.push({code:'LIVE_CONTENT_IN_BOUNDARY',file:ctx.file,line:region.node.loc?.start.line??1,message:'Early loading return contains live content; move the loading guard to its data region to keep the widget mounted'});return;}
+      const partition = (node:Ast):boolean => {
+        if(liveJSX(node,policies))return true;
+        if(!containsLiveJSX(node,policies)){
+          if(node.type==='JSXText'||node.type==='JSXExpressionContainer'&&node.expression.type==='JSXEmptyExpression'||fixedShellJSX(node))return true;
+          if(node.type!=='JSXElement'&&node.type!=='JSXExpressionContainer')return false;
+          narrowed.push({...region,node,content:slice(code,node)});return true;
+        }
+        if(node.type==='JSXFragment')return node.children.every(partition);
+        if(node.type!=='JSXElement'||!/^(?:main|section|article|div|form)$/.test(nodeName(node.openingElement.name)??''))return false;
+        const loading=node.openingElement.attributes.find(a=>a.type==='JSXAttribute'&&nodeName(a.name)==='loading');
+        if(loading)result.edits.push({start:startOf(loading),end:endOf(loading),text:''});
+        return node.children.every(partition);
+      };
+      const start=narrowed.length,editStart=result.edits.length;
+      if(!partition(region.node)){narrowed.length=start;result.edits.length=editStart;result.diagnostics.push({code:'LIVE_CONTENT_IN_BOUNDARY',file:ctx.file,line:region.node.loc?.start.line??1,message:'Live content shares a conditional or component layout with loading data; narrow this boundary in source'});}
+    };
+    for(const region of regions)narrow(region);
+    walk(root,n=>{if(isBoundary(n)&&containsLiveJSX(n,policies))result.diagnostics.push({code:'LIVE_CONTENT_IN_BOUNDARY',file:ctx.file,line:n.loc?.start.line??1,message:'Existing boundary contains live content; move the widget outside it or split its data regions'});});
     const selected: Region[] = [];
     let selectedEnd = -Infinity;
-    for (const region of regions.sort((a, b) => startOf(a.node) - startOf(b.node) || endOf(b.node) - endOf(a.node))) {
+    for (const region of narrowed.sort((a, b) => startOf(a.node) - startOf(b.node) || endOf(b.node) - endOf(a.node))) {
       if (endOf(region.node) <= selectedEnd) continue;
       selected.push(region);
       selectedEnd = endOf(region.node);
@@ -158,7 +182,8 @@ export function analyzeReact(ctx: AnalysisContext): FileAnalysis {
       // Early guards keep business evaluation order; only their return value changes.
       add(region.node, kind, region.pending, region.content, region.bindings, region.early);
     }
-    if (isPage && !pageRegion && !early.length) {
+    if (isPage && containsLiveJSX(root,policies))result.diagnostics.push({code:'PAGE_LIVE_CONTENT',file:ctx.file,message:'Keep live widgets and page shell mounted; generate independent request regions instead of a whole-page boundary'});
+    if (isPage && !pageRegion && !early.length && !containsLiveJSX(root,policies)) {
       const artifact = addTarget({ suffix: 'page', kind: 'page', bindings: pageBindings, export: component.exported });
       result.edits.push({ start: startOf(root), end: startOf(root), text: `<${boundary} artifact={${artifact}} pending={false}>{/* skelcast:init */}{` }, { start: endOf(root), end: endOf(root), text: `}</${boundary}>` });
     }

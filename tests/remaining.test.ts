@@ -55,7 +55,7 @@ test('global plugin registrations and reachable table cores require source/impor
   'View.vue':`<script setup>const columns=[{label:'Title',prop:'title'},{label:'Count',prop:'count'}];const rows=[{title:'A',count:2},{title:'B',count:3}]</script><template><RenamedGrid :data="rows" :columns="columns"/></template>`,
  },async root=>{
   const {artifact,dependencies}=await compileTarget(root,{id:'table',source:'View.vue'},{},{componentPresets:['element-plus']});
-  assert.match(artifact.variants.default.html,/data-sk-data-table/);assert.equal((artifact.variants.default.html.match(/<tr(?:\s|>)/g)||[]).length,3);assert.match(artifact.variants.default.html,/data-sk-text-content="A"/);assert.ok(artifact.diagnostics.some(d=>d.code==='PRESET_LIMIT'));assert.ok(dependencies['node_modules/@fixture/widgets/package.json']);
+  assert.match(artifact.variants.default.html,/data-sk-data-table/);assert.equal((artifact.variants.default.html.match(/<tr(?:\s|>)/g)||[]).length,5);assert.doesNotMatch(artifact.variants.default.html,/data-sk-text-content/);assert.ok(artifact.diagnostics.some(d=>d.code==='PRESET_LIMIT'));assert.ok(dependencies['node_modules/@fixture/widgets/package.json']);
   await writeFile(path.join(root,'node_modules/@fixture/widgets/index.js'),library.replace('return()=>render();','return()=>node("div",null,"Opaque");'));
   const dead=await compileTarget(root,{id:'dead',source:'View.vue'},{},{componentPresets:['element-plus']});assert.doesNotMatch(dead.artifact.variants.default.html,/data-sk-data-table/);
   await writeFile(path.join(root,'node_modules/@fixture/widgets/index.js'),library.replace("install(app){app.component('RenamedGrid',Core)}","install(app){}")+`;const unused={install(app){app.component('RenamedGrid',Core)}};`);

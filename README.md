@@ -216,21 +216,63 @@ value, prefix and suffix structure; timers and formatter callbacks are not run.
 Scrollbar height/max-height and progress stroke/circle dimensions retain explicit
 source props. Vue hyphenated template props are normalized before preset dispatch.
 
-Mask the data that is loading, rather than every element containing text. Buttons,
-form labels, editable inputs, navigation and calendar date-grid frames keep their
-static text/geometry. Data text, images, statistics, table cells and read-only output
-fields receive placeholders. Table headers remain readable and wide tables scroll
-inside their container. A control-only target can legitimately have zero data
-placeholders; `quality` reports `preservedNodes` separately.
-Known arrays determine table row count (up to 24); unknown arrays default to four
-rows. A source-proved adjacent Element Plus pagination component can supply its
-initial page size when its state belongs to the same composable as the table data. Use `hints.repeat` to request a finite loading capacity, including for an initially empty
-array. Table bodies simplify action buttons, selection and expand controls into
-placeholder shapes while retaining cell layout, column proportions and row capacity.
-Source-visible cell text still reserves its wrapping space. Finite local JSX components, Vue JSX slot objects and source-origin render props retain their presentation structure. Read-only field/key helpers use bounded syntax interpretation; unresolved table data-slot calls use text geometry and retain `PRESET_LIMIT`. No application helper is invoked. SVG and Canvas retain
-their native viewport, CSS dimensions and aspect ratio as a single placeholder;
-paths, chart labels and canvas fallback details are not expanded. Use
-`data-sk-preserve` to retain a specific region's existing presentation policy.
+Skeletons describe loading regions rather than reproducing an entire page. Literal
+headings, instructions, navigation, field labels and control captions remain
+readable. Dynamic data expressions, images, statistics and read-only output use
+placeholders. A finite value in source is not automatically treated as ready data.
+Use `data-sk-preserve` for a binding that is intentionally fixed and safe to show.
+A static-only target can legitimately have zero placeholders; `quality` counts
+readable static nodes under `preservedNodes`.
+
+Tables use four representative rows and at most six columns. Simple declared
+headers and widths are retained; grouped declarations flatten to leaf headers.
+Cell slots, nested widgets, action buttons, merge callbacks, row values and
+pagination-derived row counts are skipped before rendering. Unknown or opaque
+column factories use representative columns without requiring repair for missing
+cell details. Set `hints.repeat` (1–24) to choose loading capacity. A source-state
+empty table can retain its empty message. An explicit preserve policy on the
+**whole table** retains its resolved static presentation; overrides inside a
+simplified table body are not traversed.
+
+Forms retain groups, labels and basic control outlines. Input/select/date-picker
+presets and native select/textarea elements do not expand option lists or internal
+slots in their default presentation. Request-loading views omit input values;
+static placeholders and labels can remain visible. SVG and Canvas keep their
+native viewport, CSS dimensions and aspect ratio as one placeholder, with no
+paths, labels or fallback detail. Confirmed `vue-echarts` and `echarts-for-react`
+default imports receive a graphic-region outline. Explicit dimensions and
+responsive container rules take precedence over approximate defaults.
+
+Editors remain real, visible components. Keep them outside `LoadingBoundary`;
+SkelCast does not generate an editor clone, toolbar, text lines or container block.
+Native editable regions and confirmed Monaco, Tiptap EditorContent and TinyMCE
+React imports identify live content. For custom widgets, mark a source wrapper or
+register its binding explicitly:
+
+```vue
+<h1>Orders</h1>
+<section data-sk-live><CustomEditor /></section>
+<LoadingBoundary :artifact="rowsSkeleton" :pending="pending">
+  <ResultsTable :rows="rows" />
+</LoadingBoundary>
+```
+
+```js
+export default {
+  componentPolicies: { CustomEditor: 'live', SalesChart: 'graphic' },
+  targets: [/* request regions */],
+};
+```
+
+`init` splits simple native loading containers around live children and retains
+fixed sibling controls. It skips automatic whole-page boundaries on pages with
+identified live content, so those pages have request skeletons and no automatic
+pre-JavaScript page shell. Existing manual boundaries and shared conditional or
+component layouts receive `LIVE_CONTENT_IN_BOUNDARY` diagnostics with source
+locations; narrow them in source. A `data-sk-preserve` hint creates static HTML
+and cannot keep a real editor visible inside a hidden boundary. Generation also
+reports live content left inside a target instead of producing a fake editor.
+
 React `map` and Vue `v-for` use the same rule: known arrays keep their length up to
 256 for finite source presentation lists, known empty arrays stay empty, and unknown collections default to four items. Larger finite lists report `COLLECTION_LIMIT` instead of silently claiming complete output. Unknown loading capacity and table bodies remain bounded separately at 24.
 An explicit `hints.repeat` overrides those counts.
@@ -259,8 +301,8 @@ recognized plugin installers. Package source is considered only for an opted-in
 library dependency. A reachable table that forwards source props and columns can
 provide a partial table core; callback cells, surrounding wrapper UI and adaptive
 runtime sizing keep `PRESET_LIMIT`. Component names or a `columns` prop alone are
-not sufficient evidence. Literal table cells retain source text wrapping, column
-minimum widths, explicit heights, header visibility and scroll constraints.
+not sufficient evidence. Table outlines retain simple column declarations, explicit outer heights,
+header visibility and scroll constraints without measuring cell text.
 
 Use `data-sk-preserve` on a static subtree to retain its resolved content, or
 `data-sk-mask` to force placeholders for a data subtree. These attributes work in
@@ -273,14 +315,12 @@ cannot be reconstructed by a preserve hint and retain an inert empty footprint.
 <section data-sk-mask>{{ report.summary }}</section>
 ```
 
-Known source-visible text and finite text bindings retain their actual font layout
-instead of a fixed-width bar. Escaped text is stored in artifact metadata and drawn
-as transparent CSS generated content, preserving font advances, inline emphasis,
-line height and natural wrapping without adding searchable text nodes. Paragraphs
-keep their source children unless an explicit `hints.lines` override is supplied.
-Unknown text still uses a representative width; set `data-sk-text-width="18ch"`
-on a local container (inherited by its text) to override it, or supply a finite
-text binding. `--skeleton-text-width` sets the fallback width through CSS.
+Literal source text stays readable. Dynamic text uses a representative bar even
+when a sample value can be evaluated; original strings and exact glyph geometry
+are not stored in placeholder attributes. `data-sk-preserve` retains a resolved
+fixed binding when requested. `hints.lines` explicitly requests paragraph line
+placeholders. Set `data-sk-text-width="18ch"` on a local container to control its
+text placeholders; `--skeleton-text-width` sets the CSS fallback width.
 
 Image placeholders retain width/height attributes and source CSS. For resolvable
 local SVG, PNG, JPEG, GIF and WebP files, including default asset imports and
@@ -527,10 +567,12 @@ also support custom browser fixtures and stored geometry snapshots.
 
 This is a geometry snapshot, not pixel similarity or the browser's CLS metric.
 Equal outer dimensions do not prove matching internal layout, colors or content.
-Native tables with visible headers are also checked for table count, column count
-and header-row structure, including grouped headers and columns inside horizontal
-scroll containers. Placeholder row counts can describe loading capacity, so they
-are not compared with a server result count.
+Native tables with visible headers are checked for table count. Ordinary,
+preserved tables also check column counts and header rows. Compiler-marked table
+and graphic outlines intentionally omit internal source anchors and exact table
+structure; their outer anchors, following content and overflow remain checked.
+Repeated anchors outside an outline still participate independently. Placeholder
+row counts describe loading capacity and are not compared with result counts.
 Use screenshots/overlays for those checks. `skelcast quality` remains a separate,
 source-only structural check and never launches or signs into the application.
 Source IDs are paired automatically with generated `data-sk-source-id` nodes. Add `data-sk-anchor="summary"` to a native presentation container for an explicit internal layout checkpoint (React and Vue). Repeated anchors are matched in DOM order; open Shadow DOM is traversed. Reports include compared/missing/mismatched anchors and detect column-width or position differences even when the region has identical outer dimensions. Unmarked internal content still needs visual review.
@@ -586,8 +628,9 @@ invalidate artifacts or reload the application. Existing user watcher exclusions
 are preserved.
 
 Element Plus presets also retain finite tree hierarchy/expansion, upload triggers
-and declared file slots, alerts, watermark containers, active tab bodies, grouped
-table headers, finite index-based cell spans, and native description-table sizing.
+and declared file slots, alerts, watermark containers, active tab bodies, and
+native description-table sizing. Grouped headers and finite cell spans are
+available only when the entire table uses a preserve policy.
 The `vuedraggable` preset preserves initial source list order and scoped item slots;
 it does not run Sortable callbacks. All presets require confirmed package identity.
 
@@ -767,3 +810,11 @@ pnpm run test:browser
 ```
 
 Tests cover static generation without executing business code, dependency invalidation, source transformations and rollback, and real browser loading/preview behavior for both frameworks.
+
+Run `node --import tsx scripts/measure-outline.mts` for reproducible table, form and
+graphic fixtures, including DOM counts, optimized HTML/CSS JSON bytes, Brotli and
+compile timings. Against baseline `13eb5d2`, the complex table fixture goes from
+401 to 44 nodes, 55,486 to 3,877 JSON bytes, and 1,440 to 896 Brotli bytes. It uses
+four representative rows instead of twenty detailed source rows. These are
+single-view measurements including shared base CSS, not application or package
+size guarantees.

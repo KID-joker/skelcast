@@ -6,7 +6,7 @@ const compilerFiles = (directory: string): string[] => readdirSync(directory, { 
   const file = `${directory}/${entry.name}`;
   return entry.isDirectory() ? compilerFiles(file) : file.endsWith('.ts') ? [file] : [];
 });
-const compilerHash = createHash('sha256').update([...compilerFiles('src/compiler'), 'src/generator.ts', 'src/types.ts', 'src/shared.ts'].sort().map(file => `${file}\n${readFileSync(file, 'utf8')}`).join('\n')).digest('hex').slice(0, 12);
+const compilerHash = createHash('sha256').update([...compilerFiles('src/compiler'), 'src/generator.ts', 'src/types.ts', 'src/shared.ts', 'src/policy.ts'].sort().map(file => `${file}\n${readFileSync(file, 'utf8')}`).join('\n')).digest('hex').slice(0, 12);
 
 export default defineConfig({
   entry: ['src/index.ts', 'src/cli.ts', 'src/vite.ts', 'src/runtime/index.ts', 'src/runtime/initial.ts', 'src/adapters/react.ts', 'src/adapters/vue.ts', 'src/client.ts', 'src/browser.ts'],

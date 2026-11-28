@@ -7,6 +7,9 @@ import type { ElementMarkers, RenderHost } from './render-host.js';
 import { imageRatio } from './images.js';
 import type { StyleOptions } from '../types.js';
 import type { RootMarkup } from './attributes.js';
+import { tableOutline } from './presets/table.js';
+import type { TableColumn } from './presets/columns.js';
+import { liveElement } from '../policy.js';
 
 // Keep source IDs out of the live document's ID namespace. Internal data-sk-*
 // attributes are owned by the generator and cannot be supplied by source markup.
@@ -14,11 +17,12 @@ const layoutAttribute = (name: string) => name === 'id' || name === 'data-sk-anc
 
 /** Keep the native viewport, CSS sizing and SVG aspect ratio without expanding
  * chart paths, ticks, labels or canvas fallback content. */
-export function renderGraphic(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode | undefined): string | undefined {
+export function renderAtomic(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode | undefined): string | undefined {
   if(tag==='iframe'){host.diagnose('FALLBACK','Embedded document contents remain opaque; preserve the native frame geometry without loading its URL',ctx,node);return host.element('iframe',{...props,src:undefined,srcdoc:undefined,srcDoc:undefined},'',ctx,node,{leaf:host.masked(ctx),opaque:true});}
+  if(['select','textarea'].includes(tag)&&ctx.mode!=='preserve')return host.element(tag,props,'',ctx,node);
   if (!['svg', 'canvas'].includes(tag) || !host.masked(ctx)) return;
   host.record('component', tag, 'Keep graphic viewport and proportions; simplify internal detail to one placeholder', ctx, node);
-  return host.element(tag, props, '', ctx, node, { leaf: true });
+  return host.element(tag, props, '', ctx, node, { leaf: true, outline: true });
 }
 
 /** Normalize and filter independently of HTML serialization and source-ID tracking. */
@@ -56,6 +60,7 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
   const leaf = markers.leaf || this.masked(ctx) && ['img', 'input', 'textarea', 'button', 'select'].includes(tag);
   let attrs = `${this.attributes(props)}${markers.layout ? ' data-sk-layout' : ''}${markers.opaque ? ' data-sk-opaque' : ''}${leaf ? ' data-sk-leaf' : ''} data-sk-node="${this.nodeId(ctx, node)}"${ctx.scopes.map(s => ` ${s}`).join('')}`;
   if (ctx.control || ctx.mode === 'preserve') attrs += ' data-sk-control';
+  if (markers.outline) attrs += ' data-sk-outline';
   if (props['data-sk-preserve'] != null) attrs += ' data-sk-preserve';
   if (tag === 'img') {
     const dimension = (value: unknown) => typeof value === 'number' || typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
@@ -75,6 +80,7 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
       let value = props[key] ?? (key === 'value' ? props.modelValue : key === 'readonly' ? props.readOnly : undefined);
       if (value === UNKNOWN || value == null || value === false || typeof value === 'object' || typeof value === 'symbol') continue;
       if ((key === 'value' || key === 'placeholder') && this.masked(ctx) || key === 'value' && props.type === 'password') continue;
+      if(key==='value'&&ctx.loading&&ctx.mode!=='preserve')continue;
       if (key === 'type' && tag === 'button' && !['button','submit','reset'].includes(String(value))) value = 'button';
       attrs += ` ${key}="${escapeHTML(value === true ? '' : value)}"`;
     }
@@ -92,9 +98,7 @@ export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderCo
     if (node.type === 2 || node.type === 5) {
       const value = node.type === 2 ? node.content : node.content.type === 4 ? node.content.content : '';
       if (!this.masked(parent)) return escapeHTML(value);
-      // Keep word lengths and whitespace so prose can wrap naturally at the
-      // container width. No original text reaches the output.
-      return value.trim() ? `<span data-sk-node="${this.nodeId(ctx, origin)}" data-sk-prose data-sk-leaf style="box-decoration-break:clone;-webkit-box-decoration-break:clone">${escapeHTML(value.replace(/[^\s]/g, 'x'))}</span>` : ' ';
+      return value.trim() ? this.text(parent,origin) : ' ';
     }
     if (node.type !== 1 || nonVisual.has(node.tag)) return '';
     // HTML inserted with v-html is inert HTML, never a Vue template. Do not
@@ -102,7 +106,19 @@ export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderCo
     if (node.tagType !== 0) return this.fallback(ctx, origin, `Unsupported static HTML element ${node.tag}`);
     const props = Object.fromEntries(node.props.filter(p => p.type === 6).map((p) => [p.name, p.value?.content ?? true]));
     const local = this.contentContext(parent, props, node.tag);
-    const graphic = renderGraphic(this, node.tag, props, local, origin);
+    if(liveElement(props)){
+      this.diagnose('LIVE_CONTENT_IN_BOUNDARY','Keep live content outside LoadingBoundary; static HTML cannot retain its real component',local,origin);
+      return '';
+    }
+    if(node.tag==='table'&&this.masked(local)){
+      const columns:TableColumn[]=[];
+      let visited=0;
+      const headers=(nodes:VueNode[])=>{for(const child of nodes){if(++visited>128||columns.length>=6)return;if(child.type!==1)continue;if(child.tag==='th')columns.push({label:child.children.flatMap(n=>n.type===2?[n.content]:[]).join(''),field:'',width:''});else if(['thead','tr'].includes(child.tag))headers(child.children);}};
+      headers(node.children);
+      const view=tableOutline(props,columns,this.hints,true);
+      return this.element(view.tag,{...props,class:[props.class,view.className],style:`${view.style};${styleString(props.style)}`},view.children,local,origin,{layout:true,outline:true});
+    }
+    const graphic = renderAtomic(this, node.tag, props, local, origin);
     return graphic ?? this.element(node.tag, props, node.children.map(child => render(child, local)).join(''), local, origin);
   };
   try { return parseDOM(source, { delimiters: ['\u0000', '\u0000'] }).children.map(node => render(node, ctx)).join(''); }

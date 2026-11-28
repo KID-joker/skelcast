@@ -6,11 +6,26 @@ import type { ComponentReference } from './presets/types.js';
 import type { RenderHost } from './render-host.js';
 import { isRenderFunction } from './ast.js';
 import { supportedBody, visualSyntax } from './vue-syntax.js';
+import { importedPolicy, configuredPolicy } from '../policy.js';
+import { styleString } from './html.js';
+import { dimension } from './presets/shared.js';
 
 /** Keep frontend policies together: JSX/templates accept explicit adapters;
  * h() retains its source/preset path. Vue callers resolve references for slots. */
 export async function renderComponent(host: RenderHost, tag: string, props: Record<string, Value>, slot: SourceSlot, node: SourceNode, reference?: ComponentReference): Promise<string | undefined> {
   const ctx = slot.context;
+  reference ??= await host.componentReference(tag, ctx);
+  const policy = configuredPolicy(host.options.componentPolicies,tag) ?? (reference && importedPolicy(reference.request, reference.exported));
+  if (policy === 'live') {
+    host.diagnose('LIVE_CONTENT_IN_BOUNDARY', `Keep ${tag} outside LoadingBoundary so the real component remains visible; static preserve cannot retain a live widget`, ctx, node);
+    return '';
+  }
+  if (policy === 'graphic' && host.masked(ctx)) {
+    host.record('component', tag, 'Use graphic container outline without expanding the widget', ctx, node);
+    const dimensions=['width','height'].flatMap(key=>{const value=dimension(props[key],'');return value?[`${key}:${value}`]:[];});
+    if(host.hints.minHeight!=null)dimensions.push(`min-height:${host.hints.minHeight}px`);
+    return host.element('div', {...props,class:[props.class??props.className,'sk-graphic-outline'],className:undefined,style:[...dimensions,styleString(props.style)].join(';')}, '', ctx, node, {layout:true,leaf:true,outline:true});
+  }
   const adapter = slot.framework !== 'render' ? host.target.adapters?.[tag] : undefined;
   if (adapter) {
     const file = path.resolve(host.root, adapter);

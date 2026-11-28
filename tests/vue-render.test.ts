@@ -15,7 +15,7 @@ test('large h trees preserve the existing expansion cutoff and fallback source n
       const { artifact } = await compileTarget(root, { id: 'huge', source: 'Huge.ts' });
       const budget = artifact.diagnostics.filter(item => item.message.includes('expansion budget'));
       assert.equal(budget.length, count === 1999 ? 0 : 1);
-      assert.equal((artifact.variants.default.html.match(/data-sk-measured/g) ?? []).length, 1999);
+      assert.equal((artifact.variants.default.html.match(/>x<\/span>/g) ?? []).length, 1999);
       if (budget.length) {
         const offset = prefix.length + 1999 * (child.length + 1) + child.indexOf("'x'");
         assert.equal(budget[0].node, digest(`Huge.ts:${offset}`).slice(0, 12));
@@ -32,7 +32,7 @@ test('mixed JSX and h expansion retains its call checkpoint and exact fallback s
       await writeFile(path.join(root, 'Mixed.tsx'), prefix + Array(count).fill(child).join(',') + ']}</main>');
       const { artifact } = await compileTarget(root, { id: 'mixed', source: 'Mixed.tsx' });
       const diagnostics = artifact.diagnostics.filter(item => item.message.includes('expansion budget'));
-      assert.equal((artifact.variants.default.html.match(/data-sk-measured/g) ?? []).length, 1499);
+      assert.equal((artifact.variants.default.html.match(/>x<\/span>/g) ?? []).length, 1499);
       assert.equal(diagnostics.length, count === 1499 ? 0 : 1);
       if (diagnostics.length) {
         const offset = prefix.length + 1499 * (child.length + 1);
@@ -61,7 +61,7 @@ test('Vue render wrappers retain defaults, attrs and nested slots through rename
     const { artifact } = await compileTarget(root, { id: 'wrapper', source: 'View.vue' }, {}, { componentPresets: ['element-plus'] });
     const { html, css } = artifact.variants.default;
     assert.match(html, /<article/);
-    assert.match(html, /data-sk-text-content="Details"/);
+    assert.match(html, />Details</);
     assert.match(html, /class="[^"]*panel/);
     assert.match(html, /--sk-el-half-gutter:12px/);
     assert.match(css, /min-width:768px/);
@@ -83,8 +83,8 @@ test('namespace h imports preserve named source slots and allow local template c
   }, async root => {
     const { artifact } = await compileTarget(root, { id: 'slots', source: 'View.vue' });
     assert.match(artifact.variants.default.html, /<h2/);
-    assert.match(artifact.variants.default.html, /data-sk-text-content="Heading"/);
-    assert.match(artifact.variants.default.html, /data-sk-text-content="Body"/);
+    assert.match(artifact.variants.default.html, />Heading</);
+    assert.match(artifact.variants.default.html, />Body</);
     assert.deepEqual(artifact.diagnostics, []);
   });
 });
@@ -144,7 +144,7 @@ test('guarded optional slots, h overloads and opaque mount points retain their f
   }, async root => {
     const { artifact } = await compileTarget(root, { id: 'optional', source: 'Frame.ts' });
     assert.match(artifact.variants.default.html, /<b/);
-    assert.match(artifact.variants.default.html, /data-sk-text-content="Data"/);
+    assert.match(artifact.variants.default.html, />Data</);
     assert.match(artifact.variants.default.html, /data-sk-opaque data-sk-leaf/);
     assert.match(artifact.variants.default.html, /height:280px/);
     assert.equal(artifact.diagnostics.length, 1);

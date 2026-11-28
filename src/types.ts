@@ -26,6 +26,8 @@ export interface SkeletonTarget {
 }
 export interface SkeletonConfig {
   targets: SkeletonTarget[];
+  /** Explicit source binding names for live widgets or opaque graphic regions. */
+  componentPolicies?: Record<string, import('./policy.js').ComponentPolicy>;
   aliases?: Record<string, string>;
   /** Static component names mapped to local source; explicit mappings win over declarations. */
   components?: Record<string, string>;

@@ -8,8 +8,10 @@ import { boundaryContentContext } from './branches.js';
 import { renderCall } from './render-call.js';
 import { planCollection } from './collections.js';
 import { renderBranch } from './render-branches.js';
-import { renderGraphic } from './output.js';
+import { renderAtomic } from './output.js';
 import { supportedBody } from './vue-syntax.js';
+import { nativeTableOutline, shallowPresentation } from './outline.js';
+import { liveElement } from '../policy.js';
 
 /** Shared node rendering; each frontend accounts for its own expansion cost. */
 export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderContext): Promise<string> {
@@ -72,14 +74,18 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
     }
   }
   ctx = this.contentContext(ctx, props, tag);
+  if (liveElement(props)) {
+    this.diagnose('LIVE_CONTENT_IN_BOUNDARY','Keep this live region outside LoadingBoundary so its real content remains visible',ctx,node);
+    return '';
+  }
   if (ctx.module.boundaries.has(tag)) {
     const pending = opening.attributes.find(a => a.type === 'JSXAttribute' && nodeName(a.name) === 'pending');
     const expression = pending?.type === 'JSXAttribute' && pending.value?.type === 'JSXExpressionContainer' ? expressionText(pending.value.expression, ctx) : '';
     return this.jsxNodes(node.children, boundaryContentContext(ctx, expression, this.hints.state));
   }
   if (unknownGeometry(props.style)) unknownLayout = true;
-  if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', props);
-  const reference = tag.includes('-') ? await this.componentReference(tag, ctx) : undefined;
+  const reference = tag.includes('-') || unknownLayout ? await this.componentReference(tag, ctx) : undefined;
+  if (unknownLayout && !shallowPresentation(this,tag,reference)) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', props);
   if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression' || reference) {
     let source: SourceSlot = { nodes: node.children, context: ctx, framework: 'jsx' };
     const vue = !!ctx.module.descriptor || [...ctx.module.imports.values()].some(ref => ref.request === 'vue');
@@ -108,7 +114,11 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, props);
   if (nonVisual.has(tag)&&tag!=='iframe') return '';
   if (tag === 'img') return this.image(props, ctx, node);
-  const graphic = renderGraphic(this, tag, props, ctx, node);
+  if (tag === 'table') {
+    const outline = await nativeTableOutline(this,props,{framework:'jsx',nodes:node.children,context:ctx},node);
+    if(outline!==undefined)return outline;
+  }
+  const graphic = renderAtomic(this, tag, props, ctx, node);
   if (graphic !== undefined) return graphic;
   const children = tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true) : await this.jsxNodes(node.children, ctx);
   return this.element(tag, props, children, ctx, node);

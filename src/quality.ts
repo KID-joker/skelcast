@@ -47,7 +47,7 @@ export function analyzeQuality(artifact: SkeletonArtifact): ArtifactQuality {
         const has = (name: string) => node.props.some((prop) => prop.type === 6 && prop.name === name);
         quality.nodes++;
         if (has('data-sk-leaf') || has('data-sk-multiline')) quality.placeholders++;
-        if (has('data-sk-control')) quality.preservedNodes++;
+        if (has('data-sk-control') || node.children.some(child=>child.type===2&&!!child.content.trim())) quality.preservedNodes++;
         if (has('data-sk-fallback') || has('data-sk-opaque')) quality.fallbacks++;
         if (node.tagType === 1) quality.unresolvedComponents.push(node.tag);
       }

@@ -12,8 +12,10 @@ import { collectionRoot, loadingBranch, projectCollection, exclusiveChoice } fro
 import{initialString}from'./initial-state.js';
 import { planCollection } from './collections.js';
 import { renderBudget } from './render-budget.js';
-import { renderGraphic } from './output.js';
+import { renderAtomic } from './output.js';
 import { expandedTemplateSlots, slotName, slotParameter } from './vue-slots.js';
+import { nativeTableOutline, shallowPresentation } from './outline.js';
+import { liveElement } from '../policy.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -122,6 +124,10 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
   if (source.type === 5) { this.record('text', expression(source.content) ?? '', 'Resolve content policy for interpolation', ctx, source); return this.contentText(evaluateString(expression(source.content) ?? '', ctx), ctx, source); }
   if (source.type !== 1) return '';
   const node = source;
+  if (liveElement(Object.fromEntries(node.props.flatMap(p=>p.type===6?[[p.name,p.value?.content??true]]:[])))) {
+    this.diagnose('LIVE_CONTENT_IN_BOUNDARY','Keep this live region outside LoadingBoundary so its real content remains visible',ctx,node);
+    return '';
+  }
   const loop = directive(node, ['for']);
   if (loop && !skipFor) return renderVueLoop.call(this, node, loop, ctx);
   if(selection==='target'){
@@ -280,13 +286,16 @@ async function renderVueElement(
       }
     }
     ctx = this.contentContext(ctx, props, tag);
+    if(liveElement(props)){
+      this.diagnose('LIVE_CONTENT_IN_BOUNDARY','Keep this live region outside LoadingBoundary so its real content remains visible',ctx,node);
+      return '';
+    }
     if (ctx.module.boundaries.has(tag) || tag === 'loading-boundary') {
       const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');
       const value = expression(pending?.exp);
       return this.vueNodes(node.children, boundaryContentContext(ctx, value, this.hints.state));
     }
     if (unknownGeometry(props.style)) unknownLayout = true;
-    if (unknownLayout&&selection!=='ancestor') return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', props);
     if (['template', 'transition', 'Transition', 'transition-group', 'TransitionGroup', 'KeepAlive', 'keep-alive'].includes(tag)) return this.vueNodes(node.children, ctx);
     if (tag === 'slot') {
       const name = typeof props.name === 'string' ? props.name : 'default';
@@ -318,6 +327,7 @@ async function renderVueElement(
     break;
   }
   const imported = await this.componentReference(tag, ctx);
+  if(unknownLayout&&selection!=='ancestor'&&!shallowPresentation(this,tag,imported))return this.fallback(ctx,node,'Unknown layout expression; add bindings or an adapter',props);
   if (node.tagType === 1 || imported?.file) this.record('component', tag, 'Resolve source component or adapter', ctx, node);
   if (imported?.file || this.target.adapters?.[tag]) {
     const slots: Record<string, SourceSlot> = {};
@@ -340,7 +350,11 @@ async function renderVueElement(
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, props);
   if (nonVisual.has(tag)&&tag!=='iframe') return '';
   if (tag === 'img') return this.image(props, ctx, node);
-  const graphic = renderGraphic(this, tag, props, ctx, node);
+  if(tag==='table'){
+    const outline=await nativeTableOutline(this,props,{framework:'vue',nodes:node.children,context:ctx},node);
+    if(outline!==undefined)return outline;
+  }
+  const graphic = renderAtomic(this, tag, props, ctx, node);
   if (graphic !== undefined) return graphic;
   const children = htmlContent !== undefined ? this.staticHTML(htmlContent, ctx, node)
     : tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true)

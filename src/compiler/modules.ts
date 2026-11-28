@@ -19,8 +19,9 @@ import {viteConfigObjects} from './build-defines.js';
 import {directiveRegistrations} from './directives.js';
 import { appRegistrations, pluginRegistrations } from './registrations.js';
 import type * as t from '@babel/types';
+import { importedPolicy } from '../policy.js';
 
-export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'>;
+export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'componentPolicies' | 'styles'>;
 
 export class SourceModules {
   dependencies: Record<string, string> = {};
@@ -219,11 +220,17 @@ export class SourceModules {
     const jsx = sfc ? [sfc.descriptor.script?.lang, sfc.descriptor.scriptSetup?.lang].some(lang => lang === 'jsx' || lang === 'tsx') : undefined;
     try {
       const ast = this.files.ast(file, code, jsx);
-      const requests: string[] = [];
+      const requests: {request:string;opaque:boolean}[] = [];
       for (const statement of ast.program.body) {
-        if ((statement.type === 'ImportDeclaration' || statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportAllDeclaration') && statement.source) requests.push(statement.source.value);
+        if ((statement.type === 'ImportDeclaration' || statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportAllDeclaration') && statement.source) {
+          const opaque=statement.type==='ImportDeclaration'&&statement.specifiers.length>0&&statement.specifiers.every(spec=>{
+            const exported=spec.type==='ImportDefaultSpecifier'?'default':spec.type==='ImportSpecifier'?nodeName(spec.imported)??'':'*';
+            return !!(this.options.componentPolicies?.[spec.local.name]??importedPolicy(statement.source.value,exported));
+          });
+          requests.push({request:statement.source.value,opaque});
+        }
       }
-      for (const request of requests) { const dep = await this.resolve(file, request); if (dep) await this.scan(dep); }
+      for (const {request,opaque} of requests) { const dep = await this.resolve(file, request); if (dep) {if(opaque)await this.read(dep);else await this.scan(dep);} }
     } catch { /* unsupported dependency is still fingerprinted */ }
   }
   protected module(file: string): Promise<ModuleInfo> {

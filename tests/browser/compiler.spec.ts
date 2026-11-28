@@ -35,7 +35,8 @@ test('known text wraps with source fonts and images retain intrinsic, explicit a
           expect(skeleton!.width, `${source} ${selector} width`).toBeCloseTo(actual!.width, 1);
           expect(skeleton!.height, `${source} ${selector} height`).toBeCloseTo(actual!.height, 1);
         }
-        await expect(page.locator('#skeleton [data-sk-measured]').first()).toHaveCSS('color', 'rgba(0, 0, 0, 0)');
+        await expect(page.locator('#skeleton h1')).toHaveText('Short title');
+        await expect(page.locator('#skeleton [data-sk-measured]')).toHaveCount(0);
       }
     }
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -161,7 +162,7 @@ test('Naive responsive grids follow container and screen widths while preserving
       expect(await columns('.wide')).toBe(width >= 600 ? 3 : 1);
       expect(await columns('.screen')).toBe(width >= 640 ? 2 : 1);
       await expect(page.locator('[data-sk-code-line]')).toHaveCount(9);
-      await expect(page.locator('article h1 [data-sk-prose]')).toHaveCount(1);
+      await expect(page.locator('article h1 [data-sk-text][data-sk-leaf]')).toHaveCount(1);
       await expect(page.locator('.opaque-host[data-sk-opaque]')).toHaveCSS('height','600px');
       await expect(page.locator('.opaque-host > *')).toHaveCount(0);
       await expect(page.locator('.compact')).toHaveCSS('padding', '0px');

@@ -15,13 +15,13 @@ async function fixture(files: Record<string, string>, run: (root: string) => Pro
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
-test('Vue templates expand local TSX column components and confirmed lower-case library tags without running callbacks', async () => {
+test('opaque local column factories use representative columns without rendering cell callbacks', async () => {
   await fixture({
     'View.vue': `<script setup lang="tsx">import {ElTable,ElTableColumn} from 'element-plus';const Cell=(column)=> <ElTableColumn {...column}>{{default:()=>{throw Error('never execute')}}}</ElTableColumn>;const cols=[{prop:'a',label:'Alpha',width:120},{prop:'b',label:'Beta',width:240}]</script><template><ElTable :data="unknown"><Cell v-for="col in cols" :key="col.prop" v-bind="col"/></ElTable></template>`,
   }, async root => {
     const { artifact } = await compileTarget(root, { id: 'columns', source: 'View.vue' }, {}, { componentPresets: ['element-plus'] });
-    assert.match(artifact.variants.default.html, /Alpha/); assert.match(artifact.variants.default.html, /Beta/);
-    assert.equal((artifact.variants.default.html.match(/<th\b/g) ?? []).length, 2);
+    assert.doesNotMatch(artifact.variants.default.html, /Alpha|Beta|never execute/);
+    assert.equal((artifact.variants.default.html.match(/<th\b/g) ?? []).length, 3);
   });
 });
 test('local interface props retain absent optional dimensions for an opaque mount host', async () => {
@@ -103,13 +103,13 @@ test('source viewport handlers produce media queries and layout dependencies ret
 test('finite slot initialization and immediate injection watchers preserve collapsed source structure', async () => {
   await fixture({
     'Grid.vue': `<script setup>import{ref,useSlots,onBeforeMount,provide}from'vue';const props=defineProps({limit:Number});const edge=ref(-1);const slots=useSlots().default();const arrange=()=>{const cells=[];slots.forEach(v=>{if(Array.isArray(v.children))cells.push(...v.children)});cells.forEach((v,index)=>{if(index>=props.limit&&edge.value===-1)edge.value=index})};onBeforeMount(()=>arrange());provide('cut',edge)</script><template><section><slot/></section></template>`,
-    'Cell.vue': `<script setup>import{ref,inject,watch}from'vue';const props=defineProps({index:Number});const cut=inject('cut',ref(-1));const visible=ref(true);watch(()=>cut.value,value=>{if(value>=0&&props.index>=value)visible.value=false},{immediate:true})</script><template><p v-show="visible">{{props.index}}</p></template>`,
+    'Cell.vue': `<script setup>import{ref,inject,watch}from'vue';const props=defineProps({index:Number});const cut=inject('cut',ref(-1));const visible=ref(true);watch(()=>cut.value,value=>{if(value>=0&&props.index>=value)visible.value=false},{immediate:true})</script><template><p data-sk-preserve v-show="visible">{{props.index}}</p></template>`,
     'View.vue': `<script setup>import Grid from'./Grid.vue';import Cell from'./Cell.vue'</script><template><Grid :limit="2"><Cell v-for="(item,index) in [0,1,2,3]" :index="index"/></Grid></template>`,
   }, async root => {
     const { artifact } = await compileTarget(root, { id:'collapsed',source:'View.vue' });
-    assert.match(artifact.variants.default.html,/data-sk-text-content="0"/);
-    assert.match(artifact.variants.default.html,/data-sk-text-content="1"/);
-    assert.doesNotMatch(artifact.variants.default.html,/data-sk-text-content="[23]"/);
+    assert.match(artifact.variants.default.html,/>0<\/p>/);
+    assert.match(artifact.variants.default.html,/>1<\/p>/);
+    assert.doesNotMatch(artifact.variants.default.html,/>[23]<\/p>/);
     assert.ok(artifact.diagnostics.some(d=>d.code==='LAYOUT_PROJECTION'));
   });
 });
@@ -131,8 +131,8 @@ test('Vue JSX slot objects and source-proven function props retain origin, colum
     const { artifact } = await compileTarget(root,{id:'render-fields',source:'View.vue'}, {}, {componentPresets:['element-plus']});
     assert.match(artifact.variants.default.html,/height:80px/);
     assert.ok(Object.values(artifact.sources).some(source=>source.file==='fields.tsx'));
-    assert.match(artifact.variants.default.html,/el-button/);
-    assert.match(artifact.variants.default.html,/min-width:80px/);
+    assert.doesNotMatch(artifact.variants.default.html,/el-button/);
+    assert.match(artifact.variants.default.html,/data-sk-outline/);
   });
 });
 test('field projections preserve explicit undefined Vue defaults and optional array calls without executing arbitrary helpers', async () => {
@@ -151,9 +151,9 @@ test('finite read-only key helpers forward named Vue slots and unknown cell call
     'View.vue': `<script setup>import{ElTable,ElButton}from'element-plus';import Cell from'./Cell.vue'</script><template><ElTable :data="unknown"><Cell field="a.action"><template #action><ElButton>Inspect</ElButton></template></Cell><Cell field="missing"/></ElTable></template>`,
   }, async root => {
     const {artifact}=await compileTarget(root,{id:'slot-key',source:'View.vue'},{},{componentPresets:['element-plus']});
-    assert.match(artifact.variants.default.html,/el-button/);
+    assert.doesNotMatch(artifact.variants.default.html,/el-button/);
     assert.doesNotMatch(artifact.variants.default.html,/data-sk-fallback/);
-    assert.ok(artifact.diagnostics.some(d=>d.code==='PRESET_LIMIT'&&d.message.includes('data-slot')));
+    assert.ok(!artifact.diagnostics.some(d=>d.code==='PRESET_LIMIT'&&d.message.includes('data-slot')));
   });
 });
 test('request instrumentation keeps multiple hook instances distinct and skips explicit return contracts', async () => {
@@ -181,7 +181,7 @@ test('viewport projection refuses incompatible switch discriminants or independe
   },async root=>{const{artifact}=await compileTarget(root,{id:'negative',source:'View.vue'});assert.doesNotMatch(artifact.variants.default.css,/min-width:700px/)});
 });
 test('build defines project JSON fields from the exported config without executing config helpers',async()=>{
- await fixture({'package.json':JSON.stringify({dependencies:{alpha:'1',beta:'2'}}),'vite.config.mjs':`import{defineConfig}from'vite';import pkg from'./package.json';const info={pkg,stamp:clock()};throw Error('never execute');export default defineConfig(()=>({define:{APP:JSON.stringify(info)}}))`,'View.vue':'<script setup>const {pkg}=APP</script><template><main><p v-for="(value,key) in pkg.dependencies">{{key}}: {{value}}</p></main></template>'},async root=>{const{artifact,dependencies}=await compileTarget(root,{id:'defines',source:'View.vue'});assert.match(artifact.variants.default.html,/alpha/);assert.match(artifact.variants.default.html,/beta/);assert.ok(dependencies['package.json']);assert.ok(dependencies['vite.config.mjs'])});
+ await fixture({'package.json':JSON.stringify({dependencies:{alpha:'1',beta:'2'}}),'vite.config.mjs':`import{defineConfig}from'vite';import pkg from'./package.json';const info={pkg,stamp:clock()};throw Error('never execute');export default defineConfig(()=>({define:{APP:JSON.stringify(info)}}))`,'View.vue':'<script setup>const {pkg}=APP</script><template><main data-sk-preserve><p v-for="(value,key) in pkg.dependencies">{{key}}: {{value}}</p></main></template>'},async root=>{const{artifact,dependencies}=await compileTarget(root,{id:'defines',source:'View.vue'});assert.match(artifact.variants.default.html,/alpha/);assert.match(artifact.variants.default.html,/beta/);assert.ok(dependencies['package.json']);assert.ok(dependencies['vite.config.mjs'])});
  await fixture({'vite.config.mjs':`const unused={define:{APP:JSON.stringify({visible:false})}};export default {}`,'View.vue':'<template><p v-if="APP.visible">Uncertain</p></template>'},async root=>{const{artifact}=await compileTarget(root,{id:'unused',source:'View.vue'});assert.ok(artifact.diagnostics.some(d=>d.code==='BRANCH_DEFAULT'))});
 });
 test('initial recursive column defaults preserve both grouped source trees and flat projections',async()=>{
@@ -189,14 +189,14 @@ test('initial recursive column defaults preserve both grouped source trees and f
  'Search.vue':`<script setup>defineProps({columns:Array})</script><template><aside v-if="columns.length">Search present</aside></template>`,
  'Cell.vue':`<script setup lang="tsx">import{ElTableColumn}from'element-plus';defineProps({column:Object});const Col=item=><>{item.visible&&<ElTableColumn label={item.label}>{{default:()=>{if(item.children)return item.children.map(child=>Col(child));return format(value)}}}</ElTableColumn>}</>;</script><template><Col v-bind="column"/></template>`,
  'View.vue':`<script setup>import{reactive,computed}from'vue';import{ElTable}from'element-plus';import Cell from'./Cell.vue';import Search from'./Search.vue';const props=defineProps({columns:Array});const tree=reactive(props.columns);const flat=computed(()=>normalize(tree));const fields=computed(()=>flat.value.filter(row=>row.search?.el).sort((a,b)=>0));const normalize=(rows,out=[])=>{rows.forEach(async row=>{if(row.children?.length)out.push(...normalize(row.children));out.push(row);row.visible=row.visible??true;await decorate(row)});return out.filter(row=>!row.children?.length)};</script><template><Search :columns="fields"/><ElTable :data="flat"><Cell v-for="item in tree" :column="item"/></ElTable></template>`,
- 'Page.vue':`<script setup>import View from'./View.vue'</script><template><View :columns="[{label:'Group',children:[{label:'Child'}]}]"/></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'nested-defaults',source:'Page.vue',kind:'request'},{},{componentPresets:['element-plus']});assert.match(artifact.variants.default.html,/Group/);assert.match(artifact.variants.default.html,/Child/);assert.doesNotMatch(artifact.variants.default.html,/Search present/)});
+ 'Page.vue':`<script setup>import View from'./View.vue'</script><template><View :columns="[{label:'Group',children:[{label:'Child'}]}]"/></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'nested-defaults',source:'Page.vue',kind:'request'},{},{componentPresets:['element-plus']});assert.doesNotMatch(artifact.variants.default.html,/Group|Child/);assert.match(artifact.variants.default.html,/data-sk-outline/);assert.doesNotMatch(artifact.variants.default.html,/Search present/)});
 });
 test('optional field reads on finite primitive values preserve known filter membership',async()=>{
- await fixture({'View.vue':`<script setup>const columns=[{label:'Skip',search:''},{label:'Keep',search:{el:'input'}}];const fields=columns.filter(item=>item.search?.el||item.search?.render)</script><template><p v-for="item in fields">{{item.label}}</p></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'primitive-members',source:'View.vue'});assert.match(artifact.variants.default.html,/Keep/);assert.doesNotMatch(artifact.variants.default.html,/Skip/);assert.doesNotMatch(artifact.variants.default.html,/data-sk-fallback/)});
+ await fixture({'View.vue':`<script setup>const columns=[{label:'Skip',search:''},{label:'Keep',search:{el:'input'}}];const fields=columns.filter(item=>item.search?.el||item.search?.render)</script><template><p data-sk-preserve v-for="item in fields">{{item.label}}</p></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'primitive-members',source:'View.vue'});assert.match(artifact.variants.default.html,/Keep/);assert.doesNotMatch(artifact.variants.default.html,/Skip/);assert.doesNotMatch(artifact.variants.default.html,/data-sk-fallback/)});
 });
 test('boolean layout guards absorb a known false operand without claiming unknown values are bindings',async()=>{
  await fixture({'View.vue':`<script setup>const fields=[];const mode=externalState</script><template><aside v-if="mode.enabled && fields.length">Must be absent</aside><p v-if="mode.enabled || true">Present</p></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'boolean-guards',source:'View.vue'});assert.doesNotMatch(artifact.variants.default.html,/Must be absent/);assert.match(artifact.variants.default.html,/Present/)});
 });
 test('finite dynamic slot forwarding retains caller controls and scoped parameters through reusable tables',async()=>{
- await fixture({'Cell.vue':`<script setup>import{ElTableColumn}from'element-plus';defineProps({name:String})</script><template><ElTableColumn label="Actions"><template #default="scope"><slot :name="name" v-bind="scope"/></template></ElTableColumn></template>`,'Rows.vue':`<script setup>import{ElTable}from'element-plus';import Cell from'./Cell.vue'</script><template><ElTable :data="unknown"><Cell name="actions"><template v-for="key in Object.keys($slots)" #[key]="scope"><slot :name="key" v-bind="scope"/></template></Cell></ElTable></template>`,'View.vue':`<script setup>import Rows from'./Rows.vue';import{ElButton}from'element-plus'</script><template><Rows><template #actions="{row}"><ElButton link>Inspect</ElButton></template></Rows></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'forwarded',source:'View.vue'},{},{componentPresets:['element-plus']});assert.match(artifact.variants.default.html,/el-button/);assert.match(artifact.variants.default.html,/data-sk-text-content="Inspect"/);assert.ok(!artifact.diagnostics.some(d=>d.code==='SLOT_UNKNOWN'))});
+ await fixture({'Cell.vue':`<script setup>import{ElTableColumn}from'element-plus';defineProps({name:String})</script><template><ElTableColumn label="Actions"><template #default="scope"><slot :name="name" v-bind="scope"/></template></ElTableColumn></template>`,'Rows.vue':`<script setup>import{ElTable}from'element-plus';import Cell from'./Cell.vue'</script><template><ElTable :data="unknown"><Cell name="actions"><template v-for="key in Object.keys($slots)" #[key]="scope"><slot :name="key" v-bind="scope"/></template></Cell></ElTable></template>`,'View.vue':`<script setup>import Rows from'./Rows.vue';import{ElButton}from'element-plus'</script><template><Rows><template #actions="{row}"><ElButton link>Inspect</ElButton></template></Rows></template>`},async root=>{const{artifact}=await compileTarget(root,{id:'forwarded',source:'View.vue'},{},{componentPresets:['element-plus']});assert.doesNotMatch(artifact.variants.default.html,/el-button/);assert.doesNotMatch(artifact.variants.default.html,/Inspect|data-sk-text-content/);assert.ok(!artifact.diagnostics.some(d=>d.code==='SLOT_UNKNOWN'))});
 });

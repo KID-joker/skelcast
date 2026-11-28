@@ -366,7 +366,7 @@ test('React type wrapper unification retains the expansion cutoff and fallback s
   const child = '(<span>Value</span> as JSX.Element)';
   await fixture({ 'View.tsx': prefix + Array(2100).fill(child).join(',') + ']}</main>' }, async root => {
     const { artifact } = await compileTarget(root, { id: 'budget', source: 'View.tsx' });
-    assert.equal((artifact.variants.default.html.match(/data-sk-measured/g) ?? []).length, 1999);
+    assert.equal((artifact.variants.default.html.match(/>Value<\/span>/g) ?? []).length, 1999);
     const diagnostics = artifact.diagnostics.filter(row => row.message.includes('expansion budget'));
     assert.equal(diagnostics.length, 1);
     const offset = prefix.length + 1999 * (child.length + 1) + 1;

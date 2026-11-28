@@ -120,7 +120,7 @@ test('package symlink changes invalidate consumers even when the original packag
 
 test('dynamic Vue tags retain native controls, source slots, spread order and component-scoped diagnostics', async () => {
   await fixture({
-    'Child.vue': `<script setup>defineProps(['title'])</script><template><section><h2>{{title}}</h2><slot/><slot name="extra"/></section></template>`,
+    'Child.vue': `<script setup>defineProps(['title'])</script><template><section data-sk-preserve><h2>{{title}}</h2><slot/><slot name="extra"/></section></template>`,
     'View.vue': `<script setup>import Child from './Child.vue'</script><template><component :is="tag" v-for="i in 2" v-bind="attrs" :class="'local'" title="Heading"><span>Default</span><template #extra><b>Extra</b></template></component></template>`,
     'Opaque.vue': `<template><component is="Child" v-bind="unknown"/></template>`,
     'Directive.vue': `<script setup>import Child from './Child.vue'</script><template><component is="Child" v-demo /></template>`,
@@ -136,7 +136,7 @@ test('dynamic Vue tags retain native controls, source slots, spread order and co
     assert.equal((artifact.variants.input.html.match(/<input /g) ?? []).length, 2);
     const child = artifact.variants.Child.html;
     assert.equal((child.match(/<section /g) ?? []).length, 2);
-    for (const text of ['Heading', 'Default', 'Extra']) assert.match(child, new RegExp(`data-sk-text-content="${text}"`));
+    for (const text of ['Heading', 'Default', 'Extra']) assert.match(child, new RegExp(`>${text}<`));
     assert.deepEqual(artifact.diagnostics, []);
     const opaque = await compileTarget(root, { id: 'opaque', source: 'Opaque.vue' });
     assert.deepEqual(opaque.artifact.diagnostics.filter(d => d.code === 'SPREAD_UNKNOWN').map(d => d.component), ['Child']);
@@ -151,7 +151,7 @@ test('dynamic Vue tags retain native controls, source slots, spread order and co
   });
 });
 
-test('known text keeps font-shaped layout, paragraphs and finite bindings while unknown text accepts local widths', async () => {
+test('fixed prose stays readable and dynamic text uses bounded placeholders without storing source glyphs', async () => {
   await fixture({
     'View.tsx': `const title='Known & <text>';export default function View(){return <main><h1>{title}</h1><p>A paragraph with <strong>mixed</strong> content and 中文。</p><section data-sk-text-width="18ch">{unknown}</section><aside>{unknown}</aside><b>{0}</b></main>}`,
     'View.vue': `<script setup>const title='Known & <text>'</script><template><main><h1>{{title}}</h1><p>A paragraph with <strong>mixed</strong> content and 中文。</p><section data-sk-text-width="18ch">{{unknown}}</section><aside>{{unknown}}</aside><b v-text="0"/></main></template>`,
@@ -159,10 +159,10 @@ test('known text keeps font-shaped layout, paragraphs and finite bindings while 
     for (const source of ['View.tsx', 'View.vue']) {
       const { artifact } = await compileTarget(root, { ...target, source });
       const { html } = artifact.variants.default;
-      assert.match(html, /data-sk-measured data-sk-leaf data-sk-text-content="Known &amp; &lt;text&gt;"/);
-      assert.match(html, /<strong[^>]*><span[^>]*data-sk-measured/);
+      assert.doesNotMatch(html, /Known &amp;|data-sk-measured|data-sk-text-content/);
+      assert.match(html, /<strong[^>]*>mixed<\/strong>/);
       assert.match(html, /width:18ch;min-width:0/);
-      assert.match(html, /data-sk-measured data-sk-leaf data-sk-text-content="0"/);
+      assert.match(html, /data-sk-text data-sk-leaf/);
       assert.doesNotMatch(html, /data-sk-text-width=/);
       assert.deepEqual(artifact.diagnostics, []);
       const explicit = await compileTarget(root, { ...target, source, hints: { lines: 3 } });

@@ -12,7 +12,9 @@ export interface LayoutSnapshot {
    * Repeated anchors are paired in DOM order, including inside open shadow roots. */
   anchors?: Record<string, LayoutBox[]>;
   /** Visible native header-bearing tables; row counts are loading capacity. */
-  tables?: { columns: number; headerRows: number }[];
+  tables?: { columns: number; headerRows: number; outline?: boolean; parent?: number }[];
+  /** Component outlines compare their outer box; internal source anchors are intentionally omitted. */
+  regions?: { kind: 'table' | 'graphic'; key?: string; outline: boolean; anchors: {key:string;index:number}[] }[];
 }
 export interface LayoutTolerance { tolerancePx?: number; toleranceRatio?: number; overflowTolerancePx?: number }
 export interface LayoutIssue {
@@ -106,7 +108,8 @@ export function captureLayout(root: HTMLElement, sourceIds?:ReadonlySet<string>)
   const containsOverflow = ['auto', 'scroll', 'hidden', 'clip'].includes(style.overflowX);
   const box = measure.box(root);
   const anchors: Record<string, LayoutBox[]> = Object.create(null);
-  const tables=elements.filter((node):node is HTMLTableElement=>node.tagName==='TABLE'&&!!(node as HTMLTableElement).tHead&&measure.visible(node)&&measure.visible((node as HTMLTableElement).tHead!)).map(table=>{
+  const tableNodes=elements.filter((node):node is HTMLTableElement=>node.tagName==='TABLE'&&!!(node as HTMLTableElement).tHead&&measure.visible(node)&&measure.visible((node as HTMLTableElement).tHead!));
+  const tables=tableNodes.map(table=>{
     const occupied:number[]=[],rows=[...table.tHead!.rows];let columns=0;
     rows.forEach((row,index)=>{
       let column=0;
@@ -117,8 +120,17 @@ export function captureLayout(root: HTMLElement, sourceIds?:ReadonlySet<string>)
         for(let offset=0;offset<span;offset++)occupied[column+offset]=index+Math.min(256,Math.max(1,cell.rowSpan));
         column+=span;columns=Math.max(columns,column);
       }
-    });return{columns,headerRows:rows.length};
+    });
+    const parent=tableNodes.indexOf(table.parentElement?.closest('table') as HTMLTableElement);
+    return{columns,headerRows:rows.length,...(table.hasAttribute('data-sk-outline')?{outline:true}:{}),...(parent>=0?{parent}:{})};
   });
+  const anchorKey=(element:Element)=>{
+    const explicit=element.getAttribute('data-sk-anchor');
+    const id=element.getAttribute('data-sk-source-id')??element.id;
+    return explicit?`anchor:${explicit}`:id&&(!sourceIds||sourceIds.has(id))?`id:${id}`:undefined;
+  };
+  const regionSelector='table,svg,canvas,[data-sk-outline]';
+  const anchorOrdinals=new Map<Element,{key:string;index:number}>();
   for (const element of elements) {
     // Only the visible branch of nested boundaries participates. Skipping the
     // entire boundary would lose anchors that exist in the page artifact.
@@ -127,10 +139,16 @@ export function captureLayout(root: HTMLElement, sourceIds?:ReadonlySet<string>)
     const key = explicit ? `anchor:${explicit}` : id&&(!sourceIds||sourceIds.has(id)) ? `id:${id}` : undefined;
     if (!key || !measure.visible(element)) continue;
     const child = measure.box(element);
+    anchorOrdinals.set(element,{key,index:anchors[key]?.length??0});
     (anchors[key] ??= []).push({ ...child, x: child.x - box.x, y: child.y - box.y });
   }
+  const regions=elements.filter(element=>element.matches(regionSelector)&&measure.visible(element)&&!element.parentElement?.closest(regionSelector)).map(element=>({
+    kind:(element.tagName==='TABLE'||element.querySelector('table')?'table':'graphic') as 'table'|'graphic',
+    key:anchorKey(element),outline:element.hasAttribute('data-sk-outline'),
+    anchors:descendants(element).slice(1).flatMap(child=>{const anchor=anchorOrdinals.get(child);return anchor?[anchor]:[];}),
+  }));
   return {
-    box, visible: measure.visible(root), anchors, tables,
+    box, visible: measure.visible(root), anchors, tables, regions,
     overflowX: containsOverflow ? 0 : Math.max(0, root.scrollWidth - root.clientWidth),
     placeholders: placeholders.length,
     visiblePlaceholders: placeholders.filter(element => {
@@ -168,15 +186,37 @@ export function compareLayouts(content: LayoutSnapshot, skeleton: LayoutSnapshot
   if (Math.abs(delta.x) > pixels || Math.abs(delta.y) > pixels) add('POSITION_MISMATCH', `Skeleton origin differs by ${delta.x.toFixed(1)}px horizontally and ${delta.y.toFixed(1)}px vertically`);
   if (skeleton.overflowX > content.overflowX+overflow) add('HORIZONTAL_OVERFLOW', `Skeleton has ${(skeleton.overflowX-content.overflowX).toFixed(1)}px of additional uncontained horizontal overflow (source: ${content.overflowX.toFixed(1)}px)`);
   if(content.tables&&skeleton.tables){
-    if(content.tables.length!==skeleton.tables.length)add('TABLE_STRUCTURE_MISMATCH',`${content.tables.length} real header-bearing tables, ${skeleton.tables.length} skeleton tables`);
-    for(let index=0;index<Math.min(content.tables.length,skeleton.tables.length);index++){
-      const real=content.tables[index],generated=skeleton.tables[index];
-      if(real.columns!==generated.columns||real.headerRows!==generated.headerRows)add('TABLE_STRUCTURE_MISMATCH',`Table ${index+1}: ${real.columns} real columns/${real.headerRows} header rows, ${generated.columns} skeleton columns/${generated.headerRows} header rows`);
-    }
+    const realTables=content.tables,generatedTables=skeleton.tables;
+    const children=(tables:NonNullable<LayoutSnapshot['tables']>,parent?:number)=>tables.flatMap((table,index)=>table.parent===parent?[{table,index}]:[]);
+    const compare=(realParent?:number,generatedParent?:number,depth=0)=>{
+      if(depth>16)return;
+      const real=children(realTables,realParent),generated=children(generatedTables,generatedParent);
+      if(real.length!==generated.length)add('TABLE_STRUCTURE_MISMATCH',`${real.length} real header-bearing tables, ${generated.length} skeleton tables`);
+      for(let index=0;index<Math.min(real.length,generated.length);index++){
+        const a=real[index],b=generated[index];
+        if(b.table.outline)continue;
+        if(a.table.columns!==b.table.columns||a.table.headerRows!==b.table.headerRows)add('TABLE_STRUCTURE_MISMATCH',`Table ${a.index+1}: ${a.table.columns} real columns/${a.table.headerRows} header rows, ${b.table.columns} skeleton columns/${b.table.headerRows} header rows`);
+        compare(a.index,b.index,depth+1);
+      }
+    };
+    compare();
   }
   const anchors = { compared: 0, mismatched: 0, missing: 0 };
+  const ignored=new Map<string,Set<number>>(),ignoredGenerated=new Map<string,Set<number>>();
+  const ignore=(target:Map<string,Set<number>>,items:{key:string;index:number}[])=>{for(const{key,index}of items){if(!target.has(key))target.set(key,new Set());target.get(key)!.add(index);}};
+  for(const kind of ['table','graphic'] as const){
+    const real=content.regions?.filter(region=>region.kind===kind)??[];
+    const generated=skeleton.regions?.filter(region=>region.kind===kind)??[];
+    // Do not hide missing-region regressions by guessing across unmatched lists.
+    if(real.length!==generated.length)continue;
+    for(let index=0;index<real.length;index++){
+      const source=real[index],outline=generated[index];
+      if(outline.outline&&(!source.key&&!outline.key||source.key===outline.key)){ignore(ignored,source.anchors);ignore(ignoredGenerated,outline.anchors);}
+    }
+  }
   for (const key of new Set([...Object.keys(content.anchors ?? {}), ...Object.keys(skeleton.anchors ?? {})])) {
-    const real = content.anchors?.[key] ?? [], generated = skeleton.anchors?.[key] ?? [];
+    const real = (content.anchors?.[key] ?? []).filter((_,index)=>!ignored.get(key)?.has(index));
+    const generated = (skeleton.anchors?.[key] ?? []).filter((_,index)=>!ignoredGenerated.get(key)?.has(index));
     if (real.length !== generated.length) {
       anchors.missing += Math.abs(real.length - generated.length);
       issues.push({ code: 'ANCHOR_MISSING', anchor: key, message: `${key}: ${real.length} real nodes, ${generated.length} skeleton nodes` });

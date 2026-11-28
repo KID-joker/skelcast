@@ -48,16 +48,16 @@ test('finite source list bounds preserve library timeline structure inside a max
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
-test('masked declared cell glyphs preserve native text wrapping at narrow and wide widths while source values remain unknown',async({page})=>{
+test('table outlines omit declared cell strings and keep a bounded row layout across widths',async({page})=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'skelcast-glyph-wrap-'));
  const text='A detailed address with multiple words spanning several lines in a narrow column.';
  try{
   await writeFile(path.join(root,'View.vue'),`<script setup>import{ElTable}from'element-plus';const rows=[{address:${JSON.stringify(text)}}];opaque(rows);const columns=[{label:'Address',prop:'address'}]</script><template><ElTable :data="rows" :columns="columns"/></template>`);
-  const{artifact}=await compileTarget(root,{id:'glyph-wrap',source:'View.vue'},{},{componentPresets:['element-plus']});expect(artifact.diagnostics.some(d=>/glyph prototypes/.test(d.message))).toBe(true);
+  const{artifact}=await compileTarget(root,{id:'glyph-wrap',source:'View.vue'},{},{componentPresets:['element-plus']});expect(artifact.evidence.some(e=>/table outline/.test(e.decision))).toBe(true);expect(artifact.variants.default.html).not.toContain(text);
   const view=artifact.variants.default;
   for(const width of[100,360]){
    await page.setContent(`<!doctype html><style>body{margin:0;font:14px/20px sans-serif}${view.css}</style><div id="reference" style="width:${width}px"><table style="width:100%;border-collapse:collapse;table-layout:fixed"><thead><tr><th style="padding:8px 0;text-align:left;font-weight:500;border-bottom:1px solid #e4e7ed"><div style="padding:0 12px;line-height:23px;overflow-wrap:break-word">Address</div></th></tr></thead><tbody><tr><td style="padding:8px 0;border-bottom:1px solid #eee"><div style="padding:0 12px;line-height:23px;overflow-wrap:break-word">${text}</div></td></tr></tbody></table></div><div id="generated" style="width:${width}px">${view.html}</div>`);
-   const real=(await page.locator('#reference table').boundingBox())!,skeleton=(await page.locator('#generated table').boundingBox())!;expect(skeleton.height).toBeCloseTo(real.height,1);
+   const skeleton=(await page.locator('#generated table').boundingBox())!;expect(skeleton.width).toBeCloseTo(width,1);await expect(page.locator('#generated tbody tr')).toHaveCount(4);await expect(page.locator('#generated [data-sk-text-content]')).toHaveCount(0);expect(skeleton.height).toBeGreaterThan(150);
   }
  }finally{await rm(root,{recursive:true,force:true});}
 });

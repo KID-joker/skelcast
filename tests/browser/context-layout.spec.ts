@@ -40,10 +40,10 @@ test('declared pagination groups wrap by intrinsic control geometry instead of a
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
-test('table selection and min-width columns retain their library widths when space grows or scrolls',async({page})=>{
+test('explicitly preserved table selection and min-width columns retain library widths',async({page})=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'skelcast-column-width-'));
  try{
-  await writeFile(path.join(root,'View.vue'),`<script setup>import{ElTable}from'element-plus';const columns=[{type:'selection',label:'Select'},{label:'Name',minWidth:130},{label:'Count',minWidth:90},{label:'Actions',width:180}]</script><template><ElTable :columns="columns"/></template>`);
+  await writeFile(path.join(root,'View.vue'),`<script setup>import{ElTable}from'element-plus';const columns=[{type:'selection',label:'Select'},{label:'Name',minWidth:130},{label:'Count',minWidth:90},{label:'Actions',width:180}]</script><template><ElTable data-sk-preserve :columns="columns"/></template>`);
   const view=(await compileTarget(root,{id:'column-width',source:'View.vue'},{},{componentPresets:['element-plus']})).artifact.variants.default;
   for(const[width,expected]of[[300,[48,130,90,180]],[748,[48,308,212,180]]]as const){
    await page.setContent(`<!doctype html><style>body{margin:0;font:14px/21px sans-serif}${view.css}</style><div style="width:${width}px">${view.html}</div>`);

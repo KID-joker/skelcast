@@ -6,7 +6,7 @@ import type { CompilerOptions } from './modules.js';
 import type { ComponentReference } from './presets/types.js';
 
 /** Internal capabilities consumed by framework frontends and HTML output. */
-export interface ElementMarkers { layout?: boolean; leaf?: boolean; opaque?: boolean }
+export interface ElementMarkers { layout?: boolean; leaf?: boolean; opaque?: boolean; outline?: boolean }
 
 export interface RenderHost {
   readonly root: string;

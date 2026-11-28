@@ -8,13 +8,13 @@ import {evaluateString,UNKNOWN} from '../src/compiler/expression.js';
 
 async function fixture(files:Record<string,string>,run:(root:string)=>Promise<void>){const root=await mkdtemp(path.join(os.tmpdir(),'skelcast-delivery-'));try{for(const [file,source]of Object.entries(files)){await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),source);}await run(root);}finally{await rm(root,{recursive:true,force:true});}}
 
-test('source return fields retain immutable columns and declared loading capacity without running a factory or callbacks',async()=>{
+test('source return fields retain immutable columns while loading outlines ignore pagination capacity',async()=>{
  await fixture({
   'fields.ts':`import{ref,reactive,onMounted}from'vue';export function configure(ignored){const rows=ref([]);const pagination=reactive({pageSize:7,total:0});const columns=[{label:'Title',prop:'title',width:180},{label:'Size',prop:'size'}];onMounted(()=>{throw Error('never run');rows.value=request();pagination.total=rows.value.length});return{rows,pagination,columns}}`,
   'View.vue':`<script setup>import{ElTable}from'element-plus';import{configure as describe}from'./fields';const{rows,pagination,columns}=describe(runtimeRef)</script><template><ElTable :data="rows" :columns="columns" :pagination="{...pagination,size:'small'}"/></template>`,
  },async root=>{
   const {artifact}=await compileTarget(root,{id:'fields',kind:'request',source:'View.vue'},{},{componentPresets:['element-plus']});
-  const html=artifact.variants.default.html;assert.match(html,/>Title<\/div><\/th>/);assert.match(html,/>Size<\/div><\/th>/);assert.equal((html.match(/<tr(?:\s|>)/g)||[]).length,8);assert.doesNotMatch(html,/never run|request\(\)/);assert.ok(artifact.diagnostics.some(d=>/row capacity/.test(d.message)));
+  const html=artifact.variants.default.html;assert.match(html,/>Title<\/th>/);assert.match(html,/>Size<\/th>/);assert.equal((html.match(/<tr(?:\s|>)/g)||[]).length,5);assert.doesNotMatch(html,/never run|request\(\)|data-sk-text-content/);assert.ok(artifact.evidence.some(e=>/table outline/.test(e.decision)));
  });
 });
 
@@ -79,10 +79,10 @@ test('source-proven table pagination keeps literal base spacing and rejects dead
  });
 });
 
-test('escaped row literals supply masked glyph geometry without becoming values, layout bindings or preserved content',async()=>{
+test('escaped row literals do not enter outline text, layout bindings or preserved content',async()=>{
  await fixture({'data.ts':`const rows=[{address:'A long declared address',height:99}];opaque(rows);export{rows};`,'View.vue':`<script setup>import{rows}from'./data';import{ElTable}from'element-plus';const columns=[{label:'Address',prop:'address'}];const geometry={height:125};opaque(geometry)</script><template><ElTable :data="rows" :columns="columns"/><ElTable data-sk-preserve :data="rows" :columns="columns"/><aside :style="{height:rows[0].height+'px'}"/><aside :style="{height:geometry.height+'px'}"/></template>`},async root=>{
   const{artifact}=await compileTarget(root,{id:'glyphs',source:'View.vue'},{},{componentPresets:['element-plus']});const html=artifact.variants.default.html;
-  assert.equal((html.match(/data-sk-text-content="A long declared address"/g)||[]).length,1);assert.doesNotMatch(html,/height:(99|125)px/);assert.ok(artifact.diagnostics.some(d=>d.code==='FALLBACK'));assert.ok(artifact.diagnostics.some(d=>/glyph prototypes/.test(d.message)));
+  assert.doesNotMatch(html,/A long declared address|data-sk-text-content/);assert.doesNotMatch(html,/height:(99|125)px/);assert.ok(artifact.diagnostics.some(d=>d.code==='FALLBACK'));assert.ok(artifact.evidence.some(e=>/table outline/.test(e.decision)));
  });
 });
 
@@ -95,8 +95,9 @@ test('table column callbacks isolate item/index bindings from sibling columns an
   const { artifact } = await compileTarget(root, { id: 'isolated', source: 'View.vue', hints: { repeat: 1 } }, {}, { componentPresets: ['element-plus'] });
   const html = artifact.variants.default.html;
   const alignments = (tag: string) => [...html.matchAll(new RegExp(`<${tag}\\b[^>]*style="[^"]*text-align:(left|center|right)`, 'g'))].map(match => match[1]);
-  assert.deepEqual(alignments('th'), ['center', 'right', 'right']);
-  assert.deepEqual(alignments('td'), ['left', 'right', 'center']);
+  assert.deepEqual(alignments('th'), []);
+  assert.deepEqual(alignments('td'), []);
+  assert.match(html,/>First<\/th>/);assert.match(html,/>Second<\/th>/);assert.match(html,/>Third<\/th>/);
   assert.match(html, /class="center el-pagination"/);
   assert.ok(artifact.diagnostics.some(diagnostic => diagnostic.code === 'PRESET_LIMIT'));
   assert.ok(!artifact.diagnostics.some(diagnostic => diagnostic.code === 'FALLBACK'));

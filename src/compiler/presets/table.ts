@@ -20,6 +20,39 @@ export interface TableGeometry {
   column(props: Record<string, unknown>): Pick<TableColumn, 'width' | 'fixed' | 'type'>;
   layout(columns: readonly TableColumn[], width: number, props: Record<string, unknown>): TableLayout;
 }
+
+/** Loading capacity is representative and independent of response values. */
+export function tableOutline(props: Record<string, unknown>, declarations: readonly TableColumn[], hints: SkeletonHints = {}, native = false): Presentation {
+  const configured: {label:string;width:string}[] = [];
+  const source = props.columns && typeof props.columns === 'object' && Object.hasOwn(props.columns, SOURCE_INITIAL)
+    ? (props.columns as {[SOURCE_INITIAL]:unknown})[SOURCE_INITIAL] : props.columns;
+  let visited = 0;
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const column of value) {
+      if (++visited > 64 || configured.length >= 6) return;
+      if (!column || typeof column !== 'object' || column.hide === true) continue;
+      if (Array.isArray(column.children)) collect(column.children);
+      else configured.push({label:scalar(column.title ?? column.label),width:dimension(column.width ?? column.minWidth,'')});
+    }
+  };
+  collect(source);
+  const columns = configured.length ? configured : declarations.length ? declarations.slice(0,6)
+    : Array.from({length:3},()=>({label:'',width:''}));
+  const rows = Math.min(24, Math.max(1, Math.floor(hints.repeat ?? 4)));
+  const text = '<span data-sk-layout data-sk-text data-sk-leaf></span>';
+  const headers = props.showHeader === false ? '' : `<thead data-sk-layout><tr data-sk-layout>${columns.map(column=>`<th data-sk-layout data-sk-control>${column.label ? escape(column.label) : text}</th>`).join('')}</tr></thead>`;
+  const data = props.data ?? props.dataSource ?? props['data-source'];
+  const body = hints.state === 'source' && Array.isArray(data) && data.length === 0 && hints.repeat == null
+    ? `<tr data-sk-layout><td data-sk-layout data-sk-control colspan="${columns.length}">No data</td></tr>`
+    : Array.from({length:rows},()=>`<tr data-sk-layout>${columns.map(()=>`<td data-sk-layout>${text}</td>`).join('')}</tr>`).join('');
+  const children = `<colgroup data-sk-layout>${columns.map(c=>`<col data-sk-layout${c.width ? ` style="width:${c.width}"` : ''}>`).join('')}</colgroup>${headers}<tbody data-sk-layout>${body}</tbody>`;
+  const tableStyle = 'width:100%;table-layout:fixed;border-collapse:collapse;';
+  const dimensions = `${props.height != null ? 'height:'+dimension(props.height,'auto')+';' : ''}${props.maxHeight != null ? 'max-height:'+dimension(props.maxHeight,'none')+';' : ''}${hints.minHeight != null ? 'min-height:'+dimension(hints.minHeight,'0px')+';' : ''}`;
+  return native ? {tag:'table',style:tableStyle+dimensions,children}
+    : {tag:'div',className:'sk-table-outline',style:'min-width:0;max-width:100%;overflow-x:auto;'+dimensions,
+      children:`<table data-sk-layout data-sk-outline data-sk-data-table style="${tableStyle}">${children}</table>`};
+}
 const plainGeometry: TableGeometry = {
   column: props => ({ width: dimension(props.width ?? props.minWidth, '120px'), fixed: props.width != null, type: undefined }),
   layout: columns => ({
@@ -87,6 +120,7 @@ export function table(
   masked = true,
   geometry: TableGeometry = plainGeometry,
 ): Presentation {
+  if (masked) return tableOutline(props, slotColumns, hints);
   const { columns: roots, data, glyphs, rows, notes } = tableData(props, slotColumns, hints, masked, geometry);
   const columns:TableColumn[]=[];
   const leaves=(column:TableColumn,depth=0)=>{if(depth>16||columns.length>=256)return;if(column.children?.length)column.children.forEach(child=>leaves(child,depth+1));else columns.push(column)};roots.forEach(column=>leaves(column));
@@ -114,7 +148,7 @@ export function table(
       const content = column.type === 'selection' ? masked ? selectionPlaceholder : selection
         : column.type === 'expand' ? masked ? expandPlaceholder : '<span data-sk-layout data-sk-control>›</span>'
         : column.content || (typeof value === 'string' || typeof value === 'number'
-          ? `<span data-sk-layout data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escape(value)}"></span>` : text);
+          ? escape(value) : text);
       return `<td data-sk-layout${spans} style="padding:${layout.cellPadding};text-align:${column.align ?? 'left'};border-bottom:1px solid #eee">${layout.cellOpen}${content}${layout.cellClose}</td>`;
     }).join('');
     return `<tr data-sk-layout${layout.rowClass ? ` class="${escape(layout.rowClass)}"` : ''}>${cells}</tr>`;

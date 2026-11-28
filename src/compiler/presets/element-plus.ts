@@ -111,8 +111,8 @@ export const elementPlusPreset: ComponentPreset = {
   present(name, props, text, hints, policy) {
     const n = name.replace(/^el/, '');
     if (n === 'alert') return elementAlert(props,policy.slots,text);
-    if (n === 'tree') return elementTree(props,hints,policy.frames??[],text);
-    if (n === 'upload') return elementUpload(props,policy.slots,policy.frames??[],text,hints);
+    if (n === 'tree') return elementTree(props,hints,policy.frames??[],text,!policy.preserve);
+    if (n === 'upload') return elementUpload(props,policy.slots,policy.frames??[],text,hints,!policy.preserve);
     if (n === 'watermark') return {tag:'div',className:'el-watermark',style:'position:relative',children:policy.slots.default};
     if (n === 'tooltip') return { tag: 'span', style: 'display:contents', children: policy.slots.default };
     if (n === 'treeselect' || n === 'selectv2' || n === 'cascader') return input(props);

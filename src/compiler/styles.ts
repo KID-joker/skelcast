@@ -178,14 +178,15 @@ export function scopeArtifactStyles(css: string | postcss.Root, html: string, id
 }
 
 export const baseCSS = `
-[data-sk-artifact] { color: transparent; pointer-events: none; }
+[data-sk-artifact] { color: var(--skeleton-control-color, #606266); pointer-events: none; }
 [data-sk-artifact] [data-sk-control] { color: var(--skeleton-control-color, #606266); }
 [data-sk-artifact] [data-sk-control] [data-sk-image]:not([data-sk-leaf]) { outline:1px solid currentColor;outline-offset:-1px;border-radius:2px; }
 [data-sk-artifact] [data-sk-layout] { box-sizing: border-box; }
 [data-sk-artifact] [data-sk-leaf] { color: transparent !important; background-color: var(--skeleton-color, #e5e9ef) !important; border-color: transparent !important; border-radius: var(--skeleton-radius, 6px); }
 [data-sk-artifact] [data-sk-text] { display: inline-block; width: var(--skeleton-text-width, 12ch); max-width: 100%; min-width: 3ch; height: .85em; vertical-align: middle; }
-[data-sk-artifact] [data-sk-measured] { display: inline; width: auto; min-width: 0; height: auto; vertical-align: baseline; font: inherit; letter-spacing: inherit; text-transform: inherit; text-shadow: none !important; -webkit-text-fill-color: transparent !important; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-[data-sk-artifact] [data-sk-measured]::before { content: attr(data-sk-text-content); }
+:where([data-sk-artifact] [data-sk-outline] :is(th,td)) { padding: 10px 12px; height: 40px; text-align:left; border-bottom:1px solid var(--skeleton-border-color,#e4e7ed); }
+:where([data-sk-artifact] [data-sk-outline] th) { font-weight:500; }
+:where([data-sk-artifact] .sk-graphic-outline) { width:100%;aspect-ratio:2; }
 [data-sk-artifact] :where([data-sk-image]) { aspect-ratio: var(--skeleton-image-ratio, auto); }
 :where([data-sk-artifact] :is(span,a,button,label,i,em,strong,small,sup,sub)) { --sk-inline-footprint: 1em; }
 :where([data-sk-artifact] [data-sk-fallback]) { display: block; width: var(--sk-inline-footprint, 100%); height: var(--sk-fallback-height, var(--sk-inline-footprint, var(--sk-available-height, var(--skeleton-min-height, 96px)))); }

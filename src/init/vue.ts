@@ -4,6 +4,7 @@ import { applyEdits, boundaryImports, createConditionAnalyzer, importOffset, loa
 import { startOf, nodeName, parseSource, walk } from '../compiler/ast.js';
 import { type AnalysisContext, type FileAnalysis } from './types.js';
 import { targetBuilder } from './targets.js';
+import { policyBindings, containsLiveVue, liveVue, fixedShellVue } from './policy.js';
 
 const directive = (node: ElementNode, name: string) => node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === name);
 const contentOf = (text: string, node: ElementNode) => text.slice(node.loc.start.offset, node.loc.end.offset);
@@ -22,6 +23,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   // script forms, edits need block-local offsets rather than the combined AST.
   const scriptAsts = new Map(scripts.map(script => [script, scripts.length === 1 && ctx.ast ? ctx.ast : parseSource(script.content, ctx.file, script.lang === 'jsx' || script.lang === 'tsx')]));
   const scriptAst = (script: NonNullable<typeof descriptor.script>) => scriptAsts.get(script)!;
+  const policies = new Map([...Object.entries(ctx.existing.componentPolicies??{}),...scripts.flatMap(script=>[...policyBindings(scriptAst(script),ctx.existing.componentPolicies)])]);
   const boundaryNames = new Set<string>();
   for (const script of scripts) for (const name of boundaryImports(scriptAst(script), 'vue')) boundaryNames.add(name);
   const normalize = (name: string) => name.replace(/-/g, '').toLowerCase();
@@ -31,6 +33,10 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
     const config = objectConfig(scriptAst(descriptor.script));
     const components = config?.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'components');
     if (components?.type === 'ObjectProperty' && components.value.type === 'ObjectExpression') {
+      for(const prop of components.value.properties)if(prop.type==='ObjectProperty'){
+        const name=nodeName(prop.key),policy=policies.get(nodeName(prop.value)??'');
+        if(name&&policy)policies.set(name,policy);
+      }
       for (const prop of components.value.properties) if (prop.type === 'ObjectProperty' && boundaryNames.has(nodeName(prop.value) ?? '')) {
         const name = nodeName(prop.key)!;
         registeredNames.add(normalize(name));
@@ -64,10 +70,12 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
       const node = nodes[i];
       if (node.type !== 1) continue;
       if (isBoundary(node)) {
+        if(containsLiveVue(node.children,policies))result.diagnostics.push({code:'LIVE_CONTENT_IN_BOUNDARY',file:ctx.file,line:template.loc.start.line+node.loc.start.line-1,message:'Existing boundary contains live content; move the widget outside it or split its data regions'});
         const pending = node.props.find((p): p is DirectiveNode => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'pending');
         scan(node.children, pending?.exp?.type === 4 ? [...managed, pending.exp.content] : managed);
         continue;
       }
+      if(liveVue(node,policies))continue;
       if (['tr', 'td', 'th', 'tbody', 'thead', 'tfoot', 'li', 'option'].includes(node.tag)) {
         if (directive(node, 'loading')) result.diagnostics.push({ code: 'UNSAFE_CONTAINER', file: ctx.file, message: 'Select the enclosing table/list container for a block boundary' });
         continue;
@@ -86,6 +94,10 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
         if (alternate?.type === 1 && elseDirective && loader(node) !== loader(alternate)) {
           const firstIsLoader = loader(node), content = firstIsLoader ? alternate : node;
           const pending = firstIsLoader ? expr : `!(${expr})`;
+          if(containsLiveVue([content],policies)){
+            result.diagnostics.push({code:'LIVE_CONTENT_IN_BOUNDARY',file:ctx.file,line:template.loc.start.line+content.loc.start.line-1,message:'Loading branch contains live content; move its guard to the data region before adding a boundary'});
+            i=j;continue;
+          }
           let html = contentOf(text, content);
           if (firstIsLoader) {
             const offset = elseDirective.loc.start.offset - content.loc.start.offset;
@@ -104,6 +116,24 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
       const expression = (loading ?? boundLoading)?.exp;
       const pending = expression?.type === 4 ? expression.content : undefined;
       if (pending && !/button|input|select|link/i.test(node.tag) && pureCondition(pending) && !managed.some(value => sameCondition(value, pending))) {
+        if(containsLiveVue([node],policies)){
+          const selected:ElementNode[]=[];
+          const removals:Edit[]=[];
+          const partition=(child:TemplateChildNode):boolean=>{
+            if(child.type!==1)return true;
+            if(liveVue(child,policies))return true;
+            if(!containsLiveVue([child],policies)){if(!fixedShellVue(child))selected.push(child);return true;}
+            if(!/^(?:main|section|article|div|form)$/.test(child.tag)||child.props.some(p=>p.type===7&&['if','else','else-if','for','show'].includes(p.name)))return false;
+            const original=child.props.find(p=>p.type===7&&(p.name==='loading'||p.name==='bind'&&p.arg?.type===4&&p.arg.content==='loading'));
+            if(original)removals.push({start:original.loc.start.offset,end:original.loc.end.offset,text:''});
+            return child.children.every(partition);
+          };
+          if(partition(node)){
+            edits.push(...removals);
+            for(const child of selected)add(child.loc.start.offset,child.loc.end.offset,contentOf(text,child),pending,{[pending]:false},'request');
+          }else result.diagnostics.push({code:'LIVE_CONTENT_IN_BOUNDARY',file:ctx.file,line:template.loc.start.line+node.loc.start.line-1,message:'Live content shares a conditional or component layout with loading data; narrow this boundary in source'});
+          continue;
+        }
         let html = contentOf(text, node);
         if (loading) {
           const offset = loading.loc.start.offset - node.loc.start.offset;
@@ -115,7 +145,8 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
     }
   };
   scan(ast.children);
-  if (ctx.page && !hasPage && !result.targets.some(t => t.kind === 'page')) {
+  if(ctx.page&&!hasPage&&containsLiveVue(ast.children,policies))result.diagnostics.push({code:'PAGE_LIVE_CONTENT',file:ctx.file,message:'Keep live widgets and page shell mounted; generate independent request regions instead of a whole-page boundary'});
+  if (ctx.page && !hasPage && !result.targets.some(t => t.kind === 'page') && !containsLiveVue(ast.children,policies)) {
     result.diagnostics.push({ code: 'PAGE_PREVIEW_ONLY', file: ctx.file, message: 'Page preview has no source-proven pending state. Existing request boundaries remain independent; connect an explicit pending state for real page loading.' });
     const artifact = addTarget({ suffix: 'page', kind: 'page', bindings: allBindings });
     edits.push({ start: 0, end: 0, text: `<${boundary} :artifact="${artifact}" :pending="false"><!-- skelcast:init -->` }, { start: text.length, end: text.length, text: `</${boundary}>` });

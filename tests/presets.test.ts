@@ -83,9 +83,9 @@ test('Element Plus keeps outer controls and simplifies table cell controls, with
       assert.ok(table);
       assert.equal(elements(table.loc.source).filter((n) => n.tag === 'th').length, 3);
       assert.equal(elements(table.loc.source).filter((n) => n.tag === 'td').length, 12);
-      assert.match(html, />Name<\/div><\/th>/);
+      assert.match(html, />Name<\/th>/);
       const actions=elements(table.loc.source).filter(n=>n.tag==='button');
-      assert.equal(actions.length,4);
+      assert.equal(actions.length,0);
       assert.ok(actions.every(n=>has(n,'data-sk-leaf')&&n.loc.source.includes('data-sk-text-content="Delete"')));
       assert.doesNotMatch(html, /danger|privateAPI|never run/);
       assert.equal(artifact.diagnostics.filter((d) => d.code === 'FALLBACK').length, 1);
@@ -119,13 +119,13 @@ test('Ant Design supports React compound components and deep imports without exe
       assert.match(html, /value="initial"/);
       assert.equal(els.filter((n) => has(n, 'data-sk-calendar-cell')).length, 42);
       assert.ok(artifact.diagnostics.some((d) => d.message.includes('renderItem')));
-      assert.ok(artifact.diagnostics.some((d) => d.message.includes('column renderers')));
+      assert.ok(artifact.evidence.some((e) => e.decision.includes('table outline')));
       assert.doesNotMatch(html, /danger|never run/);
     },
   );
 });
 
-test('table columns follow forwarded children, retain escaped content and stay scoped to nested tables', async () => {
+test('table outlines read direct column declarations and skip forwarded and nested cell widgets', async () => {
   await fixture({
     'Forward.vue': '<template><section><slot/></section></template>',
     'Forward.tsx': 'export default ({children}) => <section>{children}</section>',
@@ -146,15 +146,13 @@ test('table columns follow forwarded children, retain escaped content and stay s
       const { artifact } = await compileTarget(root, { id: 'columns', source, hints: { repeat: 1 } }, {}, presetOptions);
       const html = artifact.variants.default.html;
       const tables = elements(html).filter(node => has(node, 'data-sk-data-table'));
-      assert.equal(tables.length, 5);
+      assert.equal(tables.length, 4);
       const headers = tables.map(table => elements(table.loc.source).filter(node => node.tag === 'th'));
-      assert.deepEqual(headers.map(nodes => nodes.length), [2, 3, 1, 2, 1]);
-      assert.match(headers[0][0].loc.source, /Name &amp; &quot;code&quot; &lt;tag&gt;/);
-      assert.match(headers[0][1].loc.source, /Actions/);
+      assert.deepEqual(headers.map(nodes => nodes.length), [1, 3, 1, 1]);
+      assert.match(headers[0][0].loc.source, /Actions/);
       assert.match(headers[2][0].loc.source, /Explicit/);
       assert.match(headers[3][0].loc.source, /Outer/);
-      assert.match(headers[4][0].loc.source, /Inner/);
-      assert.match(html, /data-sk-text-content="Open &amp; inspect"/);
+      assert.doesNotMatch(html, /Open &amp; inspect|Inner|Name &amp;/);
       assert.ok(elements(html).filter(node => node.tag === 'button').every(node => has(node, 'data-sk-leaf')));
       assert.doesNotMatch(html, /Discarded|Ignored|skelcast-column:|data-sk-column|data-cell=/);
       assert.equal(artifact.diagnostics.filter(row => row.code === 'FALLBACK').length, 0);

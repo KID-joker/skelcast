@@ -34,6 +34,6 @@ export interface ComponentPreset {
     props: Record<string, unknown>,
     text: () => string,
     hints: SkeletonHints,
-    policy: { mask: boolean; readonly children: string; slots: Record<string, string>; columns: TableColumns; frames?: {key:string;html:string}[] },
+    policy: { mask: boolean; preserve?: boolean; readonly children: string; slots: Record<string, string>; columns: TableColumns; frames?: {key:string;html:string}[] },
   ) => Presentation | undefined;
 }

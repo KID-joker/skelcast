@@ -64,7 +64,7 @@ test('React satisfies wrappers preserve native layout in generated skeletons', a
     await page.setContent(`<!doctype html><style>${view.css}</style>${view.html}`);
     await expect(page.locator('section')).toHaveCSS('width', '168px');
     await expect(page.locator('section')).toHaveCSS('height', '44px');
-    await expect(page.locator('section > p [data-sk-measured]')).toHaveAttribute('data-sk-text-content', 'Value');
+    await expect(page.locator('section > p')).toHaveText('Value');
   });
 });
 
@@ -133,7 +133,7 @@ test('Element Plus card slots, body overrides, statistics and scrollbar keep the
     expect((await page.locator('.timer').boundingBox())!.height).toBeCloseTo(54,1);
     await expect(page.locator('.el-progress--line')).toHaveCSS('height','21px');
     await expect(page.locator('.el-progress--circle')).toHaveCSS('width','80px');
-    await expect(page.locator('.el-statistic__suffix [data-sk-measured]')).toHaveAttribute('data-sk-text-content','%');
+    await expect(page.locator('.el-statistic__suffix')).toHaveText('%');
     await expect(page.locator('.el-scrollbar')).toHaveCSS('height','100px');
     await expect(page.locator('.el-scrollbar__wrap')).toHaveCSS('max-height','80px');
     await expect(page.locator('a.el-link')).toHaveText('Details');

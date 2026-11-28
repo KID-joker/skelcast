@@ -20,14 +20,14 @@ test('graphics keep their source viewport without traversing chart internals in 
       const { html } = artifact.variants.default;
       assert.match(html, /<svg[^>]*viewbox="0 0 640 320"[^>]*data-sk-leaf[^>]*><\/svg>/);
       assert.match(html, /<canvas[^>]*width="640" height="320"[^>]*data-sk-leaf[^>]*><\/canvas>/);
-      assert.match(html, /<p[^>]*><span/);
+      assert.match(html, source === 'HTML.vue' ? /<p[^>]*><span/ : /<p[^>]*>After chart<\/p>/);
       assert.doesNotMatch(html, /MissingChart|Revenue|Fallback detail/);
       assert.deepEqual(artifact.diagnostics, [], source);
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('native cell controls simplify while headers, outer controls and explicit preserve regions retain policy', async () => {
+test('native tables stop at their outline while outer controls and preserved graphics retain policy', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-large-cells-'));
   try {
     const markup = '<button>Refresh</button><table><thead><tr><th>Name</th><th>Actions</th></tr></thead><tbody><tr><td colspan="1" rowspan="2">Long value</td><td><button>Delete</button><button data-sk-preserve>Keep</button></td></tr></tbody></table><svg data-sk-preserve width="24" height="24"><title>Preserved</title></svg>';
@@ -40,9 +40,8 @@ test('native cell controls simplify while headers, outer controls and explicit p
       const { html } = artifact.variants.default;
       assert.match(html, /<button[^>]*data-sk-control[^>]*>Refresh<\/button>/);
       assert.match(html, /<th[^>]*>Name<\/th>/);
-      assert.match(html, /colspan="1" rowspan="2"/);
-      assert.match(html, /<button[^>]*data-sk-leaf[^>]*><span[^>]*data-sk-text-content="Delete"/);
-      assert.match(html, /<button[^>]*data-sk-preserve[^>]*>Keep<\/button>/);
+      assert.doesNotMatch(html, /rowspan|Delete|Long value|Keep/);
+      assert.equal((html.match(/<td /g)??[]).length,8);
       assert.match(html, /<svg[^>]*data-sk-preserve[^>]*><title[^>]*>Preserved<\/title><\/svg>/);
       assert.deepEqual(artifact.diagnostics, []);
     }
