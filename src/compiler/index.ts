@@ -37,7 +37,7 @@ import { bindSetupDeclarations } from './instance-values.js';
 import { componentInputs, presetProps } from './props.js';
 import { viewportStyle, providedValues, providedFrames } from './viewport-style.js';
 import { initialString } from './initial-state.js';
-import { supportedBody } from './vue-syntax.js';
+import { parseVueLoop, supportedBody } from './vue-syntax.js';
 import { initializeLayout } from './layout-effects.js';
 import { outlineColumns, tableNames } from './outline.js';
 import { tableOutline } from './presets/table.js';
@@ -214,14 +214,14 @@ export class SourceCompiler extends SourceModules {
         if (--budget < 0) return;
         const loop = !repeated ? node.props.find(p => p.type === 7 && p.name === 'for') : undefined;
         if (loop?.type === 7 && loop.exp?.type === 4) {
-          const match = loop.exp.content.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
-          if (!match) return;
-          let list = evaluateString(match[2],ctx); if (!Array.isArray(list)) list = initialString(match[2],ctx);
+          const syntax = parseVueLoop(loop.exp.content,ctx);
+          if (!syntax) return;
+          let list = evaluateString(syntax.source,ctx); if (!Array.isArray(list)) list = initialString(syntax.source,ctx);
           if (!Array.isArray(list) || list.length > 256) return;
-          const fn = parseSourceExpression(`(${match[1].trim().replace(/^\(([\s\S]*)\)$/,'$1')})=>0`);
-          if (fn?.type !== 'ArrowFunctionExpression') return;
+          const params = syntax.params;
+          if (!params) return;
           const children: Value[] = [];
-          for (let index=0;index<list.length;index++) { const local={...ctx,env:{...ctx.env}};bindPattern(fn.params[0],list[index],local.env);if(fn.params[1])bindPattern(fn.params[1],index,local.env);const nested = await collect([node],local,true); if (!nested) return; children.push(...nested); }
+          for (let index=0;index<list.length;index++) { const local={...ctx,env:{...ctx.env}};bindPattern(params[0],list[index],local.env);if(params[1])bindPattern(params[1],index,local.env);const nested = await collect([node],local,true); if (!nested) return; children.push(...nested); }
           values.push(sourceObject({type:Symbol('source-fragment'),children}));continue;
         }
         for (const directive of node.props) if (directive.type === 7 && ['if','else','else-if'].includes(directive.name)) return;
@@ -519,7 +519,6 @@ export class SourceCompiler extends SourceModules {
       this.css.set(resolved, (await this.readStyle(resolved)).css);
     }
     const entry = this.callsite ? path.resolve(this.root,this.callsite.source) : source;
-    if (this.callsite) await this.scan(entry);
     const content = await this.component(entry, this.callsite ? 'default' : this.target.export ?? 'default');
     let html = `<div data-sk-artifact="${this.target.id}" aria-hidden="true" style="--skeleton-min-height:${this.hints.minHeight ?? 96}px">${content}</div>`;
     for (const [key, style] of this.inlineStyles) {

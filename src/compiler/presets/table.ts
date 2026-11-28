@@ -1,5 +1,5 @@
 import type { SkeletonHints } from '../../types.js';
-import { SOURCE_INITIAL, UNKNOWN, sourceCall, sourceObject, sourceCapacity, sourceCellGlyphs } from '../expression.js';
+import { SOURCE_INITIAL, UNKNOWN, sourceCall, sourceObject, sourceCapacity } from '../expression.js';
 import type { TableColumn } from './columns.js';
 import type { Presentation } from './types.js';
 import { dimension, escape, scalar } from './shared.js';
@@ -62,7 +62,7 @@ const plainGeometry: TableGeometry = {
 };
 
 /** Normalize source columns and loading capacity independently of library geometry. */
-function tableData(props: Record<string, unknown>, slotColumns: readonly TableColumn[], hints: SkeletonHints, masked: boolean, geometry: TableGeometry) {
+function tableData(props: Record<string, unknown>, slotColumns: readonly TableColumn[], hints: SkeletonHints, geometry: TableGeometry) {
   const descriptors: TableColumn[] = [];
   const notes: string[] = [];
   let columns = props.columns;
@@ -100,16 +100,12 @@ function tableData(props: Record<string, unknown>, slotColumns: readonly TableCo
   const declaredCapacity = hints.state === 'loading' && typeof capacity === 'number' && Number.isInteger(capacity) && capacity > 0 ? capacity : undefined;
   if (declaredCapacity != null && (data === UNKNOWN || !Array.isArray(data) || loadingEmpty)) notes.push('Loading row capacity follows source-declared pagination; response count and cell values remain unknown.');
   const sourceBound = sourceCapacity(data);
-  const glyphs = masked ? sourceCellGlyphs(data) : undefined;
   if (sourceBound != null) notes.push('Representative row capacity follows the source collection declaration or slice bound; later mutations, result length and cell values remain unknown.');
-  if (glyphs) notes.push('Masked cell wrapping follows literal source glyph prototypes; helper mutations and actual cell values remain unknown. These prototypes are not expression bindings.');
   const rows = Math.min(24, Math.max(0, Math.floor(hints.repeat ?? (Array.isArray(data) && !loadingEmpty ? data.length : declaredCapacity ?? sourceBound ?? 4))));
-  return { columns: descriptors.slice(0, 24), data, glyphs, rows, notes: [...new Set(notes)] };
+  return { columns: descriptors.slice(0, 24), data, rows, notes: [...new Set(notes)] };
 }
 
 const selection = '<input data-sk-layout type="checkbox" disabled tabindex="-1" data-sk-control style="width:14px;height:14px;margin:0;vertical-align:middle">';
-const selectionPlaceholder = '<span data-sk-layout data-sk-leaf style="display:inline-block;width:14px;height:14px;vertical-align:middle"></span>';
-const expandPlaceholder = '<span data-sk-layout data-sk-leaf style="display:inline-block;width:7px;height:14px;vertical-align:middle"></span>';
 
 /** Render finite table structure; library-specific sizing is supplied once per table. */
 export function table(
@@ -121,7 +117,7 @@ export function table(
   geometry: TableGeometry = plainGeometry,
 ): Presentation {
   if (masked) return tableOutline(props, slotColumns, hints);
-  const { columns: roots, data, glyphs, rows, notes } = tableData(props, slotColumns, hints, masked, geometry);
+  const { columns: roots, data, rows, notes } = tableData(props, slotColumns, hints, geometry);
   const columns:TableColumn[]=[];
   const leaves=(column:TableColumn,depth=0)=>{if(depth>16||columns.length>=256)return;if(column.children?.length)column.children.forEach(child=>leaves(child,depth+1));else columns.push(column)};roots.forEach(column=>leaves(column));
   const width = columns.reduce((sum, column) => sum + (/^\d+px$/.test(column.width) ? parseFloat(column.width) : 120), 0);
@@ -136,7 +132,7 @@ export function table(
   };roots.forEach(column=>headerCell(column,0));
   const header=headers.map(row=>`<tr data-sk-layout>${row.join('')}</tr>`).join('');
   const body = Array.from({ length: rows }, (_, index) => {
-    const row = Array.isArray(data) ? data[index] : glyphs?.[index];
+    const row = Array.isArray(data) ? data[index] : undefined;
     const cells = columns.map((column,columnIndex) => {
       const span=props.spanMethod?sourceCall(props.spanMethod,[sourceObject({row:row??UNKNOWN,column:UNKNOWN,rowIndex:index,columnIndex})]):undefined;
       if(span===UNKNOWN&&!notes.some(note=>note.startsWith('Cell span callback')))notes.push('Cell span callback depends on opaque or response values; only source-proven index recipes can preserve merged cells.');
@@ -145,8 +141,8 @@ export function table(
       if(rowSpan===0||colSpan===0)return'';
       const spans=`${typeof rowSpan==='number'&&Number.isInteger(rowSpan)&&rowSpan>0?` rowspan="${Math.min(24,rowSpan)}"`:''}${typeof colSpan==='number'&&Number.isInteger(colSpan)&&colSpan>0?` colspan="${Math.min(256,colSpan)}"`:''}`;
       const value = row && typeof row === 'object' && Object.hasOwn(row, column.field) ? (row as Record<string, unknown>)[column.field] : undefined;
-      const content = column.type === 'selection' ? masked ? selectionPlaceholder : selection
-        : column.type === 'expand' ? masked ? expandPlaceholder : '<span data-sk-layout data-sk-control>›</span>'
+      const content = column.type === 'selection' ? selection
+        : column.type === 'expand' ? '<span data-sk-layout data-sk-control>›</span>'
         : column.content || (typeof value === 'string' || typeof value === 'number'
           ? escape(value) : text);
       return `<td data-sk-layout${spans} style="padding:${layout.cellPadding};text-align:${column.align ?? 'left'};border-bottom:1px solid #eee">${layout.cellOpen}${content}${layout.cellClose}</td>`;

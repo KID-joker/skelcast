@@ -121,14 +121,11 @@ export async function utilityCSS(html: string, options?: StyleOptions): Promise<
     presets: [presetMini(), ...(config.attributify === false ? [] : [presetAttributify({ ignoreAttributes: ['size'] })])],
     theme: config.theme, shortcuts: config.shortcuts, safelist: config.safelist,
   });
-  // Mini's transform utilities depend on preflight CSS variables. scopeCSS keeps
+  // Mini's transform utilities depend on preflight CSS variables. scopeArtifactStyles keeps
   // these defaults inside the artifact instead of affecting the application.
   return (await generator.generate(html)).css;
 }
 
-export function scopeCSS(css: string, id: string): string {
-  return scopeArtifactStyles(css, '', id).css;
-}
 export function scopeArtifactStyles(css: string | postcss.Root, html: string, id: string): { css: string; html: string } {
   const scope = `[data-sk-artifact="${id}"]`;
   const source = typeof css === 'string' ? css : css.toString();

@@ -4,7 +4,8 @@ import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {compileTarget} from '../src/compiler/index.js';
-import {pruneCSS} from '../src/compiler/prune-css.js';
+import {pruneStyleRules} from '../src/compiler/prune-css.js';
+import postcss from 'postcss';
 
 async function fixture(files:Record<string,string>,run:(root:string)=>Promise<void>){const root=await mkdtemp(path.join(os.tmpdir(),'skelcast-remaining-'));try{for(const [file,source]of Object.entries(files)){await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),source);}await run(root);}finally{await rm(root,{recursive:true,force:true});}}
 
@@ -65,8 +66,10 @@ test('global plugin registrations and reachable table cores require source/impor
 
 test('CSS pruning retains negative/alternative/theme selectors and refuses to remove unknown-font resources',()=>{
  const source=`.missing{height:99px}.present:not(.missing){height:20px}:is(.missing,.present){width:30px}.dark .present{color:red}@media(min-width:700px){.present{height:40px}.other{height:60px}}@font-face{font-family:Unused;src:url(data:font/woff2;base64,AA)}@keyframes fade{to{opacity:0}}`;
- const pruned=pruneCSS(source,'<div class="present"></div>');assert.doesNotMatch(pruned,/height:99px|height:60px|font-family:Unused/);assert.match(pruned,/:not\(\.missing\)/);assert.match(pruned,/:is\(\.missing,\.present\)/);assert.match(pruned,/\.dark/);assert.match(pruned,/@keyframes fade/);
- assert.match(pruneCSS(source+`.present{font-family:var(--external-font)}`,'<div class="present"/>'),/font-family:Unused/);
+ const root=postcss.parse(source);pruneStyleRules(root,'<div class="present"></div>');
+ const pruned=root.toString();assert.doesNotMatch(pruned,/height:99px|height:60px|font-family:Unused/);assert.match(pruned,/:not\(\.missing\)/);assert.match(pruned,/:is\(\.missing,\.present\)/);assert.match(pruned,/\.dark/);assert.match(pruned,/@keyframes fade/);
+ const unknownFont=postcss.parse(source+`.present{font-family:var(--external-font)}`);pruneStyleRules(unknownFont,'<div class="present"/>');
+ assert.match(unknownFont.toString(),/font-family:Unused/);
 });
 
 test('source ID provenance records finite source IDs independently of runtime-generated identifiers',async()=>{

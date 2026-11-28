@@ -2,6 +2,7 @@ import type { DirectiveNode, TemplateChildNode as VueNode } from '@vue/compiler-
 import type { RenderContext } from './context.js';
 import { UNKNOWN, bindPattern, evaluateString, parseSourceExpression } from './expression.js';
 import type { RenderHost } from './render-host.js';
+import { parseVueLoop } from './vue-syntax.js';
 
 const syntax = new WeakMap<VueNode[], { node: VueNode; slot?: DirectiveNode; loop?:DirectiveNode; nodes: VueNode[] }[]>();
 
@@ -40,10 +41,10 @@ export function expandedTemplateSlots(host:RenderHost,nodes:VueNode[],ctx:Render
  const result:(ReturnType<typeof templateSlots>[number]&{context:RenderContext})[]=[];
  for(const entry of templateSlots(nodes)){
   if(!entry.loop){result.push({...entry,context:ctx});continue}
-  const expression=entry.loop.exp?.type===4?entry.loop.exp.content:'',match=expression.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
-  const list=match?evaluateString(match[2],ctx):UNKNOWN,fn=match?parseSourceExpression(`(${match[1].trim().replace(/^\(([\s\S]*)\)$/,'$1')})=>0`,ctx):undefined;
-  if(!Array.isArray(list)||list.length>256||fn?.type!=='ArrowFunctionExpression'){host.diagnose('SLOT_UNKNOWN','Named slot repetition needs a finite source key list',ctx,entry.node);continue}
-  for(let index=0;index<list.length;index++){const context={...ctx,env:{...ctx.env}};bindPattern(fn.params[0],list[index],context.env);if(fn.params[1])bindPattern(fn.params[1],index,context.env);result.push({...entry,context})}
+  const loop=parseVueLoop(entry.loop.exp?.type===4?entry.loop.exp.content:undefined,ctx);
+  const list=loop?evaluateString(loop.source,ctx):UNKNOWN,params=loop?.params;
+  if(!Array.isArray(list)||list.length>256||!params){host.diagnose('SLOT_UNKNOWN','Named slot repetition needs a finite source key list',ctx,entry.node);continue}
+  for(let index=0;index<list.length;index++){const context={...ctx,env:{...ctx.env}};bindPattern(params[0],list[index],context.env);if(params[1])bindPattern(params[1],index,context.env);result.push({...entry,context})}
  }
  return result;
 }

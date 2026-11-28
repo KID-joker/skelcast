@@ -187,6 +187,25 @@ test('Vue loop and slot parameter syntax is shared across instances and variants
   });
 });
 
+test('repeated named slots and outline columns retain destructured aliases across variants', async () => {
+  await fixture({
+    'View.vue': `<script setup>import{ElCard,ElTable,ElTableColumn}from'element-plus'</script><template><ElCard data-sk-preserve><template v-for="({name,label,width},index) of items" #[name]><b>{{label}}</b></template></ElCard><ElTable><ElTableColumn v-for="({name,label,width},index) of items" :label="label" :width="width"/></ElTable></template>`,
+  }, async root => {
+    const items = [{ name: 'header', label: 'Top', width: 90 }, { name: 'footer', label: 'Bottom', width: 120 }];
+    const { artifact } = await compileTarget(root, { id: 'loop-consumers', source: 'View.vue', variants: {
+      two: { bindings: { items } }, one: { bindings: { items: items.slice(1) } },
+    } }, {}, { componentPresets: ['element-plus'] });
+    const two = artifact.variants.two.html, one = artifact.variants.one.html;
+    assert.match(two, /el-card__header/); assert.match(two, /el-card__footer/);
+    assert.match(two, /width:90px/); assert.match(two, /width:120px/);
+    assert.equal((two.match(/<th /g) ?? []).length, 2);
+    assert.doesNotMatch(one, /el-card__header|Top|width:90px/);
+    assert.match(one, /el-card__footer/); assert.match(one, /Bottom/);
+    assert.equal((one.match(/<th /g) ?? []).length, 1);
+    assert.deepEqual(artifact.diagnostics, []);
+  });
+});
+
 test('setup syntax retains source order and reuses nested visual facts without sharing import identities', () => {
   const ast = parseSource('function setup(){const alias=state;const row=()=>h("p");state.value=2;return()=>row()}');
   const setup = ast.program.body[0];

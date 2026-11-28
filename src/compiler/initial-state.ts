@@ -2,8 +2,6 @@ import type * as t from '@babel/types';
 import{isRenderFunction,nodeName,patternNames,unwrapExpression,walk}from'./ast.js';
 import{UNKNOWN,evaluate,expressionText,parseSourceExpression,safeKey,type ExpressionContext,type Value}from'./expression.js';
 
-type InitialContext = ExpressionContext & { initialValues?: Record<string, Value> };
-
 /** Preserve source-order overwrites while stopping once alias facts stabilize. */
 export function propagateInitialAliases(values: Record<string, Value>, aliases: readonly (readonly [string, string])[]): void {
   for (let pass = 0; pass < aliases.length; pass++) {
@@ -26,7 +24,7 @@ function path(node:t.Node|undefined|null):string|undefined{
 }
 /** Initial presentation facts travel separately from actual expression values.
  * Only explicit presentation consumers may project them into a loading frame. */
-export function initialExpression(node:t.Node,ctx:InitialContext):Value{
+export function initialExpression(node:t.Node,ctx:ExpressionContext):Value{
  const facts=ctx.initialValues;if(!facts)return UNKNOWN;
  const keys=new Set(Object.keys(facts));
  const bindings={...ctx.bindings};let found=false;
@@ -49,6 +47,6 @@ export function initialExpression(node:t.Node,ctx:InitialContext):Value{
  });
  return found?evaluate(node,{...ctx,bindings,layoutFrame:true}):UNKNOWN;
 }
-export function initialString(text:string,ctx:InitialContext):Value{
+export function initialString(text:string,ctx:ExpressionContext):Value{
  try{const node=parseSourceExpression(text,ctx);return node?initialExpression(node,{...ctx,code:text}):UNKNOWN;}catch{return UNKNOWN;}
 }

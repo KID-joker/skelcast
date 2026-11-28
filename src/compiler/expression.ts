@@ -13,7 +13,6 @@ export const SOURCE_RENDER = Symbol('source-render-body');
 export const SOURCE_RENDER_FILE = Symbol('source-render-file');
 export const SOURCE_TYPE_TEST = Symbol('source-type-test');
 export const SOURCE_COLLECTION = Symbol('source-collection-capacity');
-export const SOURCE_CELL_GLYPHS = Symbol('source-declared-cell-glyphs');
 export const SOURCE_COPY = Symbol('source-copy-recipe');
 export const SOURCE_FUNCTION = Symbol('source-function-type');
 export const SOURCE_VUE = Symbol('source-vue-helper');
@@ -22,7 +21,6 @@ export const SOURCE_NORMALIZED = Symbol('source-normalized-layout');
 export const SOURCE_ICON = Symbol('source-library-icon');
 export const SOURCE_FIELDS = Symbol('source-field-projector');
 export function sourceCapacity(value:Value):number|undefined{return value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_COLLECTION)?(value as {[SOURCE_COLLECTION]:number})[SOURCE_COLLECTION]:undefined;}
-export function sourceCellGlyphs(value:Value):unknown[]|undefined{return value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_CELL_GLYPHS)?(value as {[SOURCE_CELL_GLYPHS]:unknown[]})[SOURCE_CELL_GLYPHS]:undefined;}
 const SOURCE_CLOSED = Symbol('source-complete-object');
 export const sourceObject = (values: Record<string, Value>): Record<string, Value> => Object.defineProperty({ ...values }, SOURCE_CLOSED, { value: true });
 const functionType=(value:Value)=>!!value&&typeof value==='object'&&[SOURCE_FUNCTION,SOURCE_COPY,SOURCE_PROJECTION,SOURCE_TYPE_TEST,SOURCE_RENDER,SOURCE_ACCESSOR,SOURCE_VUE,SOURCE_ARRAY_LAYOUT,SOURCE_FIELDS].some(key=>Object.hasOwn(value,key));

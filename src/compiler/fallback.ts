@@ -27,14 +27,6 @@ export function fallbackProps(props: Record<string, Value>, minHeight?: number):
   return { ...attrs, style: declarations.join(';') };
 }
 
-/** A source min-height/aspect-ratio constrains an empty footprint. Change the
- * default fallback height, without overriding any actual source height rule. */
-export function fallbackConstraints(css: string): string {
-  const root = postcss.parse(css);
-  applyFallbackConstraints(root);
-  return root.toString();
-}
-
 /** Add fallback geometry to the stylesheet already owned by the compiler. */
 export function applyFallbackConstraints(root: postcss.Root): void {
   root.walkRules(rule => {

@@ -32,7 +32,6 @@ export async function renderComponent(host: RenderHost, tag: string, props: Reco
     await host.scan(file);
     return host.component(file, 'default', props, ctx, node);
   }
-  reference ??= await host.componentReference(tag, ctx);
   if (reference?.file && (slot.framework === 'render' || /\.(vue|tsx|jsx|ts|js)$/.test(reference.file))) {
     return host.component(reference.file, reference.exported, props, ctx, node);
   }

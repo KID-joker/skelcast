@@ -1,6 +1,6 @@
 import type * as t from '@babel/types';
 import {isRenderFunction,nodeName,patternNames as names,unwrapExpression,walk} from './ast.js';
-import {UNKNOWN,SOURCE_ICON,SOURCE_FIELDS,SOURCE_ARRAY_LAYOUT,SOURCE_PROJECTION,SOURCE_INITIAL,SOURCE_TYPE_TEST,SOURCE_COLLECTION,SOURCE_CELL_GLYPHS,SOURCE_COPY,SOURCE_VUE,sourceCapacity,bindPattern,evaluate,safeKey,type Value} from './expression.js';
+import {UNKNOWN,SOURCE_ICON,SOURCE_FIELDS,SOURCE_ARRAY_LAYOUT,SOURCE_PROJECTION,SOURCE_INITIAL,SOURCE_TYPE_TEST,SOURCE_COLLECTION,SOURCE_COPY,SOURCE_VUE,sourceCapacity,bindPattern,evaluate,safeKey,type Value} from './expression.js';
 import { arrayLayout } from './array-layout.js';
 import {ambiguousExport,type ModuleInfo} from './context.js';
 import {sourceCopyRecipe,type CopyRecipe} from './copy-recipe.js';
@@ -190,11 +190,7 @@ export class StaticValues {
    // Retain it only as metadata for loading capacity; member reads stay unknown.
    const declaration=index.declarations.get(name),expression=unwrapExpression(declaration?.expression);
    if(declaration?.constant&&expression?.type==='ArrayExpression'&&expression.elements.length>0&&expression.elements.length<=256&&!expression.elements.some(e=>e?.type==='SpreadElement')){
-    // Keep literal glyph prototypes separate from expression values. Only a
-    // masked table cell may use them to reserve declared text wrapping; they
-    // cannot drive branches, attributes, callbacks, URLs or live value reads.
-    const glyphs=expression.elements.map(row=>row?.type==='ObjectExpression'&&row.properties.every(p=>p.type==='ObjectProperty'&&!p.computed)?Object.fromEntries(row.properties.flatMap(p=>p.type==='ObjectProperty'&&safeKey(nodeName(p.key))?[[nodeName(p.key)!,p.value.type==='StringLiteral'||p.value.type==='NumericLiteral'?p.value.value:UNKNOWN]]:[])):UNKNOWN);
-    return {[SOURCE_COLLECTION]:expression.elements.length,[SOURCE_CELL_GLYPHS]:glyphs};
+    return {[SOURCE_COLLECTION]:expression.elements.length};
    }
    if(expression?.type==='CallExpression'&&expression.callee.type==='Identifier'){
     const ref=mod.imports.get(expression.callee.name);

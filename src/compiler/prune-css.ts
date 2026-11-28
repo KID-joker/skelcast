@@ -1,17 +1,11 @@
-import postcss from 'postcss';
+import type postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';
 import {parse} from '@vue/compiler-dom';
 
 /** Static markup cannot acquire new component classes. Only reject selectors
  * whose positive class constraints are impossible; unknown pseudos/ancestors,
- * attributes, tags and negative selectors remain conservative. */
-export function pruneCSS(css:string,html:string):string{
- const root=postcss.parse(css);
- pruneStyleRules(root,html);
- return root.toString();
-}
-
-/** Mutate the compilation's stylesheet without a serialization round trip. */
+ * attributes, tags and negative selectors remain conservative.
+ * Mutate the compilation's stylesheet without a serialization round trip. */
 export function pruneStyleRules(root:postcss.Root,html:string):void{
  const classes=new Set(['dark','light']);
  const visit=(node:ReturnType<typeof parse>|ReturnType<typeof parse>['children'][number]|import('@vue/compiler-dom').SimpleExpressionNode)=>{

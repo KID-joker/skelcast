@@ -25,7 +25,6 @@ let pageBoundaryCount = 0;
 const listeners = new Set<() => void>();
 const boundaryListeners = new Set<{ id: string; kind: BoundaryInfo['kind']; listener: () => void }>();
 const artifactRevisions = new Map<string, number>();
-let revision = 0;
 let preview: PreviewState = { target: null, highlight: false, comparison: 'off', opacity: 0.5, comparisonView: 'content' };
 let initialReleased = false;
 let initialHandedOff = false;
@@ -48,9 +47,8 @@ function updateInitial() {
     root.style.setProperty('display', display, 'important');
   }
 }
-function emit() { revision++; listeners.forEach(fn => fn()); }
+function emit() { listeners.forEach(fn => fn()); }
 export function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
-export function snapshot() { return revision; }
 export const serverSnapshot = () => '';
 export function getPreview(): PreviewState { return preview; }
 /** Inspector subscriptions include pending state; boundary subscriptions only track

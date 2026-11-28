@@ -1,9 +1,9 @@
 import type { RenderHost } from './render-host.js';
 import type { RenderContext, SourceNode, SourceSlot } from './context.js';
-import { evaluate, evaluateString, bindPattern, parseSourceExpression, type Ast } from './expression.js';
+import { evaluate, evaluateString, bindPattern, type Ast } from './expression.js';
 import { nodeName, isRenderFunction } from './ast.js';
 import type * as t from '@babel/types';
-import { vueHelper } from './vue-syntax.js';
+import { parseVueLoop, vueHelper } from './vue-syntax.js';
 import { styleString } from './html.js';
 import { resolvePreset } from './presets/index.js';
 import type { TableColumn } from './presets/columns.js';
@@ -37,11 +37,10 @@ export async function outlineColumns(host: RenderHost, source: SourceSlot, nativ
         if(node.props.some(p=>p.type===7&&['if','show'].includes(p.name)&&p.exp?.type===4&&evaluateString(p.exp.content,ctx)===false))continue;
         const loop=node.props.find(p=>p.type===7&&p.name==='for');
         if(!skipLoop&&loop?.type===7&&loop.exp?.type===4){
-          const match=loop.exp.content.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
-          const list=match?evaluateString(match[2],ctx):undefined;
-          const callback=match?parseSourceExpression(`(${match[1].replace(/^\((.*)\)$/,'$1')})=>0`,ctx):undefined;
-          if(Array.isArray(list)&&callback?.type==='ArrowFunctionExpression')for(const[item,index]of list.slice(0,6).map((item,index)=>[item,index] as const)){
-            const local={...ctx,env:{...ctx.env}};bindPattern(callback.params[0],item,local.env);bindPattern(callback.params[1],index,local.env);await visit([node],local,true);
+          const syntax=parseVueLoop(loop.exp.content,ctx),params=syntax?.params;
+          const list=syntax?evaluateString(syntax.source,ctx):undefined;
+          if(Array.isArray(list)&&params)for(const[item,index]of list.slice(0,6).map((item,index)=>[item,index] as const)){
+            const local={...ctx,env:{...ctx.env}};bindPattern(params[0],item,local.env);bindPattern(params[1],index,local.env);await visit([node],local,true);
           }
           continue;
         }

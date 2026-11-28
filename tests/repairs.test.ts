@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { compileTarget } from '../src/compiler/index.js';
-import { buildRepairGuide, createRepairGuideBuilder } from '../src/repairs.js';
+import { createRepairGuideBuilder } from '../src/repairs.js';
 import type { Evidence, SkeletonArtifact } from '../src/types.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
@@ -58,7 +58,7 @@ for (const [source, code] of [
     assert.match(diagnostic.expression!, /layout.width/);
     assert.equal(diagnostic.file, source);
     assert.equal(diagnostic.line, 2);
-    const guide = buildRepairGuide(artifact, diagnostic.node!, 'default', target);
+    const guide = createRepairGuideBuilder(artifact, target)(diagnostic.node!, 'default');
     const example = guide.examples.find(example => example.kind === 'binding')!;
     assert.deepEqual({ ...example.bindings }, { [`${source}::layout.width`]: 320 });
     assert.equal(guide.source?.line, 2);
@@ -79,7 +79,7 @@ test('missing exports identify the caller and supply an adapter preserving exist
     assert.equal(diagnostic.file, 'View.tsx');
     assert.equal(diagnostic.line, 2);
     assert.equal(diagnostic.component, 'Chart');
-    const guide = buildRepairGuide(artifact, diagnostic.node!, 'default', target);
+    const guide = createRepairGuideBuilder(artifact, target)(diagnostic.node!, 'default');
     assert.ok(guide.evidence.some(e => e.expression === 'Chart'));
     const example = guide.examples.find(example => example.kind === 'adapter')!;
     assert.match(example.files[1].code, /"Other": "Other.tsx"/);
@@ -95,12 +95,13 @@ test('repair context stays scoped to its node and variant, including variant ove
     const target = { id: 'layout', source: 'View.tsx', variants: { wide: { bindings: { 'layout.width': 600 } }, tall: { bindings: { 'layout.height': 480 } } } };
     const { artifact } = await compileTarget(root, target);
     const diagnostic = artifact.diagnostics.find(d => d.code === 'FALLBACK')!;
-    const wide = buildRepairGuide(artifact, diagnostic.node!, 'wide', target);
-    const tall = buildRepairGuide(artifact, diagnostic.node!, 'tall', target);
+    const guide = createRepairGuideBuilder(artifact, target);
+    const wide = guide(diagnostic.node!, 'wide');
+    const tall = guide(diagnostic.node!, 'tall');
     assert.deepEqual({ ...wide.examples[0].bindings }, { 'View.tsx::layout.height': 96 });
     assert.deepEqual({ ...tall.examples[0].bindings }, { 'View.tsx::layout.width': 320 });
-    assert.equal(buildRepairGuide(artifact, 'different-node', 'wide').diagnostics.length, 0);
-    const overridden = buildRepairGuide(artifact, diagnostic.node!, 'wide', { ...target, variants: { wide: { bindings: { 'View.tsx::layout.height': 200 } } } });
+    assert.equal(guide('different-node', 'wide').diagnostics.length, 0);
+    const overridden = createRepairGuideBuilder(artifact, { ...target, variants: { wide: { bindings: { 'View.tsx::layout.height': 200 } } } })(diagnostic.node!, 'wide');
     assert.equal(overridden.examples[0].bindings, undefined);
     assert.match(overridden.examples[0].description, /edit its configuration/);
   });
@@ -111,7 +112,7 @@ test('unknown render calls retain their source without suggesting ineffective bi
     const { artifact } = await compileTarget(root, { id: 'call', source: 'View.tsx' });
     const diagnostic = artifact.diagnostics.find(d => d.code === 'FALLBACK')!;
     assert.equal(diagnostic.expression, 'renderPrivateLayout()');
-    const guide = buildRepairGuide(artifact, diagnostic.node!, 'default');
+    const guide = createRepairGuideBuilder(artifact)(diagnostic.node!, 'default');
     assert.deepEqual(guide.examples.map(example => example.kind), ['source']);
   });
 });
@@ -120,7 +121,7 @@ test('Vue component evidence and adapter examples follow the selected fallback n
   await fixture({ 'View.vue': `<script setup>import VendorChart from 'private-vendor'</script><template><VendorChart/></template>` }, async root => {
     const { artifact } = await compileTarget(root, { id: 'chart', source: 'View.vue' });
     const diagnostic = artifact.diagnostics.find(d => d.code === 'FALLBACK')!;
-    const guide = buildRepairGuide(artifact, diagnostic.node!, 'default');
+    const guide = createRepairGuideBuilder(artifact)(diagnostic.node!, 'default');
     assert.ok(guide.evidence.some(e => e.node === diagnostic.node && e.expression === 'VendorChart'));
     assert.equal(guide.examples[0].files[0].name, 'src/skeletons/VendorChartSkeleton.vue');
   });

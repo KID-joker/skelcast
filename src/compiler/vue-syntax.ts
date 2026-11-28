@@ -1,8 +1,17 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName, patternNames, walk, type RenderFunction } from './ast.js';
-import type { Ast } from './expression.js';
+import { parseSourceExpression, type Ast, type ExpressionContext } from './expression.js';
 import type { ModuleInfo } from './context.js';
 import { mutationTarget, rootName } from './mutations.js';
+
+/** Parse loop syntax once; each consumer owns collection values and limits. */
+export function parseVueLoop(expression: string | undefined, ctx: ExpressionContext) {
+  const match = expression?.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
+  if (!match) return;
+  const aliases = match[1].trim().replace(/^\(([\s\S]*)\)$/, '$1');
+  const callback = parseSourceExpression(`(${aliases}) => 0`, ctx);
+  return { source: match[2], params: callback?.type === 'ArrowFunctionExpression' ? callback.params : undefined };
+}
 
 /** Helper identity is established from imports, including aliases/namespaces. */
 export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {

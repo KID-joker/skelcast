@@ -2,7 +2,7 @@ import type { Diagnostic } from '../types.js';
 import {sourceCondition} from './conditions.js';
 import {directiveEffects} from './directives.js';
 import { renderComponent } from './component-render.js';
-import { UNKNOWN,SOURCE_NORMALIZED,SOURCE_INITIAL, bindPattern, evaluateString, parseSourceExpression, sourceCapacity, type Ast, type Value } from './expression.js';
+import { UNKNOWN,SOURCE_NORMALIZED,SOURCE_INITIAL, bindPattern, evaluateString, parseSourceExpression, sourceCapacity, type Value } from './expression.js';
 import { nonVisual, unknownGeometry, styleString } from './html.js';
 import { type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
@@ -16,6 +16,7 @@ import { renderAtomic } from './output.js';
 import { expandedTemplateSlots, slotName, slotParameter } from './vue-slots.js';
 import { nativeTableOutline, shallowPresentation } from './outline.js';
 import { liveElement } from '../policy.js';
+import { parseVueLoop } from './vue-syntax.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -145,19 +146,13 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
 }
 
 async function renderVueLoop(this: RenderHost, node: ElementNode, loop: DirectiveNode, ctx: RenderContext): Promise<string> {
-  const match = expression(loop.exp)?.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
-  if (!match) return this.fallback(ctx, node, 'Unsupported v-for expression');
-  let patterns: Ast[];
-  try {
-    const aliases = match[1].trim().replace(/^\(([\s\S]*)\)$/, '$1');
-    const callback = parseSourceExpression(`(${aliases}) => 0`, ctx);
-    if (callback?.type !== 'ArrowFunctionExpression') throw new Error('Unsupported aliases');
-    patterns = callback.params;
-    if (!patterns.length || patterns.length > 3) throw new Error('Unsupported aliases');
-  } catch { return this.fallback(ctx, node, 'Unsupported v-for aliases'); }
-  let list = evaluateString(match[2], ctx);
+  const syntax = parseVueLoop(expression(loop.exp), ctx);
+  if (!syntax) return this.fallback(ctx, node, 'Unsupported v-for expression');
+  const patterns = syntax.params;
+  if (!patterns?.length || patterns.length > 3) return this.fallback(ctx, node, 'Unsupported v-for aliases');
+  let list = evaluateString(syntax.source, ctx);
   if (list === UNKNOWN || ctx.loading) {
-    const initial = initialString(match[2], ctx);
+    const initial = initialString(syntax.source, ctx);
     if (Array.isArray(initial) && (list===UNKNOWN || Object.hasOwn(initial,SOURCE_NORMALIZED))) { list = initial; this.diagnose('LOADING_PROJECTION', 'Use source-proven initial collection layout; later mutations and callback effects remain unknown', ctx, node); }
   }
   const bound=sourceCapacity(list);
@@ -165,7 +160,7 @@ async function renderVueLoop(this: RenderHost, node: ElementNode, loop: Directiv
   const object = !array && bound == null && list && list !== UNKNOWN && typeof list === 'object' ? list as Record<string, Value> : undefined;
   const keys = object ? Object.keys(object) : undefined;
   const length = array?.length ?? keys?.length ?? (typeof list === 'number' && Number.isFinite(list) ? Math.max(0, Math.floor(list)) : undefined);
-  const { count, projected } = planCollection(this, match[2], list, ctx, node, length, 'predicted response');
+  const { count, projected } = planCollection(this, syntax.source, list, ctx, node, length, 'predicted response');
   let html = '';
   for (let i = 0; i < count; i++) {
     const local: RenderContext = { ...ctx, env: { ...ctx.env } };

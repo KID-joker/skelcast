@@ -47,11 +47,6 @@ export function createRepairGuideBuilder(artifact: SkeletonArtifact, target?: Sk
   };
 }
 
-/** All snippets are reviewable suggestions; this module never writes project files. */
-export function buildRepairGuide(artifact: SkeletonArtifact, node: string, variant: string, target?: SkeletonTarget): RepairGuide {
-  return createRepairGuideBuilder(artifact, target)(node, variant);
-}
-
 function repairGuide(artifact: SkeletonArtifact, variant: string, target: SkeletonTarget | undefined, source: SourceLocation | undefined, diagnostics: Diagnostic[], evidence: Evidence[]): RepairGuide {
   const examples: RepairExample[] = [];
   const bindings: Record<string, unknown> = Object.create(null);

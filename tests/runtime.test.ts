@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedVariant, selectedView, setPreview, snapshot, subscribe, subscribeBoundary } from '../src/runtime/core.js';
+import { boundarySnapshot, getPreview, registerBoundary, replaceArtifacts, selectedVariant, selectedView, setPreview, subscribe, subscribeBoundary } from '../src/runtime/core.js';
 import type { SkeletonArtifact } from '../src/types.js';
 
 test('initial shell retires for a different SPA entry route and stays retired across navigation', () => {
@@ -114,7 +114,7 @@ test('toolbar and mounted views share preview, boundary and default variant prec
 test('identical normalized preview states preserve identity and do not notify subscribers', () => {
   const original = getPreview();
   setPreview({ target: 'stable', comparison: 'overlay', opacity: 1 });
-  const stable = getPreview(), before = snapshot();
+  const stable = getPreview(), before = boundarySnapshot('stable', 'request');
   let inspectors = 0, boundaries = 0;
   const stop = subscribe(() => inspectors++);
   const stopBoundary = subscribeBoundary('stable', 'request', () => boundaries++);
@@ -122,7 +122,7 @@ test('identical normalized preview states preserve identity and do not notify su
     for (let i = 0; i < 10; i++) setPreview({ ...stable, opacity: 2 });
     setPreview({});
     assert.equal(getPreview(), stable);
-    assert.equal(snapshot(), before);
+    assert.equal(boundarySnapshot('stable', 'request'), before);
     assert.equal(inspectors, 0);
     assert.equal(boundaries, 0);
     setPreview({ opacity: 0.25 });

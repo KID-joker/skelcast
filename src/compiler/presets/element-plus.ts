@@ -11,8 +11,6 @@ import {
   button,
   choice,
   imagePlaceholder,
-  formItem,
-  descriptionItem,
   input,
   calendar,
   libraryExport,
@@ -180,10 +178,8 @@ export const elementPlusPreset: ComponentPreset = {
     if (n === 'col') return elementColumn(props, policy.children);
     if (n === 'space' || n === 'buttongroup')
       return { tag: 'div', className:n==='space'?'el-space':'el-button-group', style: `display:inline-flex;${props.direction === 'vertical' ? 'flex-direction:column;' : ''}flex-wrap:${props.wrap===true?'wrap':'nowrap'};min-width:0;align-items:center;gap:${dimension(props.size,n==='space'?'8px':'0px')}`, children: policy.children };
-    if (n === 'formitem') return formItem(policy.children, props.label);
     if (n === 'divider')
       return { tag: 'div', className:'el-divider el-divider--horizontal', style: 'display:block;width:100%;height:1px;margin:24px 0;border-top:1px solid var(--el-border-color,#dcdfe6);position:relative', children: policy.children?`<div data-sk-layout data-sk-control class="el-divider__text is-${scalar(props.contentPosition,'center')}" style="position:absolute;${props.contentPosition==='left'?'left:20px':props.contentPosition==='right'?'right:20px':'left:50%;transform:translateX(-50%)'};top:-.5em;padding:0 20px;background:var(--el-fill-color-blank,#fff);font-size:14px;line-height:1">${policy.children}</div>`:'' };
-    if (n === 'descriptionsitem') return descriptionItem(policy.children, props.label);
     if (n === 'scrollbar') return elementScrollbar(props,policy.children);
     if(n==='timeline'||n==='timelineitem')return elementTimeline(n,props,policy.children,text);
     if (n === 'container') return { tag: 'section', style: 'display:flex;min-width:0;flex:1', children: policy.children };
