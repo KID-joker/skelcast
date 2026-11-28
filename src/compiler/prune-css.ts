@@ -6,6 +6,13 @@ import {parse} from '@vue/compiler-dom';
  * whose positive class constraints are impossible; unknown pseudos/ancestors,
  * attributes, tags and negative selectors remain conservative. */
 export function pruneCSS(css:string,html:string):string{
+ const root=postcss.parse(css);
+ pruneStyleRules(root,html);
+ return root.toString();
+}
+
+/** Mutate the compilation's stylesheet without a serialization round trip. */
+export function pruneStyleRules(root:postcss.Root,html:string):void{
  const classes=new Set(['dark','light']);
  const visit=(node:ReturnType<typeof parse>|ReturnType<typeof parse>['children'][number]|import('@vue/compiler-dom').SimpleExpressionNode)=>{
   if(node.type===1)for(const prop of node.props)if(prop.type===6&&prop.name==='class')for(const name of (prop.value?.content??'').split(/\s+/))classes.add(name);
@@ -20,7 +27,6 @@ export function pruneCSS(css:string,html:string):string{
   }
   return !('nodes'in node)||!node.nodes||node.nodes.every(possible);
  };
- const root=postcss.parse(css);
  root.walkRules(rule=>{
   for(let parent:typeof rule.parent|undefined=rule.parent;parent;parent=parent.parent as typeof rule.parent)if(parent.type==='atrule'&&/keyframes$/i.test(parent.name))return;
   try{const selectors=selectorParser().astSync(rule.selector);selectors.nodes=selectors.nodes.filter(possible);if(!selectors.nodes.length)rule.remove();else rule.selector=selectors.toString();}catch{/* Unrecognized syntax is retained. */}
@@ -37,5 +43,4 @@ export function pruneCSS(css:string,html:string):string{
  for(const font of fonts){let family='';font.walkDecls('font-family',d=>{family=d.value.trim().replace(/^(['"])(.*)\1$/,'$2').toLowerCase();});if(!unknownFont&&family&&!references.includes(family))font.remove();}
  root.walkAtRules(rule=>{if(rule.nodes&&!rule.nodes.length&&!['layer'].includes(rule.name))rule.remove();});
  root.walkComments(comment=>{comment.remove();});
- return root.toString();
 }

@@ -28,7 +28,7 @@ import { imageDimensions } from './images.js';
 import { fallbackProps } from './fallback.js';
 import { compileTailwind } from './tailwind.js';
 import { fileURLToPath } from 'node:url';
-import { pruneCSS } from './prune-css.js';
+import { pruneStyleRules } from './prune-css.js';
 import {tableWrapper} from './table-wrapper.js';
 import {VueRegion,bindSlotArgument,bindSlotInitial,projectSelectedSlots} from './regions.js';
 import { SourceFiles } from './source-files.js';
@@ -383,7 +383,11 @@ export class SourceCompiler extends SourceModules {
     const compiledStyles = await compileTailwind([...this.css.values()].join('\n'), html, this.styleSource(), async file => (await this.readStyle(file)).css, this.options.styles?.tailwind !== false);
     if (compiledStyles.sourcesIgnored) this.diagnostics.push({ code: 'STYLE_SOURCE_LIMIT', file: this.target.source, line: 1, message: 'Tailwind uses generated markup and inline safelists only; external @source paths are not scanned' });
     let css = '';
-    try { const styles=[compiledStyles.css, await utilityCSS(html, this.options.styles)].join('\n');({ html, css } = scopeArtifactStyles(this.options.styles?.prune===false?styles:pruneCSS(styles,html), html, this.target.id)); }
+    try {
+      const styles = postcss.parse([compiledStyles.css, await utilityCSS(html, this.options.styles)].join('\n'));
+      if (this.options.styles?.prune !== false) pruneStyleRules(styles, html);
+      ({ html, css } = scopeArtifactStyles(styles, html, this.target.id));
+    }
     catch (error) { this.diagnostics.push({ code: 'STYLE_PARSE', message: String(error), file: this.target.source, line: 1 }); }
     return { view: { html, css: `${css}\n${sharedStyleSeparator}${baseCSS.replace(/sk-pulse/g, 'skelcast-base-pulse-v1')}`,sourceIds:[...this.sourceIds].sort() }, dependencies: this.dependencies };
   }

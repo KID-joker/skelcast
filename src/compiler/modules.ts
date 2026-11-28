@@ -16,6 +16,7 @@ import { resolutionCandidates } from './resolution.js';
 import { SourceFiles } from './source-files.js';
 import { resolveReexports } from './exports.js';
 import { appRegistrations, pluginRegistrations } from './registrations.js';
+import type * as t from '@babel/types';
 
 export type CompilerOptions = Pick<SkeletonConfig, 'components' | 'componentBindings' | 'componentDeclarations' | 'componentPresets' | 'styles'>;
 
@@ -190,7 +191,9 @@ export class SourceModules {
     try {
       const ast = this.files.ast(file, code, jsx);
       const requests: string[] = [];
-      walk(ast, n => { if ((n.type === 'ImportDeclaration' || n.type === 'ExportNamedDeclaration' || n.type === 'ExportAllDeclaration') && n.source) requests.push(n.source.value); });
+      for (const statement of ast.program.body) {
+        if ((statement.type === 'ImportDeclaration' || statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportAllDeclaration') && statement.source) requests.push(statement.source.value);
+      }
       for (const request of requests) { const dep = await this.resolve(file, request); if (dep) await this.scan(dep); }
     } catch { /* unsupported dependency is still fingerprinted */ }
   }
@@ -261,13 +264,22 @@ export class SourceModules {
       if (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') mod.exportAll.push({ file: await this.resolve(file, statement.source.value), request: statement.source.value, exported: '*' });
     }
     if (descriptor) {
+      const registrations: t.ObjectProperty[] = [];
+      const macros: t.CallExpression[] = [];
+      const propDeclarations: t.VariableDeclarator[] = [];
       walk(ast, node => {
-        if (node.type !== 'ObjectProperty' || nodeName(node.key) !== 'components' || node.value.type !== 'ObjectExpression') return;
-        for (const prop of node.value.properties) if (prop.type === 'ObjectProperty' && mod.boundaries.has(nodeName(prop.value) ?? '')) {
+        if (node.type === 'ObjectProperty' && nodeName(node.key) === 'components' && node.value.type === 'ObjectExpression') registrations.push(node);
+        if (node.type === 'CallExpression' && ['defineOptions', 'defineProps'].includes(nodeName(node.callee) ?? '')) macros.push(node);
+        if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init?.type === 'CallExpression') propDeclarations.push(node);
+      });
+      // Collect syntax once; retain registration, absent-prop and default phases.
+      for (const registration of registrations) {
+        if (registration.value.type !== 'ObjectExpression') continue;
+        for (const prop of registration.value.properties) if (prop.type === 'ObjectProperty' && mod.boundaries.has(nodeName(prop.value) ?? '')) {
           const name = nodeName(prop.key);
           if (name) mod.boundaries.add(name);
         }
-      });
+      }
       for (const name of [...mod.boundaries]) mod.boundaries.add(name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase());
       // Missing declared props have Vue's absent value, rather than an opaque
       // business value. Read only local type members; imported types stay unknown.
@@ -279,23 +291,23 @@ export class SourceModules {
           if (member.type === 'TSPropertySignature' && !member.computed && typeof key === 'string') mod.propDefaults[key] = member.typeAnnotation?.typeAnnotation?.type === 'TSBooleanKeyword' ? false : undefined;
         }
       };
-      walk(ast, n => {
-        if (n.type === 'CallExpression' && nodeName(n.callee) === 'defineOptions' && n.arguments[0]?.type === 'ObjectExpression') {
+      for (const n of macros) {
+        if (nodeName(n.callee) === 'defineOptions' && n.arguments[0]?.type === 'ObjectExpression') {
           const value = evaluate(n.arguments[0], ec);
           if (value && typeof value === 'object' && 'inheritAttrs' in value && value.inheritAttrs === false) mod.inheritAttrs = false;
         }
-        if (n.type === 'CallExpression' && nodeName(n.callee) === 'defineProps') {
+        if (nodeName(n.callee) === 'defineProps') {
           declaredProps(n.typeParameters?.params?.[0]);
           const runtime = n.arguments[0];
           if (runtime?.type === 'ArrayExpression') for (const item of runtime.elements) if (item?.type === 'StringLiteral') mod.propDefaults[item.value] = undefined;
         }
-      });
-      walk(ast, n => {
-        if (n.type !== 'VariableDeclarator' || n.id.type !== 'Identifier') return;
+      }
+      for (const n of propDeclarations) {
+        if (n.id.type !== 'Identifier') continue;
         const init = n.init;
-        if (init?.type !== 'CallExpression') return;
+        if (init?.type !== 'CallExpression') continue;
         const declaration = nodeName(init.callee) === 'withDefaults' ? init.arguments[0] : init;
-        if (declaration?.type !== 'CallExpression' || nodeName(declaration.callee) !== 'defineProps') return;
+        if (declaration?.type !== 'CallExpression' || nodeName(declaration.callee) !== 'defineProps') continue;
         mod.propBindings.push(n.id.name);
         if (nodeName(init.callee) === 'withDefaults') {
           const defaults = evaluate(init.arguments[1], ec);
@@ -308,7 +320,7 @@ export class SourceModules {
             if (typeof key === 'string') mod.propDefaults[key] = evaluate(property.value.body, ec);
           }
         }
-      });
+      }
       const scopeId = `data-v-sk-${digest(this.relative(file)).slice(0, 8)}`;
       for (let i = 0; i < descriptor.styles.length; i++) {
         const style = descriptor.styles[i];

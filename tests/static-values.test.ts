@@ -13,6 +13,53 @@ async function fixture(files:Record<string,string>,run:(root:string)=>Promise<vo
  try{for(const [name,source]of Object.entries(files)){await mkdir(path.dirname(path.join(root,name)),{recursive:true});await writeFile(path.join(root,name),source);}await run(root);}finally{await rm(root,{recursive:true,force:true});}
 }
 
+test('unused imports do not consume the presentation budget or hide later layout values', async () => {
+ const data = `export const unused=${JSON.stringify(Array.from({length:200},()=>Array.from({length:60},()=>1)))};export const height=80;`;
+ await fixture({'data.ts':data}, async root => {
+  for (const imports of ['height', 'unused,height', 'height,unused']) {
+   const sources = {
+    'View.vue': `<script setup>import{${imports}}from'./data';</script><template><main :style="{height:height+1}">Text</main></template>`,
+    'View.tsx': `import{${imports}}from'./data';export default()=> <main style={{height:height+1}}>Text</main>;`,
+   };
+   for (const [source, code] of Object.entries(sources)) {
+    await writeFile(path.join(root, source), code);
+    const {artifact, dependencies} = await compileTarget(root, {id:'imports',source,variants:{normal:{},override:{bindings:{height:90}}}});
+    assert.deepEqual(artifact.diagnostics, [], `${source}: ${imports}`);
+    assert.match(artifact.variants.normal.html, /height:81px/);
+    assert.match(artifact.variants.override.html, /height:91px/);
+    assert.ok(dependencies['data.ts'], 'unused imports remain in the invalidation graph');
+   }
+  }
+ });
+});
+
+test('imports used only by CSS bindings, aliases and public reexports retain their values', async () => {
+ await fixture({
+  'data.ts': 'export const height=80;',
+  'View.vue': `<script setup>import{height}from'./data';</script><template><main>Text</main></template><style>main{height:calc(v-bind(height) * 1px)}</style>`,
+  'Alias.vue': `<script setup>import{height}from'./data';const size=height+1;</script><template><main :style="{height:size}">Text</main></template>`,
+  'Escaped.vue': `<script setup>import{height}from'./data';</script><template><main :style="{height:\\u0068eight+1}">Text</main></template>`,
+  'Entity.vue': `<script setup>import{height}from'./data';</script><template><main :style="{height:he&#105;ght+1}">Text</main></template>`,
+  'barrel.ts': `import{height}from'./data';export{height};`,
+ }, async root => {
+  const css = await compileTarget(root, {id:'css',source:'View.vue'});
+  assert.deepEqual(css.artifact.diagnostics, []);
+  assert.match(css.artifact.variants.default.html, /--sk-bind-[\w-]+:80/);
+  const alias = await compileTarget(root, {id:'alias',source:'Alias.vue'});
+  assert.deepEqual(alias.artifact.diagnostics, []);
+  assert.match(alias.artifact.variants.default.html, /height:81px/);
+  for (const source of ['Escaped.vue', 'Entity.vue']) {
+   const result = await compileTarget(root, {id:'escaped',source});
+   assert.deepEqual(result.artifact.diagnostics, []);
+   assert.match(result.artifact.variants.default.html, /height:81px/);
+  }
+  class Modules extends SourceModules { load(file:string){return this.module(file);} }
+  const modules = new Modules(root, {});
+  const values = await new StaticValues(file=>modules.load(file)).environment(await modules.load(path.join(root,'barrel.ts')));
+  assert.equal(values.height, 80);
+ });
+});
+
 test('static environment caching leaves budget-exhausted passes eligible for further resolution',async()=>{
  const source=Array.from({length:800},(_,index)=>`export const value${index}=[${Array.from({length:16},(_,i)=>i).join(',')}];`).join('\n');
  await fixture({'data.ts':source},async root=>{

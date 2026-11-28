@@ -44,7 +44,7 @@ function collectionCapacity(node: t.Node, read: (node: t.Node) => Value, depth =
 /** Resolve source declarations, not live ESM values. Loading a module means
  * parsing it through the compiler host; no module or application function runs. */
 export class StaticValues {
- private indexes=new WeakMap<ModuleInfo,{declarations:Map<string,Declaration>;unsafe:Set<string>}>();
+ private indexes=new WeakMap<ModuleInfo,{declarations:Map<string,Declaration>;unsafe:Set<string>;imports:Set<string>}>();
  private exportNames=new WeakMap<ModuleInfo,Set<string>>();
  private cache=new Map<string,Value>();
  private cycles=new Set<string>();
@@ -100,12 +100,14 @@ export class StaticValues {
  }
  private index(mod:ModuleInfo){
   const previous=this.indexes.get(mod);if(previous)return previous;
-  const declarations=new Map<string,Declaration>(),unsafe=new Set<string>();
+  const declarations=new Map<string,Declaration>(),unsafe=new Set<string>(),imports=new Set<string>();
   for(const statement of mod.ast.program.body){
    const decl=statement.type==='ExportNamedDeclaration'?statement.declaration:statement;
    if(decl?.type==='VariableDeclaration')for(const d of decl.declarations)for(const name of names(d.id))declarations.set(name,{pattern:d.id,expression:d.init,constant:decl.kind==='const'});
   }
   walk(mod.ast,node=>{
+   if(node.type==='ImportDeclaration')return false;
+   if(node.type==='Identifier'&&mod.imports.has(node.name))imports.add(node.name);
    const target=mutationTarget(node);
    if(target){
     for(const name of target.type==='ObjectPattern'||target.type==='ArrayPattern'?names(target):[rootName(target)])if(name)unsafe.add(name);
@@ -126,7 +128,12 @@ export class StaticValues {
   const aliases: [string,string][]=[];
   for(const [name,d]of declarations){const source=rootName(unwrapExpression(d.expression));if(source)aliases.push([name,source]);}
   propagateAliases(unsafe,aliases);
-  const index={declarations,unsafe};this.indexes.set(mod,index);return index;
+  // Template and CSS expressions are outside the script AST. Keep possible
+  // reads, including shadowed names; escapes/entities can hide an identifier.
+  const presentation=[mod.descriptor?.template?.content??'',...mod.cssBindings.map(binding=>binding.expression)].join('\n');
+  const escaped=/[\\&]/.test(presentation);
+  for(const name of mod.imports.keys())if(escaped||presentation.includes(name))imports.add(name);
+  const index={declarations,unsafe,imports};this.indexes.set(mod,index);return index;
  }
  private async binding(mod:ModuleInfo,name:string,seen:Set<string>,budget:{remaining:number}):Promise<Binding|typeof ambiguousExport|undefined>{
   const key=identity({module:mod,name});if(seen.has(key)||seen.size>64||--budget.remaining<0)return;
@@ -240,9 +247,10 @@ export class StaticValues {
   const previous=this.environments.get(mod),cycles=this.cycles.size;
   if(previous?.cycles===cycles)return previous.values;
   const result:Record<string,Value>={},budget={remaining:10000};
-  for(const [name]of mod.imports)result[name]=await this.local(mod,name,new Set(),budget);
+  const index=this.index(mod);
+  for(const [name]of mod.imports)if(index.imports.has(name))result[name]=await this.local(mod,name,new Set(),budget);
   for(const [name,fn]of mod.functions)if(isRenderFunction(fn))result[name]=await this.local(mod,name,new Set(),budget);
-  for(const [name,decl]of this.index(mod).declarations)if(decl.constant){
+  for(const [name,decl]of index.declarations)if(decl.constant){
    const value=await this.local(mod,name,new Set(),budget);
    if(value!==UNKNOWN||this.index(mod).unsafe.has(name))result[name]=value;
   }

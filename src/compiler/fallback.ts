@@ -31,6 +31,12 @@ export function fallbackProps(props: Record<string, Value>, minHeight?: number):
  * default fallback height, without overriding any actual source height rule. */
 export function fallbackConstraints(css: string): string {
   const root = postcss.parse(css);
+  applyFallbackConstraints(root);
+  return root.toString();
+}
+
+/** Add fallback geometry to the stylesheet already owned by the compiler. */
+export function applyFallbackConstraints(root: postcss.Root): void {
   root.walkRules(rule => {
     if (rule.selectors.some(s => s.includes('::'))) return;
     let parent: typeof rule.parent | typeof root.parent = rule.parent;
@@ -45,5 +51,4 @@ export function fallbackConstraints(css: string): string {
     clone.append({ prop: '--sk-fallback-height', value: 'auto' });
     rule.after(clone);
   });
-  return root.toString();
 }

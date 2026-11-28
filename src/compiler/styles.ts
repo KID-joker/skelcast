@@ -8,7 +8,7 @@ import { compileStyleAsync } from '@vue/compiler-sfc';
 import type { StyleOptions } from '../types.js';
 import { embedStyleAssets, namespaceGlobals } from './css-resources.js';
 import { escapeHTML } from './html.js';
-import { fallbackConstraints } from './fallback.js';
+import { applyFallbackConstraints } from './fallback.js';
 import { compileSass } from './sass.js';
 import type { StyleSource } from './stylesheet-source.js';
 
@@ -129,16 +129,18 @@ export async function utilityCSS(html: string, options?: StyleOptions): Promise<
 export function scopeCSS(css: string, id: string): string {
   return scopeArtifactStyles(css, '', id).css;
 }
-export function scopeArtifactStyles(css: string, html: string, id: string): { css: string; html: string } {
+export function scopeArtifactStyles(css: string | postcss.Root, html: string, id: string): { css: string; html: string } {
   const scope = `[data-sk-artifact="${id}"]`;
-  const root = postcss.parse(fallbackConstraints(css));
+  const source = typeof css === 'string' ? css : css.toString();
+  const root = typeof css === 'string' ? postcss.parse(css) : css;
+  applyFallbackConstraints(root);
   const inline: postcss.Root[] = [];
   for (const match of html.matchAll(/ style="([^"]*)"/g)) {
     const value = match[1];
     const decoded = value.replace(/&(quot|apos|lt|gt|amp|#39);/g, (_match, name: string) => ({ quot: '"', apos: "'", lt: '<', gt: '>', amp: '&', '#39': "'" })[name]!);
     inline.push(postcss.parse(`a{${decoded}}`));
   }
-  namespaceGlobals(root, `sk-${digest(id + css).slice(0, 12)}`, inline);
+  namespaceGlobals(root, `sk-${digest(id + source).slice(0, 12)}`, inline);
   let index = 0;
   html = html.replace(/ style="([^"]*)"/g, () => ` style="${escapeHTML(inline[index++].first!.toString().slice(2, -1))}"`);
   root.walkRules(rule => {
