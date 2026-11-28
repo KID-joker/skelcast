@@ -45,11 +45,23 @@ function collectionCapacity(node: t.Node, read: (node: t.Node) => Value, depth =
  * parsing it through the compiler host; no module or application function runs. */
 export class StaticValues {
  private indexes=new WeakMap<ModuleInfo,{declarations:Map<string,Declaration>;unsafe:Set<string>}>();
+ private exportNames=new WeakMap<ModuleInfo,Set<string>>();
  private cache=new Map<string,Value>();
  private cycles=new Set<string>();
  private copies=new WeakMap<ModuleInfo,Map<t.Node,CopyRecipe|undefined>>();
  private environments=new WeakMap<ModuleInfo,{values:Record<string,Value>;cycles:number}>();
  constructor(private load:(file:string)=>Promise<ModuleInfo>,private external?:(request:string)=>Promise<ModuleInfo|undefined>){}
+ /** Export syntax is shared by binding lookup and namespace collection. Keep it
+  * separate from value/mutation analysis, which may not have been requested yet. */
+ private declaredExports(mod:ModuleInfo):Set<string>{
+  let result=this.exportNames.get(mod);
+  if(!result){
+   result=new Set();
+   for(const statement of mod.ast.program.body)if(statement.type==='ExportNamedDeclaration'&&statement.declaration?.type==='VariableDeclaration')for(const declaration of statement.declaration.declarations)for(const name of names(declaration.id))result.add(name);
+   this.exportNames.set(mod,result);
+  }
+  return result;
+ }
  /** Summarize independently declared fields of an unconditional return object.
   * Calls, callbacks and lifecycle handlers are never evaluated. Parameters and
   * anything written/escaped remain unknown, rather than assuming a hook result. */
@@ -124,7 +136,7 @@ export class StaticValues {
   const local=mod.exports.get(name);
   if(local!==undefined){const ref=mod.imports.get(local);return ref?follow(ref):{module:mod,name:local};}
   // Destructured exported constants are not component exports, but are data.
-  for(const statement of mod.ast.program.body)if(statement.type==='ExportNamedDeclaration'&&statement.declaration?.type==='VariableDeclaration')for(const decl of statement.declaration.declarations)if(names(decl.id).includes(name))return{module:mod,name};
+  if(this.declaredExports(mod).has(name))return{module:mod,name};
   return resolveReexports(mod,name,follow,(left,right)=>identity(left)===identity(right));
  }
  private async exported(mod:ModuleInfo,name:string,seen:Set<string>,budget:{remaining:number}):Promise<Value>{
@@ -138,7 +150,7 @@ export class StaticValues {
    if(visited.has(m.file))return;
    if(visited.size>64||--budget.remaining<0){overflow=true;return;}const next=new Set(visited).add(m.file);
    for(const key of [...m.exports.keys(),...m.reexports.keys()])if(includeDefault||key!=='default')add(key);
-   for(const statement of m.ast.program.body)if(statement.type==='ExportNamedDeclaration'&&statement.declaration?.type==='VariableDeclaration')for(const d of statement.declaration.declarations)for(const key of names(d.id))add(key);
+   for(const key of this.declaredExports(m))add(key);
    for(const ref of m.exportAll)if(ref.file&&script(ref.file))await collect(await this.load(ref.file),next);
   };
   await collect(mod,new Set(),true);const result:Record<string,Value>=Object.create(null);

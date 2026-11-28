@@ -4,7 +4,7 @@ import type {ModuleInfo} from './context.js';
 import type {ComponentReference} from './presets/types.js';
 import {evaluate,evaluateSourceWrapper,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
 import {resolvePreset} from './presets/index.js';
-import {vueHelper} from './vue-render.js';
+import {vueHelper} from './vue-syntax.js';
 import{tableViewportOffset}from'./viewport-constraint.js';
 import { camelizeProp } from './props.js';
 type Fn=t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression;

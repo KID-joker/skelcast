@@ -130,29 +130,28 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
     resolve: (ref) => libraryExport(ref, id, deep),
     role,
     slots: (name) => (name === 'table.column' || name === 'tablecolumn' ? ['default'] : name === 'calendar' ? ['header'] : ['default', 'header', 'footer', 'title', 'extra']),
-    present(name, props, children, text, hints, policy) {
-      if (name === 'button') return button(children, props);
+    present(name, props, text, hints, policy) {
+      if (name === 'button') return button(policy.children, props);
       if (['input', 'inputnumber', 'input.textarea', 'select', 'datepicker', 'timepicker'].includes(name))
         return input(name === 'input.textarea' ? { ...props, type: 'textarea' } : props);
       if (name === 'select.option' || name === 'selectoption')
-        return { tag: 'option', children: children || escape(scalar(props.label ?? props.value)) };
-      if (name === 'calendar') return calendar(children);
-      if (name === 'checkbox' || name === 'radio') return choice(name, children);
+        return { tag: 'option', children: policy.children || escape(scalar(props.label ?? props.value)) };
+      if (name === 'calendar') return calendar(policy.children);
+      if (name === 'checkbox' || name === 'radio') return choice(name, policy.children);
       if (name === 'switch' || name === 'slider' || name === 'pagination')
         return {
           tag: 'div',
           style: `min-height:24px;min-width:${
             name === 'switch' ? '40px' : '120px'
-          };border:1px solid #d9d9d9;border-radius:4px`,
-          children,
+          };border:1px solid #d9d9d9;border-radius:4px`, children: policy.children,
         };
-      if (name === 'table') return table(props, policy.columns.resolve(children), text, hints,policy.mask);
-      if (name === 'table.column' || name === 'tablecolumn') return column(props, children, policy.columns);
-      if (name === 'card') return card(children, props.title, text, '24px');
+      if (name === 'table') return table(props, policy.columns.resolve(policy.children), text, hints,policy.mask);
+      if (name === 'table.column' || name === 'tablecolumn') return column(props, policy.children, policy.columns);
+      if (name === 'card') return card(policy.children, props.title, text, '24px');
       if (name === 'card.meta' || name === 'cardmeta')
         return {
           tag: 'div',
-          children: (props.title ? text : '') + (props.description ? text : '') + children,
+          children: (props.title ? text : '') + (props.description ? text : '') + policy.children,
         };
       if (name === 'avatar' || name === 'image') return imagePlaceholder(props.size, name === 'avatar' ? '32px' : '160px', name === 'avatar' ? '32px' : '120px');
       if (name === 'statistic')
@@ -167,7 +166,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
               : '') + text,
         };
       if (name === 'tag')
-        return { tag: 'span', style: 'display:inline-block;padding:2px 8px', children: children || text };
+        return { tag: 'span', style: 'display:inline-block;padding:2px 8px', children: policy.children || text };
       if (name === 'progress')
         return { tag: 'div', leaf: true, style: 'height:16px;width:100%', children: '' };
       if (name === 'list') {
@@ -176,7 +175,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           tag: 'ul',
           style: 'margin:0;padding:0;list-style:none',
           children:
-            children ||
+            policy.children ||
             (count ? Array.from({length:count}, () => `<li data-sk-layout style="padding:12px 0;border-bottom:1px solid #eee">${text}</li>`).join('') : '<li data-sk-layout data-sk-control style="padding:24px;text-align:center">No data</li>'),
           notes:
             props.renderItem != null
@@ -185,28 +184,27 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
         };
       }
       if (name === 'list.item' || name === 'listitem')
-        return { tag: 'li', style: 'padding:12px 0;border-bottom:1px solid #eee', children };
+        return { tag: 'li', style: 'padding:12px 0;border-bottom:1px solid #eee', children: policy.children };
       if (name.startsWith('typography'))
         return {
           tag: name.includes('title') ? 'h3' : name.includes('paragraph') ? 'p' : 'span',
-          children: children || text,
+          children: policy.children || text,
         };
       if (['row', 'space', 'flex'].includes(name))
-        return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children };
+        return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children: policy.children };
       if (name === 'col')
         return {
           tag: 'div',
           style: `min-width:0;flex:0 1 ${
             typeof props.span === 'number' ? (Math.max(1, Math.min(24, props.span)) / 24) * 100 : 100
-          }%`,
-          children,
+          }%`, children: policy.children,
         };
-      if (name === 'form.item' || name === 'formitem') return formItem(children, props.label, '24px');
-      if (name === 'descriptions.item' || name === 'descriptionsitem') return descriptionItem(children, props.label);
+      if (name === 'form.item' || name === 'formitem') return formItem(policy.children, props.label, '24px');
+      if (name === 'descriptions.item' || name === 'descriptionsitem') return descriptionItem(policy.children, props.label);
       if (name === 'divider')
         return { tag: 'div', style: 'height:1px;margin:24px 0;background:#f0f0f0', children: '' };
-      if (name === 'configprovider') return { tag: 'div', style: 'display:contents', children };
-      if (layouts.has(name)) return { tag: 'div', style: 'min-width:0', children };
+      if (name === 'configprovider') return { tag: 'div', style: 'display:contents', children: policy.children };
+      if (layouts.has(name)) return { tag: 'div', style: 'min-width:0', children: policy.children };
     },
   };
 }

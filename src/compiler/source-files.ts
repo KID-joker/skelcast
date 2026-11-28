@@ -3,10 +3,12 @@ import { parse as parseSFC } from '@vue/compiler-sfc';
 import { parse as parseDOM } from '@vue/compiler-dom';
 import { parseSource } from './ast.js';
 import { digest } from './styles.js';
+import type { Expression } from '@babel/types';
 
 /** File bytes and syntax shared by freshness checks, scans, targets and variants within one operation.
  * Evaluated module environments and generated styles remain compiler-local. */
 export class SourceFiles {
+  readonly expressions = new Map<string, Expression | null>();
   private files = new Map<string, Promise<{ file: string; bytes: Buffer; hash: string }>>();
   private probes = new Map<string, Promise<boolean>>();
   private scripts = new Map<string, { code: string; sfc?: ReturnType<typeof parseSFC> }>();

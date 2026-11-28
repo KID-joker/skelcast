@@ -2,7 +2,7 @@ import type * as t from '@babel/types';
 import{VISITOR_KEYS}from'@babel/types';
 import{isRenderFunction,nodeName,unwrapExpression,walk}from'./ast.js';
 import type{ModuleInfo}from'./context.js';
-import{vueHelper}from'./vue-render.js';
+import{vueHelper}from'./vue-syntax.js';
 import{type Value}from'./expression.js';
 
 type Fn=t.FunctionDeclaration|t.FunctionExpression|t.ArrowFunctionExpression;

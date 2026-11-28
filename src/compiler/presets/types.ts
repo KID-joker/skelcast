@@ -27,9 +27,8 @@ export interface ComponentPreset {
   present: (
     name: string,
     props: Record<string, unknown>,
-    children: string,
     text: string,
     hints: SkeletonHints,
-    policy: { mask: boolean; slots: Record<string, string>; columns: TableColumns },
+    policy: { mask: boolean; readonly children: string; slots: Record<string, string>; columns: TableColumns },
   ) => Presentation | undefined;
 }

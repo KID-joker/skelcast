@@ -1,10 +1,9 @@
 import type { Diagnostic } from '../types.js';
 import { renderComponent } from './component-render.js';
-import { UNKNOWN,SOURCE_INITIAL, bindPattern, evaluateString, sourceCapacity, type Ast, type Value } from './expression.js';
+import { UNKNOWN,SOURCE_INITIAL, bindPattern, evaluateString, parseSourceExpression, sourceCapacity, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry, styleString } from './html.js';
 import { type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
-import { parseExpression } from '@babel/parser';
 import { parserOptions, type ElementNode, type TemplateChildNode as VueNode, type DirectiveNode, type ExpressionNode } from '@vue/compiler-dom';
 import { boundaryContentContext } from './branches.js';
 import { collectionRoot, loadingBranch, projectCollection, exclusiveChoice } from './loading-state.js';
@@ -32,7 +31,9 @@ function collectionRoots(nodes: VueNode[], ctx: RenderContext): Set<string> {
 }
 function slotParameter(host:RenderHost,slot:DirectiveNode|undefined,ctx:RenderContext,node:VueNode):Ast|undefined{
  if(!expression(slot?.exp))return;
- try{const fn=parseExpression(`(${expression(slot?.exp)})=>0`,{plugins:['typescript']});if(fn.type==='ArrowFunctionExpression')return fn.params[0];}catch{host.diagnose('SLOT_UNKNOWN','Cannot parse scoped slot parameters',ctx,node);}
+ const fn=parseSourceExpression(`(${expression(slot?.exp)})=>0`,ctx);
+ if(fn?.type==='ArrowFunctionExpression')return fn.params[0];
+ host.diagnose('SLOT_UNKNOWN','Cannot parse scoped slot parameters',ctx,node);
 }
 function slotName(host:RenderHost,slot:DirectiveNode|undefined,ctx:RenderContext,node:VueNode):string|undefined{
  if(!slot?.arg)return'default';
@@ -133,8 +134,8 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     let patterns: Ast[];
     try {
       const aliases = match[1].trim().replace(/^\(([\s\S]*)\)$/, '$1');
-      const callback = parseExpression(`(${aliases}) => 0`, { plugins: ['typescript'] });
-      if (callback.type !== 'ArrowFunctionExpression') throw new Error('Unsupported aliases');
+      const callback = parseSourceExpression(`(${aliases}) => 0`, ctx);
+      if (callback?.type !== 'ArrowFunctionExpression') throw new Error('Unsupported aliases');
       patterns = callback.params;
       if (!patterns.length || patterns.length > 3) throw new Error('Unsupported aliases');
     } catch { return this.fallback(ctx, node, 'Unsupported v-for aliases'); }

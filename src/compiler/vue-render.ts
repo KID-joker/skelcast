@@ -1,39 +1,23 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, patternNames, unwrapExpression, walk, type RenderFunction } from './ast.js';
-import { UNKNOWN, SOURCE_ACCESSOR, SOURCE_RENDER,SOURCE_COPY,SOURCE_TYPE_TEST, bindPattern, evaluate, expressionText, type Ast } from './expression.js';
-import { slotValue, type ModuleInfo, type RenderContext, type SourceSlot } from './context.js';
-import { nonVisual, unknownGeometry } from './html.js';
+import { isRenderFunction, nodeName, patternNames, unwrapExpression, type RenderFunction } from './ast.js';
+import { UNKNOWN, SOURCE_ACCESSOR, SOURCE_RENDER,SOURCE_COPY,SOURCE_TYPE_TEST, bindPattern, evaluate, type Ast } from './expression.js';
+import { slotValue, type ModuleInfo, type RenderContext } from './context.js';
 import type { RenderHost } from './render-host.js';
-import {renderSlotCall,bindSlotInitial} from './regions.js';
+import {bindSlotInitial} from './regions.js';
 import{initialExpression,propagateInitialAliases}from'./initial-state.js';
-import { mutationTarget, propagateAliases, rootName } from './mutations.js';
-import { renderComponent } from './component-render.js';
+import { propagateAliases } from './mutations.js';
+import { renderCall } from './render-call.js';
+import { renderBranch } from './render-branches.js';
+import { vueHelper, supportedBody, visualSyntax, setupSyntax } from './vue-syntax.js';
 import { componentInputs } from './props.js';
-import { renderJSXNode } from './react.js';
-import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
-
-/** Helper identity is established from imports, including aliases/namespaces. */
-export function vueHelper(mod: ModuleInfo, callee: Ast, name: string): boolean {
-  if (callee.type === 'Identifier') {
-    const ref = mod.imports.get(callee.name);
-    return ref?.request === 'vue' && ref.exported === name;
-  }
-  if (callee.type === 'MemberExpression' && !callee.computed && callee.object.type === 'Identifier') {
-    const ref = mod.imports.get(callee.object.name);
-    return ref?.request === 'vue' && ref.exported === '*' && nodeName(callee.property) === name;
-  }
-  return false;
-}
+import { renderJSXNode } from './render-node.js';
 
 export function vueOptions(mod: ModuleInfo, value: Ast | undefined): t.ObjectExpression | undefined {
   if (value?.type === 'ObjectExpression') return value;
   if (value?.type === 'CallExpression' && vueHelper(mod, value.callee, 'defineComponent') && value.arguments[0]?.type === 'ObjectExpression') return value.arguments[0];
 }
 
-// Instance contexts share immutable functions and imports, but different modules
-// can give the same helper name a different package identity.
 const renderFunctions = new WeakMap<ModuleInfo['imports'], WeakMap<RenderFunction, boolean>>();
-
 export function vueRenderFunction(mod: ModuleInfo, value: Ast | undefined): t.FunctionExpression | t.ArrowFunctionExpression | t.FunctionDeclaration | undefined {
   const options = vueOptions(mod, value);
   if (options) {
@@ -48,8 +32,7 @@ export function vueRenderFunction(mod: ModuleInfo, value: Ast | undefined): t.Fu
     if (!functions) renderFunctions.set(mod.imports, functions = new WeakMap());
     let found = functions.get(value);
     if (found === undefined) {
-      found = false;
-      walk(value.body, n => { if (n.type === 'CallExpression' && vueHelper(mod, n.callee, 'h')) found = true; });
+      found = visualSyntax(mod, value.body).h;
       functions.set(value, found);
     }
     if (found && !value.async && !value.generator) return value;
@@ -89,29 +72,7 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
   const values=input.values;
   if(setup.params[0])bindSlotInitial(setup.params[0],input.initial,ctx);
 
-  // Index top-level syntax once; evaluation below still follows the same phases.
-  const declarations: t.VariableDeclarator[] = [];
-  const declarationByName = new Map<string, t.VariableDeclarator>();
-  const localNames = new Set<string>();
-  const renderBindings: { name?: string; fn: Ast | null | undefined }[] = [];
-  const aliases: [string, string][] = [];
-  if (setup.body.type === 'BlockStatement') for (const statement of setup.body.body) {
-    if (statement.type === 'VariableDeclaration') for (const declaration of statement.declarations) {
-      declarations.push(declaration);
-      for (const name of patternNames(declaration.id)) localNames.add(name);
-      const name = nodeName(declaration.id);
-      renderBindings.push({ name, fn: declaration.init });
-      if (declaration.id.type === 'Identifier') {
-        if (!declarationByName.has(declaration.id.name)) declarationByName.set(declaration.id.name, declaration);
-        if (declaration.init?.type === 'Identifier') aliases.push([declaration.id.name, declaration.init.name]);
-      }
-    }
-    if (statement.type === 'FunctionDeclaration') {
-      const name = statement.id?.name;
-      if (name) localNames.add(name);
-      renderBindings.push({ name, fn: statement });
-    }
-  }
+  const { declarations, declarationByName, localNames, renderBindings, aliases, effects } = setupSyntax(setup.body);
   for (const key of Object.keys(ctx.initialValues ?? {})) {
     if (localNames.has(key.split('.')[0])) delete ctx.initialValues![key];
   }
@@ -124,17 +85,17 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
     render=unwrapExpression(declaration.init);
   }
   if(!isRenderFunction(render)||render.async||render.generator||render.params.length||!supportedBody(render.body))return;
-  if(partial){let visual=false;walk(setup.body,n=>{if(n.type==='JSXElement'||n.type==='JSXFragment'||n.type==='CallExpression'&&vueHelper(ctx.module,n.callee,'h'))visual=true;});if(!visual)return;}
+  if (partial) { const visual = visualSyntax(ctx.module, setup.body); if (!visual.jsx && !visual.h) return; }
   if(setup.body.type==='BlockStatement'){
     const written=new Set<string>();
-    walk(setup.body,n=>{
-      const name=rootName(mutationTarget(n));
-      if(name)written.add(name);
-      if(n.type==='CallExpression'){
+    for (const effect of effects) {
+      if (effect.written) written.add(effect.written);
+      const n = effect.call;
+      if (n) {
         const capability=evaluate(n.callee,ctx),readonly=capability&&typeof capability==='object'&&(Object.hasOwn(capability,SOURCE_COPY)||Object.hasOwn(capability,SOURCE_TYPE_TEST));
         if(!readonly&&!(n.callee.type==='Identifier'&&ctx.module.imports.get(n.callee.name)?.request==='vue'))for(const argument of n.arguments)if(argument.type==='Identifier'&&ctx.env[argument.name]&&typeof ctx.env[argument.name]==='object')written.add(argument.name);
       }
-    });
+    }
     propagateAliases(written,aliases);
     ctx.initialValues??={};
     for(const d of declarations){
@@ -150,8 +111,8 @@ export function prepareVueSetup(this:RenderHost,setup:t.FunctionExpression|t.Fun
     for(const name of written)ctx.env[name]=UNKNOWN;
     for (const { name, fn } of renderBindings) {
       if (!name || !isRenderFunction(fn) || fn.async || fn.generator || !supportedBody(fn.body) || written.has(name)) continue;
-      let visual=false;walk(fn.body,n=>{if(n.type==='JSXElement'||n.type==='JSXFragment'||n.type==='CallExpression'&&vueHelper(ctx.module,n.callee,'h'))visual=true;});
-      if(visual)ctx.env[name]={[SOURCE_RENDER]:fn};
+      const visual = visualSyntax(ctx.module, fn.body);
+      if(visual.jsx || visual.h)ctx.env[name]={[SOURCE_RENDER]:fn};
     }
     if(partial)this.diagnose('PRESET_LIMIT','Read a direct source render shell; setup effects, lifecycle handlers and mutable state are not executed or reconstructed',ctx,setup);
   }
@@ -188,20 +149,6 @@ export function vueOptionProps(mod: ModuleInfo, options: t.ObjectExpression): vo
   if (inherit?.type === 'ObjectProperty' && inherit.value.type === 'BooleanLiteral') mod.inheritAttrs = inherit.value.value;
 }
 
-function supportedBody(body: Ast): boolean {
-  if (body.type !== 'BlockStatement') return true;
-  const statement = (s: t.Statement): boolean => s.type === 'VariableDeclaration' || s.type === 'ReturnStatement' || s.type === 'BlockStatement' && s.body.every(statement) || s.type === 'IfStatement' && statement(s.consequent) && (!s.alternate || statement(s.alternate));
-  return body.body.every(statement);
-}
-
-async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
-  const fn = localRenderFunction(value);
-  if(!fn)return;
-  if(ctx.depth>16||node.arguments.some(a=>a.type==='SpreadElement'))return this.fallback(ctx,node,'Local source render recursion or arguments exceed the finite limit');
-  const { local, body } = prepareLocalRenderCall(this, fn, node, ctx);
-  return body?.type==='CallExpression'&&vueHelper(ctx.module,body.callee,'h')?this.vueExpression(body,local):this.jsx(body,local);
-}
-
 export function prepareVueRender(this: RenderHost, fn: t.FunctionExpression | t.FunctionDeclaration | t.ArrowFunctionExpression, ctx: RenderContext, props: Record<string, unknown>, options = true): Ast | undefined {
   // Stateful render bodies, lifecycle/setup hooks and business calls are not run.
   if (!supportedBody(fn.body)) return;
@@ -222,100 +169,6 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
   }
   const exhausted = this.budget(ctx, node);
   if (exhausted !== undefined) return exhausted;
-  if (node.type === 'ConditionalExpression') {
-    const value = evaluate(node.test, ctx);
-    if (value === UNKNOWN) this.diagnose('BRANCH_DEFAULT', 'Unknown render condition; chose consequent', ctx, node);
-    return this.vueExpression(value === UNKNOWN || value ? node.consequent : node.alternate, ctx);
-  }
-  if (node.type === 'LogicalExpression') {
-    const value = evaluate(node.left, ctx);
-    if (value === UNKNOWN) { this.diagnose('BRANCH_DEFAULT', 'Unknown render guard; include optional content', ctx, node); return this.vueExpression(node.right, ctx); }
-    if (node.operator === '&&') return value ? this.vueExpression(node.right, ctx) : '';
-    return this.vueExpression(node.operator === '??' ? value == null ? node.right : node.left : value ? node.left : node.right, ctx);
-  }
-  if (node.type === 'ArrayExpression') {
-    let html = '';
-    for (const child of node.elements) html += await this.vueExpression(child, ctx);
-    return html;
-  }
+  if (node.type === 'ConditionalExpression' || node.type === 'LogicalExpression' || node.type === 'ArrayExpression') return renderBranch.call(this, node, ctx, 'render');
   return renderCall.call(this, node, ctx, 'render');
-}
-
-/** Classify a call once, then render it directly instead of crossing frontends. */
-export async function renderCall(this: RenderHost, node: t.CallExpression | t.OptionalCallExpression, ctx: RenderContext, framework: 'jsx' | 'render'): Promise<string> {
-  const calleeValue = evaluate(node.callee, ctx);
-  if (node.type === 'CallExpression') {
-    const local = await renderLocalCall.call(this, node, ctx, calleeValue);
-    if (local !== undefined) return local;
-  }
-  const slot = await renderSlotCall(this, node, ctx, calleeValue);
-  if (slot !== undefined) return slot;
-  if (node.type === 'OptionalCallExpression') return framework === 'render'
-    ? calleeValue == null && node.optional ? '' : this.fallback(ctx, node, 'Unresolved optional render call needs a finite binding')
-    : this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
-  if (!vueHelper(ctx.module, node.callee, 'h')) return this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
-  // A JSX h() expression also consumes a Vue call-expansion unit.
-  if (framework === 'jsx') {
-    const exhausted = this.budget(ctx, node);
-    if (exhausted !== undefined) return exhausted;
-  }
-  const tagNode = node.arguments[0];
-  const name = (value: Ast | undefined): string | undefined => value?.type === 'MemberExpression' && !value.computed ? `${name(value.object)}.${nodeName(value.property)}` : value ? nodeName(value) : undefined;
-  const tagValue = evaluate(tagNode, ctx);
-  const native = typeof tagValue === 'string';
-  const tag = native ? tagValue : name(tagNode);
-  if (!tag || !/^[\w.-]+$/.test(tag)) return this.fallback(ctx, node, 'Dynamic h() component needs a finite binding or adapter');
-  if (native && tag.includes('-')) return this.fallback(ctx, node, 'Custom elements need an inert source adapter');
-  const propsNode = node.arguments[1];
-  const childNode = node.arguments.length > 2 ? node.arguments[2] : propsNode && (propsNode.type === 'ArrayExpression' || propsNode.type === 'StringLiteral' || propsNode.type === 'CallExpression' && vueHelper(ctx.module, propsNode.callee, 'h')) ? propsNode : undefined;
-  const value = propsNode && propsNode !== childNode && propsNode.type !== 'NullLiteral' ? evaluate(propsNode, ctx) : {};
-  if (!value || value === UNKNOWN || typeof value !== 'object' || Array.isArray(value)) return this.fallback(ctx, node, 'Unresolved h() props need a finite binding');
-  const props: Record<string, unknown> = { ...value };
-  if (propsNode?.type === 'ObjectExpression') for (const prop of propsNode.properties) if (prop.type === 'SpreadElement' && evaluate(prop.argument, ctx) === UNKNOWN) this.diagnose('SPREAD_UNKNOWN', 'Unresolved h() spread props may affect layout', ctx, prop);
-  const local = this.contentContext(ctx, props, native ? tag : '');
-  if ((unknownGeometry(props.style) || ['class', 'style', 'width', 'height'].some(key => props[key] === UNKNOWN))&&!Object.values(ctx.slots??{}).some(slot=>this.hasSelectedSlot(slot))) return this.fallback(local, node, 'Unresolved h() layout props', props);
-  const slots: Record<string, SourceSlot> = {};
-  const forward=(value:unknown)=>{
-    if(!value||value===UNKNOWN||typeof value!=='object'||Array.isArray(value))return false;
-    for(const [key,slot]of Object.entries(value)){
-      if(!slot||typeof slot!=='object'||!Object.hasOwn(slot,slotValue))return false;
-      slots[key]=(slot as {[slotValue]:SourceSlot})[slotValue];
-    }
-    return true;
-  };
-  if (childNode?.type === 'ObjectExpression') {
-    for (const property of childNode.properties) {
-      if(property.type==='SpreadElement'){
-        if(!forward(evaluate(property.argument,ctx)))return this.fallback(local,node,'Unresolved forwarded h() slots need an adapter');
-        continue;
-      }
-      if(property.type==='ObjectProperty'&&!property.computed){
-        const value=evaluate(property.value,ctx),key=nodeName(property.key);
-        if(key&&value&&typeof value==='object'&&Object.hasOwn(value,slotValue)){slots[key]=(value as {[slotValue]:SourceSlot})[slotValue];continue;}
-      }
-      if (property.type !== 'ObjectProperty' || property.computed || !isRenderFunction(property.value) || property.value.params.length>1 || property.value.async || !supportedBody(property.value.body)) return this.fallback(local, node, 'Dynamic/scoped h() slots need an adapter');
-      const key = nodeName(property.key);
-      const slotContext = { ...local, env: { ...local.env } };
-      if (key) slots[key] = { framework: 'render', nodes: [], context: slotContext,parameter:property.value.params[0],renderFunction:property.value };
-    }
-  } else if (childNode && !forward(evaluate(childNode,ctx))) slots.default = { framework: 'render', nodes: [childNode], context: local };
-  const children = async () => slots.default ? this.renderSlot(slots.default, local) : '';
-  if (!native) {
-    const ref = await this.componentReference(tag, ctx);
-    if (vueHelper(ctx.module, tagNode!, 'Fragment')) return children();
-    props.__skSlots = slots;
-    const presentation = await renderComponent(this, tag, props, { framework: 'render', nodes: [], slots, context: local }, node, ref);
-    if (presentation !== undefined) return presentation;
-    return this.fallback(local, node, `No source adapter for ${tag}`, props);
-  }
-  if (nonVisual.has(tag)) return '';
-  if (tag === 'img') return this.image(props, local, node);
-  if (Object.hasOwn(props, 'innerHTML')) return typeof props.innerHTML === 'string' ? this.element(tag, props, this.staticHTML(props.innerHTML, local, node), local, node) : this.fallback(local, node, 'Unknown h() innerHTML needs a finite binding');
-  const content = Object.hasOwn(props, 'textContent') ? this.contentText(props.textContent, local, node) : await children();
-  const opaque = !content && ['div', 'section', 'article', 'main', 'canvas'].includes(tag) && Object.hasOwn(props, 'ref');
-  const html = this.element(tag, props, content, local, node, { opaque, leaf: opaque && this.masked(local) });
-  if (opaque) {
-    this.diagnose('FALLBACK', 'Opaque native mount point: preserve source container geometry', local, node);
-  }
-  return html;
 }

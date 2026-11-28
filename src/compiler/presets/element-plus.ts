@@ -96,24 +96,23 @@ export const elementPlusPreset: ComponentPreset = {
   resolve: (ref) => libraryExport(ref, 'element-plus', deep),
   role,
   slots: (name) => (['eltablecolumn','eldropdown'].includes(name) ? ['default'] : name === 'elcalendar' ? ['header'] : ['default', 'header', 'footer', 'prefix', 'suffix', 'title']),
-  present(name, props, children, text, hints, policy) {
+  present(name, props, text, hints, policy) {
     const n = name.replace(/^el/, '');
-    if (n === 'button') return button(children, props);
-    if (n === 'dropdown') return {tag:'div',className:'el-dropdown',style:'display:inline-flex;align-items:center;vertical-align:top',children};
-    if (n === 'link') return {tag:'a',className:'el-link',children:`<span data-sk-layout class="el-link__inner">${children}</span>`,css:':where(.el-link){display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;position:relative;text-decoration:none;outline:none;padding:0;font-size:var(--el-link-font-size,14px);font-weight:500}'};
+    if (n === 'button') return button(policy.children, props);
+    if (n === 'dropdown') return {tag:'div',className:'el-dropdown',style:'display:inline-flex;align-items:center;vertical-align:top', children: policy.children};
+    if (n === 'link') return {tag:'a',className:'el-link',children:`<span data-sk-layout class="el-link__inner">${policy.children}</span>`,css:':where(.el-link){display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;position:relative;text-decoration:none;outline:none;padding:0;font-size:var(--el-link-font-size,14px);font-weight:500}'};
     if (['input', 'inputnumber', 'select', 'datepicker', 'timepicker'].includes(n)) return input(props);
     if (n === 'option')
-      return { tag: 'option', children: children || escape(scalar(props.label ?? props.value)) };
-    if (n === 'calendar') return calendar(children);
-    if (n === 'checkbox' || n === 'radio') return choice(n, children);
-    if (n === 'pagination')return elementPagination(props,children);
+      return { tag: 'option', children: policy.children || escape(scalar(props.label ?? props.value)) };
+    if (n === 'calendar') return calendar(policy.children);
+    if (n === 'checkbox' || n === 'radio') return choice(n, policy.children);
+    if (n === 'pagination')return elementPagination(props,policy.children);
     if (n === 'switch' || n === 'slider')
       return {
         tag: 'div',
         style: `min-height:24px;min-width:${
           n === 'switch' ? '40px' : '120px'
-        };border:1px solid #dcdfe6;border-radius:4px`,
-        children,
+        };border:1px solid #dcdfe6;border-radius:4px`, children: policy.children,
       };
     if (n === 'icon')
       return {
@@ -122,8 +121,8 @@ export const elementPlusPreset: ComponentPreset = {
         children: '',
       };
     if (n === 'card') return elementCard(props, policy.slots, text);
-    if (n === 'table') return elementTable(props, policy.columns.resolve(children), text, hints, policy.mask);
-    if (n === 'tablecolumn') return column(props, children, policy.columns);
+    if (n === 'table') return elementTable(props, policy.columns.resolve(policy.children), text, hints, policy.mask);
+    if (n === 'tablecolumn') return column(props, policy.children, policy.columns);
     if (n === 'image' || n === 'avatar') return imagePlaceholder(props.size, n === 'avatar' ? '40px' : '160px', n === 'avatar' ? '40px' : '120px');
     // Countdown delegates its public layout and title/prefix/suffix slots to
     // Statistic. Timer/date functions do not affect that static structure.
@@ -133,27 +132,27 @@ export const elementPlusPreset: ComponentPreset = {
         tag: 'span',
         className:n==='tag'?'el-tag':undefined,
         style: n === 'tag' ? 'display:inline-flex;align-items:center;justify-content:center;height:24px;padding:0 9px;line-height:1;font-size:12px' : '',
-        children: children || text,
+        children: policy.children || text,
       };
     if (n === 'progress') {
       const round = props.type === 'circle' || props.type === 'dashboard';
       const size = dimension(props.width,'126px');
       return {tag:'div',className:`el-progress el-progress--${round ? 'circle' : 'line'}`,style:round ? `display:inline-block;width:${size};height:${size}` : `height:${dimension(props.strokeWidth,'6px')};width:100%`,leaf:true,children:''};
     }
-    if (n === 'row') return elementRow(props, children);
-    if (n === 'col') return elementColumn(props, children);
+    if (n === 'row') return elementRow(props, policy.children);
+    if (n === 'col') return elementColumn(props, policy.children);
     if (n === 'space' || n === 'buttongroup')
-      return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children };
-    if (n === 'formitem') return formItem(children, props.label);
+      return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children: policy.children };
+    if (n === 'formitem') return formItem(policy.children, props.label);
     if (n === 'divider')
       return { tag: 'div', style: 'height:1px;margin:20px 0;background:#e4e7ed', children: '' };
-    if (n === 'descriptionsitem') return descriptionItem(children, props.label);
-    if (n === 'scrollbar') return elementScrollbar(props,children);
-    if(n==='timeline'||n==='timelineitem')return elementTimeline(n,props,children,text);
-    if (n === 'container') return { tag: 'section', style: 'display:flex;min-width:0;flex:1', children };
+    if (n === 'descriptionsitem') return descriptionItem(policy.children, props.label);
+    if (n === 'scrollbar') return elementScrollbar(props,policy.children);
+    if(n==='timeline'||n==='timelineitem')return elementTimeline(n,props,policy.children,text);
+    if (n === 'container') return { tag: 'section', style: 'display:flex;min-width:0;flex:1', children: policy.children };
     if (n === 'aside')
-      return { tag: 'aside', style: `flex-shrink:0;width:${dimension(props.width, '200px')}`, children };
-    if (n === 'configprovider') return { tag: 'div', style: 'display:contents', children };
-    if (layouts.has(n)) return { tag: n === 'main' ? 'main' : 'div', style: 'min-width:0', children };
+      return { tag: 'aside', style: `flex-shrink:0;width:${dimension(props.width, '200px')}`, children: policy.children };
+    if (n === 'configprovider') return { tag: 'div', style: 'display:contents', children: policy.children };
+    if (layouts.has(n)) return { tag: n === 'main' ? 'main' : 'div', style: 'min-width:0', children: policy.children };
   },
 };

@@ -7,7 +7,7 @@ import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
 import {slotValue,type SourceSlot,type RenderContext} from './context.js';
 import type {RenderHost} from './render-host.js';
 import{initialExpression}from'./initial-state.js';
-import{vueHelper}from'./vue-render.js';
+import{vueHelper}from'./vue-syntax.js';
 
 /** A region is compiled in its lexical slot/loop context, without rendering its
  * surrounding application UI. Selection never changes guards inside the region. */

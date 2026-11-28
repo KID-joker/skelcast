@@ -44,7 +44,7 @@ export class SourceCompiler extends SourceModules {
   private inlineStyles = new Map<string, { value: string; file: string }>();
   private sourceIds=new Set<string>();
   private region?:VueRegion;
-  private expressions = new Map<string, t.Expression | null>();
+  private expressions = this.files.expressions;
   private tableColumns = new TableColumns();
   private componentImports = new WeakMap<ModuleInfo['imports'], Map<string, ComponentReference>>();
   private configuredComponents = new Set(Object.keys(this.options.components ?? {}).map(componentName));
@@ -297,11 +297,16 @@ export class SourceCompiler extends SourceModules {
     const local = { ...ctx, control: role === 'control' ? true : role === 'data' ? false : ctx.control };
     const slots = preset.slots(name);
     const renderedSlots = await renderPresetSlots(this, slot, slots, local);
-    const children = slots.map(key => renderedSlots[key]).join('');
+    let children: string | undefined;
     const mask = this.masked(local);
     const text = mask ? this.text(local, node) : this.contentText(props.value ?? props.title ?? UNKNOWN, local, node);
     const hints: SkeletonHints = { ...this.hints, state: this.hints.state ?? (local.loading ? 'loading' : 'source') };
-    const presentation = preset.present(name, props, children, text, hints, { mask, slots: renderedSlots, columns: this.tableColumns });
+    // Keep slot traversal (diagnostics, dependencies and expansion costs) in its
+    // existing order, but join markup only when the presentation consumes it.
+    const presentation = preset.present(name, props, text, hints, {
+      mask, slots: renderedSlots, columns: this.tableColumns,
+      get children() { return children ??= slots.map(key => renderedSlots[key]).join(''); },
+    });
     if (!presentation) return;
     this.record('component', tag, `Use ${preset.id} ${role} adapter for ${reference!.request}::${reference!.exported}`, ctx, node);
     for (const note of presentation.notes ?? []) this.diagnose('PRESET_LIMIT', note, ctx, node);

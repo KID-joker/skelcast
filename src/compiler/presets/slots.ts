@@ -2,14 +2,23 @@ import type { DirectiveNode, TemplateChildNode } from '@vue/compiler-dom';
 import type { RenderContext, SourceSlot } from '../context.js';
 import type { RenderHost } from '../render-host.js';
 
+const templateSlots = new WeakMap<TemplateChildNode[], Map<string, TemplateChildNode[]>>();
+const emptySlot: TemplateChildNode[] = [];
 function templateSlotNodes(nodes: TemplateChildNode[], name: string): TemplateChildNode[] {
-  return nodes.flatMap(node => {
+  let index = templateSlots.get(nodes);
+  if (index) return index.get(name) ?? emptySlot;
+  index = new Map();
+  for (const node of nodes) {
     const slot = node.type === 1 && node.tag === 'template'
       ? node.props.find((prop): prop is DirectiveNode => prop.type === 7 && prop.name === 'slot')
       : undefined;
-    if (slot?.arg?.type === 4 && node.type === 1) return slot.arg.content === name ? node.children : [];
-    return name === 'default' ? [node] : [];
-  });
+    const key = slot?.arg?.type === 4 && node.type === 1 ? slot.arg.content : 'default';
+    const children = slot?.arg?.type === 4 && node.type === 1 ? node.children : [node];
+    const group = index.get(key);
+    if (group) group.push(...children); else index.set(key, [...children]);
+  }
+  templateSlots.set(nodes, index);
+  return index.get(name) ?? emptySlot;
 }
 
 /** Render in preset-declared order: nested table columns and evidence depend on
