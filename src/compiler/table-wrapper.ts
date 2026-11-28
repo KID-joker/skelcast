@@ -2,7 +2,7 @@ import type * as t from '@babel/types';
 import {nodeName,walk,isRenderFunction} from './ast.js';
 import type {ModuleInfo} from './context.js';
 import type {ComponentReference} from './presets/types.js';
-import {evaluate,evaluateSourceWrapper,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
+import {evaluate,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
 import {resolvePreset} from './presets/index.js';
 import {vueHelper} from './vue-syntax.js';
 import{tableViewportOffset}from'./viewport-constraint.js';
@@ -75,21 +75,8 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
  const env:Record<string,Value>={...mod.env,[parameter.name]:sourceProps},bindings:Record<string,Value>={};
  for(const [alias,key]of aliases)env[alias]=Object.hasOwn(sourceProps,key)?sourceProps[key]:undefined;
  const context:ExpressionContext={code:mod.code,env,bindings,unwrapRefs:true};
- const value=(node:t.Node|undefined|null,scope=context):Value=>{
-  if(!node)return UNKNOWN;
-  if(node.type==='CallExpression'){
-   const name = ['unref', 'computed'].find(name => helper(node.callee, name));
-   const wrapper = evaluateSourceWrapper(node, name, input => value(input, scope), fn =>
-    isRenderFunction(fn) && fn.body.type !== 'BlockStatement' ? { value: value(fn.body, scope) } : undefined);
-   if(wrapper)return wrapper.value;
-  }
-  if(node.type==='CallExpression'&&node.callee.type==='MemberExpression'&&node.callee.object.type==='Identifier'&&node.callee.object.name==='Object'&&!Object.hasOwn(mod.env,'Object')&&nodeName(node.callee.property)==='assign'&&node.arguments[0]?.type==='ObjectExpression'){
-   const first=value(node.arguments[0],scope);if(!first||typeof first!=='object')return UNKNOWN;
-   const result={...first};for(const arg of node.arguments.slice(1)){const next=value(arg,scope);if(next&&typeof next==='object')Object.assign(result,next);}return result;
-  }
-  walk(node,n=>{if(n!==node&&n.type==='CallExpression'&&helper(n.callee,'unref')&&n.start!=null&&n.end!=null)(scope.nodeValues??=new Map()).set(n,value(n.arguments[0],scope));});
-  return evaluate(node,scope);
- };
+ const layout = { helper, objectAssign: !Object.hasOwn(mod.env, 'Object') };
+ const value = (node: t.Node | undefined | null, scope = context): Value => evaluate(node, scope, 0, layout);
  for(const statement of setup.body.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations)if(d.id.type==='Identifier')env[d.id.name]=value(d.init);
  const table=[...candidates.keys()][0];
  if(table.type==='CallExpression'&&resolvePreset(enabled,result.reference)?.name==='eltable')result.viewportOffset=tableViewportOffset(mod,setup,table,value);

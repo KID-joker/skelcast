@@ -24,6 +24,24 @@ test('large h trees preserve the existing expansion cutoff and fallback source n
   });
 });
 
+test('mixed JSX and h expansion retains its call checkpoint and exact fallback source', async () => {
+  const prefix = `import {h} from 'vue';export default()=> <main>{[`;
+  const child = `h('span',null,'x')`;
+  await fixture({}, async root => {
+    for (const count of [1499, 1500]) {
+      await writeFile(path.join(root, 'Mixed.tsx'), prefix + Array(count).fill(child).join(',') + ']}</main>');
+      const { artifact } = await compileTarget(root, { id: 'mixed', source: 'Mixed.tsx' });
+      const diagnostics = artifact.diagnostics.filter(item => item.message.includes('expansion budget'));
+      assert.equal((artifact.variants.default.html.match(/data-sk-measured/g) ?? []).length, 1499);
+      assert.equal(diagnostics.length, count === 1499 ? 0 : 1);
+      if (diagnostics.length) {
+        const offset = prefix.length + 1499 * (child.length + 1);
+        assert.equal(diagnostics[0].node, digest(`Mixed.tsx:${offset}`).slice(0, 12));
+      }
+    }
+  });
+});
+
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-render-'));
   try {

@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { isRenderFunction, nodeName, patternNames, unwrapExpression, type RenderFunction } from './ast.js';
+import { isRenderFunction, nodeName, patternNames, unwrapExpression } from './ast.js';
 import { UNKNOWN, SOURCE_ACCESSOR, SOURCE_RENDER,SOURCE_COPY,SOURCE_TYPE_TEST, bindPattern, evaluate, type Ast } from './expression.js';
 import { slotValue, type ModuleInfo, type RenderContext } from './context.js';
 import type { RenderHost } from './render-host.js';
@@ -11,13 +11,13 @@ import { renderBranch } from './render-branches.js';
 import { vueHelper, supportedBody, visualSyntax, setupSyntax } from './vue-syntax.js';
 import { componentInputs } from './props.js';
 import { renderJSXNode } from './render-node.js';
+import { renderBudget } from './render-budget.js';
 
 export function vueOptions(mod: ModuleInfo, value: Ast | undefined): t.ObjectExpression | undefined {
   if (value?.type === 'ObjectExpression') return value;
   if (value?.type === 'CallExpression' && vueHelper(mod, value.callee, 'defineComponent') && value.arguments[0]?.type === 'ObjectExpression') return value.arguments[0];
 }
 
-const renderFunctions = new WeakMap<ModuleInfo['imports'], WeakMap<RenderFunction, boolean>>();
 export function vueRenderFunction(mod: ModuleInfo, value: Ast | undefined): t.FunctionExpression | t.ArrowFunctionExpression | t.FunctionDeclaration | undefined {
   const options = vueOptions(mod, value);
   if (options) {
@@ -28,14 +28,7 @@ export function vueRenderFunction(mod: ModuleInfo, value: Ast | undefined): t.Fu
     return;
   }
   if (isRenderFunction(value)) {
-    let functions = renderFunctions.get(mod.imports);
-    if (!functions) renderFunctions.set(mod.imports, functions = new WeakMap());
-    let found = functions.get(value);
-    if (found === undefined) {
-      found = visualSyntax(mod, value.body).h;
-      functions.set(value, found);
-    }
-    if (found && !value.async && !value.generator) return value;
+    if (visualSyntax(mod, value.body).h && !value.async && !value.generator) return value;
   }
 }
 
@@ -161,14 +154,12 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
   if (!node) return '';
   const expression = unwrapExpression(node);
   if (expression && expression !== node) return this.vueExpression(expression, ctx);
-  // Vue values include both a render-expression and a shared-node unit. Keep
-  // that weight at the frontend boundary, independent of renderer delegation.
+  const exhausted = renderBudget(this, node, ctx, 'render');
+  if (exhausted !== undefined) return exhausted;
   if (node.type !== 'ConditionalExpression' && node.type !== 'LogicalExpression' && node.type !== 'ArrayExpression'
     && node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') {
-    return this.budget(ctx, node, 2) ?? renderJSXNode.call(this, node, ctx);
+    return renderJSXNode.call(this, node, ctx);
   }
-  const exhausted = this.budget(ctx, node);
-  if (exhausted !== undefined) return exhausted;
   if (node.type === 'ConditionalExpression' || node.type === 'LogicalExpression' || node.type === 'ArrayExpression') return renderBranch.call(this, node, ctx, 'render');
   return renderCall.call(this, node, ctx, 'render');
 }

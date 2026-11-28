@@ -1,9 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateString, SOURCE_PROJECTION, UNKNOWN, type Value } from '../src/compiler/expression.js';
+import { evaluate as evaluateNode, evaluateString, SOURCE_PROJECTION, UNKNOWN, type Value, type SourceLayoutPolicy } from '../src/compiler/expression.js';
+import { parseExpression } from '@babel/parser';
 import { initialString, propagateInitialAliases } from '../src/compiler/initial-state.js';
 
 const evaluate = (source: string, bindings: Record<string, unknown> = {}) => evaluateString(source, { code: '', env: {}, bindings });
+
+test('source layout projections retain helper identity, partial objects and isolated values without changing ordinary expressions', () => {
+  const layout: SourceLayoutPolicy = {
+    helper: (callee, name) => callee.type === 'Identifier' && callee.name === ({ unref: 'unwrap', computed: 'derive' }[name]),
+    objectAssign: true,
+  };
+  const code = 'derive(() => Object.assign({height:60}, unknownStyle(), {width:unwrap(size).width}))';
+  const node = parseExpression(code);
+  for (const width of [120, 240]) {
+    const size = { width };
+    const context = { code, env: { size }, bindings: {} };
+    assert.deepEqual(evaluateNode(node, context, 0, layout), { height: 60, width });
+    assert.deepEqual(size, { width }, 'layout projection never mutates input objects');
+    assert.equal(evaluateNode(node, { ...context }, 0), UNKNOWN, 'layout-only helpers do not enter ordinary expression evaluation');
+  }
+  assert.equal(evaluateNode(node, { code, env: {}, bindings: {} }, 0, { ...layout, helper: () => false }), UNKNOWN);
+  const assign = 'Object.assign({height:60}, unknownStyle())';
+  assert.equal(evaluateNode(parseExpression(assign), { code: assign, env: {}, bindings: {} }, 0, { ...layout, objectAssign: false }), UNKNOWN);
+  const nested = '{height:derive(() => 60),width:unwrap(size).width}';
+  const result = evaluateNode(parseExpression(nested), { code: nested, env: { size: { width: 120 } }, bindings: {} }, 0, layout) as Record<string, unknown>;
+  assert.equal(result.height, UNKNOWN, 'only nested unref reads receive layout projection');
+  assert.equal(result.width, 120);
+});
 
 test('initial aliases retain chained, cyclic and source-order facts including absent and nonfinite values', () => {
   const root = { width: 40 };

@@ -9,6 +9,7 @@ import { boundaryContentContext } from './branches.js';
 import { collectionRoot, loadingBranch, projectCollection, exclusiveChoice } from './loading-state.js';
 import{initialString}from'./initial-state.js';
 import { planCollection } from './collections.js';
+import { renderBudget } from './render-budget.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -121,39 +122,14 @@ export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: Re
 export async function renderVueNode(this: RenderHost, source: VueNode, ctx: RenderContext, skipFor = false): Promise<string> {
   const selection=this.selectVueNode(source,ctx);
   if(selection==='skip')return'';
-  const exhausted = this.budget(ctx, source);
+  const exhausted = renderBudget(this, source, ctx, 'template');
   if (exhausted !== undefined) return exhausted;
   if (source.type === 2) return source.content.trim() ? this.contentText(source.content, ctx, source) : '';
   if (source.type === 5) { this.record('text', expression(source.content) ?? '', 'Resolve content policy for interpolation', ctx, source); return this.contentText(evaluateString(expression(source.content) ?? '', ctx), ctx, source); }
   if (source.type !== 1) return '';
-  let node: ElementNode = source;
+  const node = source;
   const loop = directive(node, ['for']);
-  if (loop && !skipFor) {
-    const match = expression(loop.exp)?.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
-    if (!match) return this.fallback(ctx, node, 'Unsupported v-for expression');
-    let patterns: Ast[];
-    try {
-      const aliases = match[1].trim().replace(/^\(([\s\S]*)\)$/, '$1');
-      const callback = parseSourceExpression(`(${aliases}) => 0`, ctx);
-      if (callback?.type !== 'ArrowFunctionExpression') throw new Error('Unsupported aliases');
-      patterns = callback.params;
-      if (!patterns.length || patterns.length > 3) throw new Error('Unsupported aliases');
-    } catch { return this.fallback(ctx, node, 'Unsupported v-for aliases'); }
-    const list = evaluateString(match[2], ctx);
-    const bound=sourceCapacity(list);
-    const entries = Array.isArray(list) ? list.map((value, index) => [value, index]) : bound==null&&list && list !== UNKNOWN && typeof list === 'object' ? Object.entries(list).map(([key, value]) => [value, key]) : undefined;
-    const length = entries?.length ?? (typeof list === 'number' && Number.isFinite(list) ? Math.max(0, Math.floor(list)) : undefined);
-    const { count, projected } = planCollection(this, match[2], list, ctx, node, length, 'predicted response');
-    let html = '';
-    for (let i = 0; i < count; i++) {
-      const local: RenderContext = { ...ctx, env: { ...ctx.env } };
-      bindPattern(patterns[0], !projected&&entries ? entries[i] ? entries[i][0] : UNKNOWN : typeof list === 'number' ? i + 1 : UNKNOWN, local.env);
-      if (patterns[1]) bindPattern(patterns[1], entries ? entries[i]?.[1] ?? i : i, local.env);
-      if (patterns[2]) bindPattern(patterns[2], i, local.env);
-      html += await this.vueNode(node, local, true);
-    }
-    return html;
-  }
+  if (loop && !skipFor) return renderVueLoop.call(this, node, loop, ctx);
   if(selection==='target'){
     const binding=node.props.find((p):p is DirectiveNode=>p.type===7&&p.name==='bind'&&p.arg?.type===4&&p.arg.content==='pending');
     const value=expression(binding?.exp);
@@ -164,10 +140,53 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     const policy=Object.fromEntries(node.props.flatMap(p=>p.type===6&&['data-sk-preserve','data-sk-mask'].includes(p.name)?[[p.name,p.value?.content??true]]:[]));
     return this.vueNodes(node.children,this.contentContext(ctx,policy));
   }
-  let props: Record<string, Value> = Object.create(null);
+  const attributes = evaluateVueProps.call(this, node, ctx);
+  return typeof attributes === 'string' ? attributes : renderVueElement.call(this, source, ctx, selection, attributes);
+}
+
+async function renderVueLoop(this: RenderHost, node: ElementNode, loop: DirectiveNode, ctx: RenderContext): Promise<string> {
+  const match = expression(loop.exp)?.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
+  if (!match) return this.fallback(ctx, node, 'Unsupported v-for expression');
+  let patterns: Ast[];
+  try {
+    const aliases = match[1].trim().replace(/^\(([\s\S]*)\)$/, '$1');
+    const callback = parseSourceExpression(`(${aliases}) => 0`, ctx);
+    if (callback?.type !== 'ArrowFunctionExpression') throw new Error('Unsupported aliases');
+    patterns = callback.params;
+    if (!patterns.length || patterns.length > 3) throw new Error('Unsupported aliases');
+  } catch { return this.fallback(ctx, node, 'Unsupported v-for aliases'); }
+  const list = evaluateString(match[2], ctx);
+  const bound=sourceCapacity(list);
+  const entries = Array.isArray(list) ? list.map((value, index) => [value, index]) : bound==null&&list && list !== UNKNOWN && typeof list === 'object' ? Object.entries(list).map(([key, value]) => [value, key]) : undefined;
+  const length = entries?.length ?? (typeof list === 'number' && Number.isFinite(list) ? Math.max(0, Math.floor(list)) : undefined);
+  const { count, projected } = planCollection(this, match[2], list, ctx, node, length, 'predicted response');
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    const local: RenderContext = { ...ctx, env: { ...ctx.env } };
+    bindPattern(patterns[0], !projected&&entries ? entries[i] ? entries[i][0] : UNKNOWN : typeof list === 'number' ? i + 1 : UNKNOWN, local.env);
+    if (patterns[1]) bindPattern(patterns[1], entries ? entries[i]?.[1] ?? i : i, local.env);
+    if (patterns[2]) bindPattern(patterns[2], i, local.env);
+    html += await this.vueNode(node, local, true);
+  }
+  return html;
+}
+
+interface VueAttributes {
+  props: Record<string, Value>;
+  values?: EvaluatedProp[];
+  notes: Diagnostic[];
+  unknownLayout: boolean;
+  htmlContent?: string;
+  textContent: boolean;
+  textValue: Value;
+}
+
+/** Evaluate directives once, retaining source order for dynamic-tag replay. */
+function evaluateVueProps(this: RenderHost, node: ElementNode, ctx: RenderContext): VueAttributes | string {
+  const props: Record<string, Value> = Object.create(null);
   // A dynamic tag reuses evaluated attribute values; resolving its tag must not
   // parse synthetic markup or revisit loop/region and expression evaluation.
-  let values: EvaluatedProp[] | undefined = node.tag === 'component' ? [] : undefined;
+  const values: EvaluatedProp[] | undefined = node.tag === 'component' ? [] : undefined;
   // Record once and enrich the diagnostic when a dynamic component is known.
   const notes: Diagnostic[] = [];
   const diagnose = (code: string, message: string) => {
@@ -217,6 +236,20 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     }
     else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose('DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
   }
+  return { props, values, notes, unknownLayout, htmlContent, textContent, textValue };
+}
+
+/** Resolve dynamic tags and dispatch the resulting component or native element. */
+async function renderVueElement(
+  this: RenderHost,
+  source: ElementNode,
+  ctx: RenderContext,
+  selection: ReturnType<RenderHost['selectVueNode']>,
+  attributes: VueAttributes,
+): Promise<string> {
+  let node = source;
+  let { props, values, unknownLayout } = attributes;
+  const { notes, htmlContent, textContent, textValue } = attributes;
   const fallthrough = ctx.fallthrough;
   let tag = node.tag;
   for (;;) {
@@ -255,7 +288,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
       if (tagType === 1 && tag !== 'component') for (const note of notes) note.component = tag;
       node = { ...node, tag, tagType, props: node.props.filter(dynamicContentProp) } as ElementNode;
       if (this.selectVueNode(node, ctx) === 'skip') return '';
-      const exhausted = this.budget(ctx, node);
+      const exhausted = renderBudget(this, node, ctx, 'template');
       if (exhausted !== undefined) return exhausted;
       values = values!.filter(entry => dynamicContentProp(entry.prop));
       const resolved = dynamicProps(this, values, node, ctx);

@@ -8,6 +8,7 @@ import { renderSlotCall } from './regions.js';
 import { renderComponent } from './component-render.js';
 import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
 import { vueHelper, supportedBody } from './vue-syntax.js';
+import { renderBudget } from './render-budget.js';
 
 async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
   const fn = localRenderFunction(value);
@@ -30,11 +31,8 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
     ? calleeValue == null && node.optional ? '' : this.fallback(ctx, node, 'Unresolved optional render call needs a finite binding')
     : this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
   if (!vueHelper(ctx.module, node.callee, 'h')) return this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
-  // A JSX h() expression also consumes a Vue call-expansion unit.
-  if (framework === 'jsx') {
-    const exhausted = this.budget(ctx, node);
-    if (exhausted !== undefined) return exhausted;
-  }
+  const exhausted = renderBudget(this, node, ctx, framework, 'h');
+  if (exhausted !== undefined) return exhausted;
   const tagNode = node.arguments[0];
   const name = (value: Ast | undefined): string | undefined => value?.type === 'MemberExpression' && !value.computed ? `${name(value.object)}.${nodeName(value.property)}` : value ? nodeName(value) : undefined;
   const tagValue = evaluate(tagNode, ctx);

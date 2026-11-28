@@ -246,7 +246,9 @@ test('functional Vue classification reuses syntax while retaining helper package
     if (fn.type !== 'ArrowFunctionExpression') throw new Error('Expected function');
     let reads = 0;
     const body = fn.body;
-    Object.defineProperty(fn, 'body', { get() { reads++; return body; } });
+    const key = body.type === 'CallExpression' ? 'arguments' : 'children';
+    const children = Reflect.get(body, key);
+    Object.defineProperty(body, key, { get() { reads++; return children; } });
     const imports: ModuleInfo['imports'] = new Map([
       ['h', { request: 'vue', exported: 'h' }],
       ['node', { request: 'vue', exported: 'h' }],
@@ -254,7 +256,7 @@ test('functional Vue classification reuses syntax while retaining helper package
     ]);
     const module = { imports } as ModuleInfo;
     for (let i = 0; i < 20; i++) assert.equal(vueRenderFunction({ ...module }, fn), code.includes('<section') ? undefined : fn);
-    assert.equal(reads, 1, 'positive and negative classification facts are shared between instances');
+    assert.equal(reads, 1, 'positive and negative classification facts reuse the body syntax between instances');
     const other = { imports: new Map([...imports].map(([key, value]) => [key, { ...value, request: 'other-library' }])) } as ModuleInfo;
     assert.equal(vueRenderFunction(other, fn), undefined);
     assert.equal(reads, 2, 'different import identities are classified independently');

@@ -1,6 +1,6 @@
 import { parseExpression } from '@babel/parser';
 import type * as t from '@babel/types';
-import { nodeName, unwrapExpression } from './ast.js';
+import { isRenderFunction, nodeName, unwrapExpression, walk } from './ast.js';
 import type {CopyRecipe} from './copy-recipe.js';
 
 export const UNKNOWN = Symbol('unknown');
@@ -77,8 +77,45 @@ function inferredObject(name: string, ctx: ExpressionContext): Value {
   return found ? result : UNKNOWN;
 }
 
+/** Source-layout projections are opt-in. Helper identity and builtin shadowing
+ * are supplied by the caller; ordinary expression evaluation stays unchanged. */
+export interface SourceLayoutPolicy {
+  helper(callee: t.Node, name: string): boolean;
+  objectAssign: boolean;
+}
+
 // This is an abstract, bounded interpreter. No eval, Function, imports or business calls.
-export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext, depth = 0): Value {
+export function evaluate(node: t.Node | null | undefined, ctx: ExpressionContext, depth = 0, layout?: SourceLayoutPolicy): Value {
+  if (layout) {
+    if (!node) return UNKNOWN;
+    const read = (input: t.Node | null | undefined): Value => evaluate(input, ctx, depth, layout);
+    if (node.type === 'CallExpression') {
+      const name = ['unref', 'computed'].find(name => layout.helper(node.callee, name));
+      const wrapper = evaluateSourceWrapper(node, name, read, fn =>
+        isRenderFunction(fn) && fn.body.type !== 'BlockStatement' ? { value: read(fn.body) } : undefined);
+      if (wrapper) return wrapper.value;
+      if (layout.objectAssign && node.callee.type === 'MemberExpression' && node.callee.object.type === 'Identifier'
+        && node.callee.object.name === 'Object' && nodeName(node.callee.property) === 'assign'
+        && node.arguments[0]?.type === 'ObjectExpression') {
+        const first = read(node.arguments[0]);
+        if (!first || typeof first !== 'object') return UNKNOWN;
+        const result = { ...first };
+        for (const argument of node.arguments.slice(1)) {
+          const next = read(argument);
+          if (next && typeof next === 'object') Object.assign(result, next);
+        }
+        return result;
+      }
+    }
+    // Project nested unref reads only. Other nested expressions retain the
+    // general interpreter's rules, rather than inheriting root layout policy.
+    walk(node, child => {
+      if (child !== node && child.type === 'CallExpression' && layout.helper(child.callee, 'unref')
+        && child.start != null && child.end != null) {
+        (ctx.nodeValues ??= new Map()).set(child, read(child.arguments[0]));
+      }
+    });
+  }
   return evaluateNode(node, ctx, depth);
 }
 
