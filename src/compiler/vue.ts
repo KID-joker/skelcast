@@ -10,6 +10,7 @@ import { collectionRoot, loadingBranch, projectCollection, exclusiveChoice } fro
 import{initialString}from'./initial-state.js';
 import { planCollection } from './collections.js';
 import { renderBudget } from './render-budget.js';
+import { renderGraphic } from './output.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -322,6 +323,8 @@ async function renderVueElement(
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, props);
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, ctx, node);
+  const graphic = renderGraphic(this, tag, props, ctx, node);
+  if (graphic !== undefined) return graphic;
   const children = htmlContent !== undefined ? this.staticHTML(htmlContent, ctx, node)
     : tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true)
     : textContent ? this.contentText(textValue, ctx, node) : await this.vueNodes(node.children, ctx);

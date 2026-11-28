@@ -65,7 +65,7 @@ test('preset-owned elements retain layout markers without changing source slot b
   });
 });
 
-test('Element Plus keeps controls and masks only table data, with import-identity gating', async () => {
+test('Element Plus keeps outer controls and simplifies table cell controls, with import-identity gating', async () => {
   await fixture(
     {
       'View.vue': `<script setup>import {ElButton as Action,ElCalendar,ElTable,ElTableColumn,ElStatistic} from 'element-plus';const rows=privateAPI();throw new Error('never run')</script><template><Action @click="danger()">Refresh</Action><ElCalendar/><ElTable :data="rows"><ElTableColumn label="Name" prop="name" :width="180"/><ElTableColumn label="Count" prop="count"/><ElTableColumn label="Actions"><template #default><Action @click="danger()">Delete</Action></template></ElTableColumn></ElTable><ElStatistic title="Total" :value="total"/><el-button>Unregistered</el-button></template>`,
@@ -86,7 +86,7 @@ test('Element Plus keeps controls and masks only table data, with import-identit
       assert.match(html, />Name<\/div><\/th>/);
       const actions=elements(table.loc.source).filter(n=>n.tag==='button');
       assert.equal(actions.length,4);
-      assert.ok(actions.every(n=>!has(n,'data-sk-leaf')&&n.loc.source.includes('Delete')));
+      assert.ok(actions.every(n=>has(n,'data-sk-leaf')&&n.loc.source.includes('data-sk-text-content="Delete"')));
       assert.doesNotMatch(html, /danger|privateAPI|never run/);
       assert.equal(artifact.diagnostics.filter((d) => d.code === 'FALLBACK').length, 1);
       assert.ok(
@@ -154,7 +154,8 @@ test('table columns follow forwarded children, retain escaped content and stay s
       assert.match(headers[2][0].loc.source, /Explicit/);
       assert.match(headers[3][0].loc.source, /Outer/);
       assert.match(headers[4][0].loc.source, /Inner/);
-      assert.match(html, />Open &amp; inspect<\/button>/);
+      assert.match(html, /data-sk-text-content="Open &amp; inspect"/);
+      assert.ok(elements(html).filter(node => node.tag === 'button').every(node => has(node, 'data-sk-leaf')));
       assert.doesNotMatch(html, /Discarded|Ignored|skelcast-column:|data-sk-column|data-cell=/);
       assert.equal(artifact.diagnostics.filter(row => row.code === 'FALLBACK').length, 0);
     }

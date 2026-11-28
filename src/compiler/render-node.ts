@@ -8,6 +8,7 @@ import { boundaryContentContext } from './branches.js';
 import { renderCall } from './render-call.js';
 import { planCollection } from './collections.js';
 import { renderBranch } from './render-branches.js';
+import { renderGraphic } from './output.js';
 
 /** Shared node rendering; each frontend accounts for its own expansion cost. */
 export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderContext): Promise<string> {
@@ -87,6 +88,8 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, props);
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, ctx, node);
+  const graphic = renderGraphic(this, tag, props, ctx, node);
+  if (graphic !== undefined) return graphic;
   const children = tag === 'p' && this.masked(ctx) && this.hints.lines != null ? this.text(ctx, node, true) : await this.jsxNodes(node.children, ctx);
   return this.element(tag, props, children, ctx, node);
 }

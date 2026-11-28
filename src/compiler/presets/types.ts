@@ -24,6 +24,8 @@ export interface ComponentPreset {
   resolve?: (reference: ComponentReference) => string | undefined;
   role: (name: string, props: Record<string, unknown>) => ComponentRole | undefined;
   slots: (name: string) => readonly string[];
+  /** Simplify cell-slot controls while retaining their source layout. */
+  maskSlots?: (name: string) => boolean;
   present: (
     name: string,
     props: Record<string, unknown>,

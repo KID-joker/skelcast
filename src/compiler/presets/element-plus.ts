@@ -95,6 +95,7 @@ export const elementPlusPreset: ComponentPreset = {
   package: 'element-plus',
   resolve: (ref) => libraryExport(ref, 'element-plus', deep),
   role,
+  maskSlots: name => name === 'eltablecolumn',
   slots: (name) => (['eltablecolumn','eldropdown'].includes(name) ? ['default'] : name === 'elcalendar' ? ['header'] : ['default', 'header', 'footer', 'prefix', 'suffix', 'title']),
   present(name, props, text, hints, policy) {
     const n = name.replace(/^el/, '');

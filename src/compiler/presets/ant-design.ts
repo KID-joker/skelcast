@@ -129,6 +129,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
     package: id,
     resolve: (ref) => libraryExport(ref, id, deep),
     role,
+    maskSlots: name => name === 'table.column' || name === 'tablecolumn',
     slots: (name) => (name === 'table.column' || name === 'tablecolumn' ? ['default'] : name === 'calendar' ? ['header'] : ['default', 'header', 'footer', 'title', 'extra']),
     present(name, props, text, hints, policy) {
       if (name === 'button') return button(policy.children, props);

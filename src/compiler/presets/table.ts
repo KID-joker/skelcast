@@ -73,6 +73,8 @@ function tableData(props: Record<string, unknown>, slotColumns: readonly TableCo
 }
 
 const selection = '<input data-sk-layout type="checkbox" disabled tabindex="-1" data-sk-control style="width:14px;height:14px;margin:0;vertical-align:middle">';
+const selectionPlaceholder = '<span data-sk-layout data-sk-leaf style="display:inline-block;width:14px;height:14px;vertical-align:middle"></span>';
+const expandPlaceholder = '<span data-sk-layout data-sk-leaf style="display:inline-block;width:7px;height:14px;vertical-align:middle"></span>';
 
 /** Render finite table structure; library-specific sizing is supplied once per table. */
 export function table(
@@ -94,8 +96,8 @@ export function table(
     const row = Array.isArray(data) ? data[index] : glyphs?.[index];
     const cells = columns.map(column => {
       const value = row && typeof row === 'object' && Object.hasOwn(row, column.field) ? (row as Record<string, unknown>)[column.field] : undefined;
-      const content = column.type === 'selection' ? selection
-        : column.type === 'expand' ? '<span data-sk-layout data-sk-control>›</span>'
+      const content = column.type === 'selection' ? masked ? selectionPlaceholder : selection
+        : column.type === 'expand' ? masked ? expandPlaceholder : '<span data-sk-layout data-sk-control>›</span>'
         : column.content || (typeof value === 'string' || typeof value === 'number'
           ? `<span data-sk-layout data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escape(value)}"></span>` : text);
       return `<td data-sk-layout style="padding:${layout.cellPadding};text-align:${column.align ?? 'left'};border-bottom:1px solid #eee">${layout.cellOpen}${content}${layout.cellClose}</td>`;

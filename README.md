@@ -210,7 +210,12 @@ inside their container. A control-only target can legitimately have zero data
 placeholders; `quality` reports `preservedNodes` separately.
 Known arrays determine table row count (up to 24); unknown arrays default to four
 rows. Use `hints.repeat` to request a finite loading capacity, including for an initially empty
-array. Source-visible column slots can retain action buttons alongside data cells.
+array. Table bodies simplify action buttons, selection and expand controls into
+placeholder shapes while retaining cell layout, column proportions and row capacity.
+Source-visible cell text still reserves its wrapping space. SVG and Canvas retain
+their native viewport, CSS dimensions and aspect ratio as a single placeholder;
+paths, chart labels and canvas fallback details are not expanded. Use
+`data-sk-preserve` to retain a specific region's existing presentation policy.
 React `map` and Vue `v-for` use the same rule: known arrays keep their length up to
 24, known empty arrays stay empty, and unknown collections default to four items.
 An explicit `hints.repeat` overrides those counts.

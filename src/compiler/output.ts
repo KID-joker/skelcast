@@ -12,6 +12,14 @@ import type { RootMarkup } from './attributes.js';
 // attributes are owned by the generator and cannot be supplied by source markup.
 const layoutAttribute = (name: string) => name === 'id' || name === 'data-sk-anchor' || ['dir', 'lang'].includes(name) || /^data-(?!sk-)[\w.:-]+$/.test(name);
 
+/** Keep the native viewport, CSS sizing and SVG aspect ratio without expanding
+ * chart paths, ticks, labels or canvas fallback content. */
+export function renderGraphic(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode | undefined): string | undefined {
+  if (!['svg', 'canvas'].includes(tag) || !host.masked(ctx)) return;
+  host.record('component', tag, 'Keep graphic viewport and proportions; simplify internal detail to one placeholder', ctx, node);
+  return host.element(tag, props, '', ctx, node, { leaf: true });
+}
+
 /** Normalize and filter independently of HTML serialization and source-ID tracking. */
 export function outputAttribute(key: string, value: Value, styles?: StyleOptions): [string, Value] | undefined {
   if (value === UNKNOWN || value == null) return;
@@ -24,7 +32,7 @@ export function outputAttribute(key: string, value: Value, styles?: StyleOptions
     return style ? ['style', style] : undefined;
   }
   if (layoutAttribute(key) && ['string', 'number', 'boolean'].includes(typeof value)) return [key === 'id' ? sourceIdAttribute : key, value];
-  if (['width', 'height', 'colSpan', 'rowSpan', 'viewBox'].includes(key)) return [key.toLowerCase(), value];
+  if (['width', 'height', 'colspan', 'rowspan', 'viewbox'].includes(key.toLowerCase())) return [key.toLowerCase(), value];
   if (styles?.unocss && utilityAttribute(key)) return [key, value === true ? '' : value];
   if (['rows', 'cols'].includes(key) && typeof value !== 'object') return [key, value];
   if (key === 'size' && /^\d+$/.test(String(value))) return ['size', value];
@@ -77,12 +85,12 @@ export function renderElement(this: RenderHost, tag: string, props: Record<strin
 }
 export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderContext, origin: SourceNode): string {
   this.record('component', 'v-html', 'Replace bounded static HTML content with inert semantic placeholders', ctx, origin);
-  const render = (node: VueNode): string => {
+  const render = (node: VueNode, parent: RenderContext): string => {
     const exhausted = this.budget(ctx, origin);
     if (exhausted !== undefined) return exhausted;
     if (node.type === 2 || node.type === 5) {
       const value = node.type === 2 ? node.content : node.content.type === 4 ? node.content.content : '';
-      if (!this.masked(ctx)) return escapeHTML(value);
+      if (!this.masked(parent)) return escapeHTML(value);
       // Keep word lengths and whitespace so prose can wrap naturally at the
       // container width. No original text reaches the output.
       return value.trim() ? `<span data-sk-node="${this.nodeId(ctx, origin)}" data-sk-prose data-sk-leaf style="box-decoration-break:clone;-webkit-box-decoration-break:clone">${escapeHTML(value.replace(/[^\s]/g, 'x'))}</span>` : ' ';
@@ -92,8 +100,10 @@ export function renderStaticHTML(this: RenderHost, source: string, ctx: RenderCo
     // interpret directives, components, event handlers, URLs or interpolation.
     if (node.tagType !== 0) return this.fallback(ctx, origin, `Unsupported static HTML element ${node.tag}`);
     const props = Object.fromEntries(node.props.filter(p => p.type === 6).map((p) => [p.name, p.value?.content ?? true]));
-    return this.element(node.tag, props, node.children.map(render).join(''), ctx, origin);
+    const local = this.contentContext(parent, props, node.tag);
+    const graphic = renderGraphic(this, node.tag, props, local, origin);
+    return graphic ?? this.element(node.tag, props, node.children.map(child => render(child, local)).join(''), local, origin);
   };
-  try { return parseDOM(source, { delimiters: ['\u0000', '\u0000'] }).children.map(render).join(''); }
+  try { return parseDOM(source, { delimiters: ['\u0000', '\u0000'] }).children.map(node => render(node, ctx)).join(''); }
   catch { return this.fallback(ctx, origin, 'Static HTML could not be parsed'); }
 }

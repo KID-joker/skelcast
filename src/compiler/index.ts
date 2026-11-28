@@ -242,6 +242,7 @@ export class SourceCompiler extends SourceModules {
   }
   contentContext(ctx: RenderContext, props: Record<string, Value>, tag = ''): RenderContext {
     let mode = ctx.mode;
+    if (tag === 'td' && mode !== 'preserve') mode = 'mask';
     if (props['data-sk-preserve'] === true || props['data-sk-preserve'] === '' || props['data-sk-preserve'] === 'true') mode = 'preserve';
     if (props['data-sk-mask'] === true || props['data-sk-mask'] === '' || props['data-sk-mask'] === 'true') mode = 'mask';
     const control = ['button','label','select','option','input','textarea','nav','th'].includes(tag) ? !(['input','textarea'].includes(tag) && (props.readonly === true || props.readOnly === true)) : ctx.control;
@@ -296,7 +297,8 @@ export class SourceCompiler extends SourceModules {
     const role = preset.role(name, props);
     const local = { ...ctx, control: role === 'control' ? true : role === 'data' ? false : ctx.control };
     const slots = preset.slots(name);
-    const renderedSlots = await renderPresetSlots(this, slot, slots, local);
+    const slotContext = preset.maskSlots?.(name) && local.mode !== 'preserve' ? { ...local, mode: 'mask' as const } : local;
+    const renderedSlots = await renderPresetSlots(this, slot, slots, slotContext);
     let children: string | undefined;
     const mask = this.masked(local);
     const text = mask ? this.text(local, node) : this.contentText(props.value ?? props.title ?? UNKNOWN, local, node);

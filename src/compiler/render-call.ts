@@ -9,6 +9,7 @@ import { renderComponent } from './component-render.js';
 import { localRenderFunction, prepareLocalRenderCall } from './branches.js';
 import { vueHelper, supportedBody } from './vue-syntax.js';
 import { renderBudget } from './render-budget.js';
+import { renderGraphic } from './output.js';
 
 async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
   const fn = localRenderFunction(value);
@@ -84,6 +85,8 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
   }
   if (nonVisual.has(tag)) return '';
   if (tag === 'img') return this.image(props, local, node);
+  const graphic = renderGraphic(this, tag, props, local, node);
+  if (graphic !== undefined) return graphic;
   if (Object.hasOwn(props, 'innerHTML')) return typeof props.innerHTML === 'string' ? this.element(tag, props, this.staticHTML(props.innerHTML, local, node), local, node) : this.fallback(local, node, 'Unknown h() innerHTML needs a finite binding');
   const content = Object.hasOwn(props, 'textContent') ? this.contentText(props.textContent, local, node) : await children();
   const opaque = !content && ['div', 'section', 'article', 'main', 'canvas'].includes(tag) && Object.hasOwn(props, 'ref');
