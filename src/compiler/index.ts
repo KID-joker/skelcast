@@ -7,7 +7,7 @@ import path from 'node:path';
 import { type TemplateChildNode as VueNode, type ElementNode, type RootNode, type ExpressionNode } from '@vue/compiler-dom';
 import type { Diagnostic, Evidence, SkeletonArtifact, SkeletonHints, SkeletonTarget, SourceLocation, SkeletonView } from '../types.js';
 import { diagnosticDetails } from './diagnostics.js';
-import { UNKNOWN, evaluateString, expressionText, type Ast, type Value } from './expression.js';
+import { UNKNOWN, SOURCE_ACCESSOR, SOURCE_RENDER, SOURCE_RENDER_FILE, bindPattern, sourceObject, evaluateString, expressionText, parseSourceExpression, type Ast, type Value } from './expression.js';
 import { baseCSS, digest, scopeArtifactStyles, utilityCSS } from './styles.js';
 import { componentName } from './components.js';
 import { resolvePreset } from './presets/index.js';
@@ -16,7 +16,7 @@ import type { ComponentReference } from './presets/types.js';
 import { TableColumns } from './presets/columns.js';
 import { SourceModules, type CompilerOptions } from './modules.js';
 import { vueOptions, vueOptionProps, vueRenderFunction, vueSetupFunction, prepareVueSetup, prepareVueRender, renderVueExpression } from './vue-render.js';
-import { ambiguousExport, type ModuleInfo, type RenderContext, type SourceSlot, type SourceNode } from './context.js';
+import { ambiguousExport, slotValue, type ModuleInfo, type RenderContext, type SourceSlot, type SourceNode } from './context.js';
 import { escapeHTML, styleString } from './html.js';
 import { renderAttributes, renderElement, renderStaticHTML } from './output.js';
 import type { ElementMarkers } from './render-host.js';
@@ -35,6 +35,10 @@ import { SourceFiles } from './source-files.js';
 import { sharedStyleSeparator } from '../shared.js';
 import { bindSetupDeclarations } from './instance-values.js';
 import { componentInputs, presetProps } from './props.js';
+import { viewportStyle, providedValues, providedFrames } from './viewport-style.js';
+import { initialString } from './initial-state.js';
+import { supportedBody } from './vue-syntax.js';
+import { initializeLayout } from './layout-effects.js';
 
 export class SourceCompiler extends SourceModules {
   evidence: Evidence[] = [];
@@ -50,9 +54,9 @@ export class SourceCompiler extends SourceModules {
   private configuredComponents = new Set(Object.keys(this.options.components ?? {}).map(componentName));
   private rootMarkup = new RootMarkup();
   selectVueNode(node:VueNode,ctx:RenderContext){return this.region?.mode(node,ctx);}
-  captureVueRegion(render:()=>Promise<string>){return this.region?this.region.capture(render):render();}
+  captureVueRegion(render:()=>Promise<string>,ctx?:RenderContext){return this.region?this.region.capture(async()=>{const html=await render();return this.callsite&&ctx?this.inheritRootScopes(html,[],{},this.cssVariables(ctx)):html;}):render();}
   hasSelectedSlot(slot:SourceSlot){return !!this.region?.active&&this.region.carries(slot);}
-  constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}, files?: SourceFiles) { super(root, hints, aliases, options, files); }
+  constructor(root: string, readonly target: SkeletonTarget, hints: SkeletonHints, aliases: Record<string, string> = {}, options: CompilerOptions = {}, files?: SourceFiles, private callsite?: {key:string;source:string}) { super(root, hints, aliases, options, files); }
   diagnose(code: string, message: string, ctx: RenderContext, node?: SourceNode, id?: string) {
     const line = this.sourceLine(ctx, node);
     const diagnostic = { code, message, file: this.relative(ctx.module.file), line, node: id ?? (node ? this.nodeId(ctx, node) : undefined), ...diagnosticDetails(ctx, node) };
@@ -106,11 +110,18 @@ export class SourceCompiler extends SourceModules {
     const input = componentInputs(props, mod.propDefaults, 'template');
     const values = input.values;
     const initialValues={...input.initial};
-    const env: Record<string, Value> = { ...mod.env, ...values, $slots: props.__skSlots ?? {}, $attrs: fallthroughAttrs(mod, props) };
+    const env: Record<string, Value> = { ...this.defines, ...mod.env, ...Object.fromEntries(Object.entries(values).filter(([key]) => !mod.imports.has(key))), $slots: props.__skSlots ?? {}, $attrs: fallthroughAttrs(mod, props) };
+    for (const [name, reference] of mod.imports) if (reference.request === 'vue') {
+      if (reference.exported === 'useAttrs') env[name] = { [SOURCE_ACCESSOR]: env.$attrs };
+      if (reference.exported === 'useSlots') env[name] = { [SOURCE_ACCESSOR]: sourceObject(Object.fromEntries(Object.entries(props.__skSlots ?? {}).map(([name, slot]) => [name, { [slotValue]: slot }]))) };
+    }
     for (const name of mod.propBindings){env[name] = values;for(const[key,value]of Object.entries(input.initial))initialValues[name+'.'+key]=value;}
     for (const [name, value] of Object.entries(bindings)) if (/^[\w$]+$/.test(name)) env[name] = value;
-    bindSetupDeclarations(mod, sourceValues, { code: mod.code, env, bindings, unwrapRefs: true });
-    return { module: mod, code: mod.code, env, bindings, expressions: this.expressions, initialValues, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth, loading: loadingFrame(this.hints.state, parent?.loading ?? this.target.kind === 'request') };
+    bindSetupDeclarations(mod, sourceValues, { code: mod.code, sourceFile: mod.file, env, bindings, initialValues, unwrapRefs: true, provides: parent?.provides });
+    const context: RenderContext = { module: mod, code: mod.code, sourceFile: mod.file, env, bindings, expressions: this.expressions, initialValues, unwrapRefs: !!mod.descriptor, scopes: mod.scopes, depth: (parent?.depth ?? 0) + 1, slots: props.__skSlots as Record<string, SourceSlot> | undefined, mode: parent?.mode, control: parent?.control, textWidth: parent?.textWidth, provides: parent?.provides, viewportFrames: parent?.viewportFrames, loading: loadingFrame(this.hints.state, parent?.loading ?? this.target.kind === 'request') };
+    context.provides = providedValues(context);
+    context.viewportFrames = providedFrames(context);
+    return context;
   }
   private cssVariables(ctx: RenderContext): string {
     const styles: Record<string, Value> = {};
@@ -123,10 +134,27 @@ export class SourceCompiler extends SourceModules {
     }
     return styleString(styles);
   }
+  viewportStyle(expression: string, ctx: RenderContext, node: SourceNode) {
+    const result = viewportStyle(expression, ctx);
+    if (!result) return;
+    const className = 'sk-viewport-' + this.nodeId(ctx, node) + '-' + digest(expression).slice(0,6);
+    this.css.set(className, result.media.map(frame => `@media ${frame.query}{.${className}{${frame.style}}}`).join('\n'));
+    this.record('style', expression, 'Translate source-proven viewport branches into media queries without running resize handlers', ctx, node);
+    return { className, style: result.style };
+  }
   prepareFunction(fn: Ast | undefined, ctx: RenderContext, props: Record<string, Value>): Ast | undefined {
     return prepareRenderFunction(fn, ctx, props, test => {
       this.record('branch', expressionText(test, ctx), 'Unknown early-return guard: prefer the later content return', ctx, test);
     });
+  }
+  async sourceFunction(value: Value, props: Record<string, Value>, parent: RenderContext, node: SourceNode): Promise<string | undefined> {
+    if (!value || typeof value !== 'object' || !Object.hasOwn(value, SOURCE_RENDER) || !Object.hasOwn(value, SOURCE_RENDER_FILE)) return;
+    const fn = (value as { [SOURCE_RENDER]: Ast })[SOURCE_RENDER], file = (value as { [SOURCE_RENDER_FILE]: string })[SOURCE_RENDER_FILE];
+    if (!isRenderFunction(fn) || fn.async || fn.generator || !supportedBody(fn.body)) return this.fallback(parent, node, 'Dynamic source render body needs a finite presentation adapter', props);
+    const mod = await this.module(file), local = this.context(mod, await this.moduleValues(mod), {}, parent);
+    if (local.depth > 16) return this.fallback(parent, node, 'Source render recursion limit reached');
+    const body = this.prepareFunction(fn, local, props);
+    return body ? this.vueExpression(body, local) : this.fallback(parent, node, 'Dynamic source render has no supported return', props);
   }
   async component(file: string, exported: string, props: Record<string, Value> = {}, parent?: RenderContext, node?: SourceNode): Promise<string> {
     const selectedSlots=Object.values((props.__skSlots??{}) as Record<string,SourceSlot>).some(slot=>this.hasSelectedSlot(slot));
@@ -162,11 +190,57 @@ export class SourceCompiler extends SourceModules {
       this.record('component', exported, 'Statically expand a Vue render function without executing business code', origin, node);
       return this.inheritRootScopes(await this.vueExpression(body, ctx), parent?.scopes ?? [], mod.inheritAttrs ? fallthroughAttrs(mod, props) : {});
     }
-    if (mod.descriptor) return this.renderVueTemplate(ctx, props, parent?.scopes ?? [], node, opaque);
+    if (mod.descriptor) {
+      ctx.slotNodes = ctx.slots?.default ? await this.sourceSlotNodes(ctx.slots.default) : undefined;
+      if (initializeLayout(ctx)) this.diagnose('LAYOUT_PROJECTION', 'Project finite source initialization of local layout refs; later event effects and live state remain unknown', ctx);
+      if (ctx.layoutUnresolved) this.diagnose('LAYOUT_UNKNOWN', 'Source layout initialization exceeds finite supported operations; retain a partial initial frame without executing effects', ctx);
+      ctx.provides = providedValues(ctx);
+      ctx.viewportFrames = providedFrames(ctx);
+      return this.renderVueTemplate(ctx, props, parent?.scopes ?? [], node, opaque);
+    }
     const fn = component.fn;
     if (!fn) return opaque(`Cannot locate exported component ${exported}`);
     if (!isRenderFunction(fn)) return opaque(`Unsupported component declaration ${fn.type}`);
     return this.renderReactComponent(fn, ctx, props, exported, node);
+  }
+  private async sourceSlotNodes(slot: SourceSlot): Promise<Value[] | undefined> {
+    if (slot.framework !== 'vue') return;
+    let budget = 512;
+    const collect = async (nodes: VueNode[], ctx: RenderContext, repeated = false): Promise<Value[] | undefined> => {
+      const values: Value[] = [];
+      for (const node of nodes) if (node.type === 1) {
+        if (--budget < 0) return;
+        const loop = !repeated ? node.props.find(p => p.type === 7 && p.name === 'for') : undefined;
+        if (loop?.type === 7 && loop.exp?.type === 4) {
+          const match = loop.exp.content.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
+          if (!match) return;
+          let list = evaluateString(match[2],ctx); if (!Array.isArray(list)) list = initialString(match[2],ctx);
+          if (!Array.isArray(list) || list.length > 256) return;
+          const fn = parseSourceExpression(`(${match[1].trim().replace(/^\(([\s\S]*)\)$/,'$1')})=>0`);
+          if (fn?.type !== 'ArrowFunctionExpression') return;
+          const children: Value[] = [];
+          for (let index=0;index<list.length;index++) { const local={...ctx,env:{...ctx.env}};bindPattern(fn.params[0],list[index],local.env);if(fn.params[1])bindPattern(fn.params[1],index,local.env);const nested = await collect([node],local,true); if (!nested) return; children.push(...nested); }
+          values.push(sourceObject({type:Symbol('source-fragment'),children}));continue;
+        }
+        for (const directive of node.props) if (directive.type === 7 && ['if','else','else-if'].includes(directive.name)) return;
+        const props: Record<string, Value> = {};
+        for (const prop of node.props) {
+          if (prop.type === 6) props[prop.name] = prop.value?.content ?? true;
+          if (prop.type === 7 && prop.name === 'bind' && prop.exp?.type === 4) {
+            const value=evaluateString(prop.exp.content,ctx);
+            if(prop.arg?.type===4)props[prop.arg.content]=value;
+            else if(value&&value!==UNKNOWN&&typeof value==='object')Object.assign(props,value);
+            else if (!prop.arg) return;
+          }
+        }
+        const reference = await this.componentReference(node.tag,ctx);
+        const descriptor = reference?.file ? (await this.module(reference.file)).descriptor : undefined;
+        const name = descriptor?.scriptSetup?.attrs.name;
+        values.push(sourceObject({type:node.tagType===1?sourceObject({name:typeof name==='string'?name:node.tag}):node.tag,props:sourceObject(props),children:[]}));
+      }
+      return values;
+    };
+    return collect(slot.nodes,slot.context);
   }
   private async renderTableFrame(setup: RenderFunction, exported: string, props: Record<string, Value>, ctx: RenderContext, origin: RenderContext, node?: SourceNode): Promise<string | undefined> {
     const projection = tableWrapper(ctx.module, setup, this.options.componentPresets, { ...ctx.module.propDefaults, ...props }, !!ctx.loading);
@@ -200,14 +274,22 @@ export class SourceCompiler extends SourceModules {
     const root = roots.length === 1 && roots[0].type === 1 && roots[0].tag !== 'template' && !mod.boundaries.has(roots[0].tag) ? roots[0] : undefined;
     if (mod.inheritAttrs && root) ctx.fallthrough = { node: root, props: fallthroughAttrs(mod, props) };
     if (this.target.region && ctx.depth === 1) {
-      let region: ElementNode | undefined;
+      const regionModule = this.callsite ? await this.module(path.resolve(this.root,this.target.source)) : mod;
+      const regionTemplate = regionModule.descriptor?.template;
+      const tree = regionTemplate ? this.files.template(regionModule.file,regionTemplate.content) : undefined;
+      let region: ElementNode | undefined, entry: ElementNode | undefined;
       const find = (n: RootNode | VueNode | ExpressionNode) => {
-        if (n.type === 1 && mod.boundaries.has(n.tag) && n.props.some(p => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'artifact' && p.exp?.type === 4 && p.exp.content === this.target.region)) region = n;
+        if (n.type === 1 && regionModule.boundaries.has(n.tag) && n.props.some(p => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'artifact' && p.exp?.type === 4 && p.exp.content === this.target.region)) region = n;
         if ('children' in n) for (const child of n.children) if (typeof child === 'object') find(child);
       };
-      find(ast);
+      if (tree) find(tree);
       if (!region) return this.fallback(ctx, node, `Missing source region ${this.target.region}`);
-      const previous = this.region, selection = new VueRegion(mod.file, region);
+      if (this.callsite) {
+        const collect = (nodes: VueNode[]) => { for (const n of nodes) if (n.type===1) { if(n.props.some(p=>p.type===6&&p.name==='data-sk-context'&&p.value?.content===this.callsite!.key)) {if(entry)throw Error('Source context identifier must select one call site');entry=n;}collect(n.children); } };
+        collect(ast.children);
+        if (!entry) return this.fallback(ctx,node,'Missing declared source call site');
+      }
+      const previous = this.region, selection = new VueRegion(regionModule.file, region, entry ? {file:mod.file,node:entry} : undefined);
       this.region = selection;
       try {
         await this.vueNodes(ast.children, ctx);
@@ -255,7 +337,7 @@ export class SourceCompiler extends SourceModules {
     return { ...ctx, mode, control, textWidth };
   }
   async renderSlot(slot: SourceSlot, ctx: RenderContext, argument:Value = {},initial:Value=UNKNOWN): Promise<string> {
-    const parent = { ...slot.context,env:{...slot.context.env},initialValues:{...slot.context.initialValues}, mode: ctx.mode, control: ctx.control, textWidth: ctx.textWidth, depth: Math.max(ctx.depth, slot.context.depth) };
+    const parent = { ...slot.context,env:{...slot.context.env},initialValues:{...slot.context.initialValues}, provides: ctx.provides, viewportFrames: ctx.viewportFrames, mode: ctx.mode, control: ctx.control, dataSlot: ctx.dataSlot, textWidth: ctx.textWidth, depth: Math.max(ctx.depth, slot.context.depth) };
     if(slot.parameter){bindSlotArgument(slot.parameter,argument,parent);bindSlotInitial(slot.parameter,initial,parent);}
     if(slot.renderFunction){
       const fn=slot.renderFunction;
@@ -296,18 +378,25 @@ export class SourceCompiler extends SourceModules {
     props = presetProps(props);
     const role = preset.role(name, props);
     const local = { ...ctx, control: role === 'control' ? true : role === 'data' ? false : ctx.control };
-    const slots = preset.slots(name);
-    const slotContext = preset.maskSlots?.(name) && local.mode !== 'preserve' ? { ...local, mode: 'mask' as const } : local;
-    const renderedSlots = await renderPresetSlots(this, slot, slots, slotContext);
+    const slots = preset.skipSlots?.(name, props) ? [] : preset.slots(name);
+    const slotContext = preset.maskSlots?.(name) && local.mode !== 'preserve' ? { ...local, mode: 'mask' as const, dataSlot: true } : local;
+    const renderedSlots:Record<string,string>={};
+    for(const key of slots){const header=name==='eltablecolumn'&&key==='header';Object.assign(renderedSlots,await renderPresetSlots(this,slot,[key],header?{...local,mode:ctx.mode==='preserve'?'preserve':'auto',control:true,dataSlot:false}:slotContext,header?sourceObject({column:sourceObject({label:props.label,property:props.prop}),$index:UNKNOWN}):{}));}
     let children: string | undefined;
     const mask = this.masked(local);
     let placeholder: string | undefined;
     const text = () => placeholder ??= mask ? this.text(local, node) : this.contentText(props.value ?? props.title ?? UNKNOWN, local, node);
     const hints: SkeletonHints = { ...this.hints, state: this.hints.state ?? (local.loading ? 'loading' : 'source') };
+    if (name === 'eltable' && local.loading && hints.repeat == null) {
+      const capacity = await this.paginationCapacity(ctx, node);
+      if (capacity !== undefined) { hints.repeat = capacity; this.diagnose('LOADING_PROJECTION', 'Use the adjacent source-declared pagination size as loading capacity; response row count remains unknown', ctx, node); }
+    }
+    const frames = [];
+    for(const frame of preset.frames?.(name,props,hints)??[]) {const slots=await renderPresetSlots(this,slot,[frame.slot],frame.mask?{...slotContext,mode:'mask'}:slotContext,frame.argument);frames.push({key:frame.key,html:slots[frame.slot]??''});}
     // Keep slot traversal (diagnostics, dependencies and expansion costs) in its
     // existing order, but join markup only when the presentation consumes it.
     const presentation = preset.present(name, props, text, hints, {
-      mask, slots: renderedSlots, columns: this.tableColumns,
+      mask, slots: renderedSlots, columns: this.tableColumns, frames,
       get children() { return children ??= slots.map(key => renderedSlots[key]).join(''); },
     });
     if (!presentation) return;
@@ -325,6 +414,54 @@ export class SourceCompiler extends SourceModules {
     // every distinct presentation stylesheet and deduplicate identical ones.
     if (presentation.css) this.css.set(`preset:${digest(presentation.css)}`, presentation.css);
     return html;
+  }
+  private async paginationCapacity(ctx: RenderContext, origin: SourceNode): Promise<number | undefined> {
+    const template = ctx.module.descriptor?.template;
+    if (!template) return;
+    const attributes = (origin as ElementNode).props;
+    if (!Array.isArray(attributes)) return;
+    const data = attributes.find(p => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'data');
+    if (data?.type !== 7 || data.exp?.type !== 4) return;
+    const dependencies = new Set<string>();
+    const collect = (node: t.Node | undefined) => { if (node) walk(node, n => { if (n.type === 'Identifier') dependencies.add(n.name); }); };
+    collect(parseSourceExpression(data.exp.content));
+    for (let pass = 0; pass < 8; pass++) for (const declaration of ctx.module.setupDeclarations) if (declaration.id.type === 'Identifier' && dependencies.has(declaration.id.name)) collect(declaration.init ?? undefined);
+    const owners = ctx.module.setupDeclarations.filter(d => d.id.type === 'ObjectPattern' && d.init?.type === 'CallExpression' && d.id.properties.some(p => p.type === 'ObjectProperty' && p.value.type === 'Identifier' && dependencies.has(p.value.name)));
+    if (owners.length !== 1 || owners[0].id.type !== 'ObjectPattern') return;
+    const owned = new Set(owners[0].id.properties.flatMap(p => p.type === 'ObjectProperty' && p.value.type === 'Identifier' ? [p.value.name] : []));
+    const candidates: number[] = [];
+    const inspect = async (nodes: VueNode[], context: RenderContext, descend: boolean, allowed: Set<string>): Promise<void> => {
+      for (const node of nodes) if (node.type === 1) {
+        const reference = await this.componentReference(node.tag, context);
+        const preset = resolvePreset(this.options.componentPresets, reference);
+        if (preset?.name === 'elpagination') {
+          const prop = node.props.find(p => p.type === 7 && p.name === 'bind' && p.arg?.type === 4 && p.arg.content === 'page-size');
+          if (prop?.type === 7 && prop.exp?.type === 4) {
+            const expression = prop.exp.content;
+            if (![...allowed].some(name => expression.startsWith(name + '.') || context.module.propBindings.some(binding => expression.startsWith(binding + '.' + name + '.')))) continue;
+            const value = initialString(prop.exp.content, context);
+            if (typeof value === 'number' && Number.isInteger(value) && value > 0) candidates.push(Math.min(24, value));
+          }
+        } else if (descend && reference?.file?.endsWith('.vue')) {
+          const props: Record<string, Value> = {};
+          for (const prop of node.props) if (prop.type === 7 && prop.name === 'bind' && prop.arg?.type === 4 && prop.exp?.type === 4) {
+            const initial = allowed.has(prop.exp.content) ? initialString(prop.exp.content, context) : UNKNOWN;
+            if (initial !== UNKNOWN) props[prop.arg.content] = initial;
+          }
+          if (Object.keys(props).length) {
+            const mod = await this.module(reference.file);
+            if (mod.descriptor?.template) {
+              const child = this.context(mod, await this.moduleValues(mod), props, context);
+              child.initialValues = { ...child.initialValues, ...props };
+              await inspect(this.files.template(mod.file, mod.descriptor.template.content).children, child, false, new Set(Object.keys(props)));
+            }
+          }
+        }
+        await inspect(node.children, context, descend, allowed);
+      }
+    };
+    await inspect(this.files.template(ctx.module.file, template.content).children, ctx, true, owned);
+    return candidates.length === 1 ? candidates[0] : undefined;
   }
   attributes(props: Record<string, Value>): string { if((typeof props.id==='string'||typeof props.id==='number')&&String(props.id))this.sourceIds.add(String(props.id));return renderAttributes.call(this, props); }
   element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers?: ElementMarkers): string {
@@ -369,11 +506,15 @@ export class SourceCompiler extends SourceModules {
     const source = path.resolve(this.root, this.target.source);
     await this.entryStyles();
     await this.scan(source);
+    if(this.callsite)await this.scan(path.resolve(this.root,this.callsite.source));
+    await this.buildDefines();
     for (const file of this.target.styles ?? []) {
       const resolved = path.resolve(this.root, file);
       this.css.set(resolved, (await this.readStyle(resolved)).css);
     }
-    const content = await this.component(source, this.target.export ?? 'default');
+    const entry = this.callsite ? path.resolve(this.root,this.callsite.source) : source;
+    if (this.callsite) await this.scan(entry);
+    const content = await this.component(entry, this.callsite ? 'default' : this.target.export ?? 'default');
     let html = `<div data-sk-artifact="${this.target.id}" aria-hidden="true" style="--skeleton-min-height:${this.hints.minHeight ?? 96}px">${content}</div>`;
     for (const [key, style] of this.inlineStyles) {
       const root = postcss.parse(`a{${style.value}}`, { from: style.file });
@@ -407,8 +548,12 @@ export async function compileTargetWithFiles(root: string, target: SkeletonTarge
   let dependencies: Record<string, string> = {};
   const diagnostics = new Map<string, Diagnostic>();
   const evidence = new Map<string, Evidence>();
-  for (const [name, hints] of Object.entries(variants)) {
-    const compiler = new SourceCompiler(root, target, { ...target.hints, ...hints, bindings: { ...target.hints?.bindings, ...hints.bindings } }, aliases, options, files);
+  const frames = [{key:undefined as string|undefined, source:undefined as string|undefined},...Object.entries(target.contexts??{}).map(([key,context])=>({key,source:context.source}))];
+  for (const frame of frames) for (const [state, hints] of Object.entries(variants)) {
+    let name = frame.key ? `context-${frame.key}-${state}` : state;
+    if(frame.key)while(Object.hasOwn(artifact.variants,name)||Object.hasOwn(variants,name))name+='_';
+    if(frame.key) {artifact.contexts??=Object.create(null);(artifact.contexts![frame.key]??=Object.create(null))[state]=name;}
+    const compiler = new SourceCompiler(root, target, { ...target.hints, ...hints, bindings: { ...target.hints?.bindings, ...hints.bindings } }, aliases, options, files, frame.key ? {key:frame.key,source:frame.source!} : undefined);
     const result = await compiler.compile();
     artifact.variants[name] = result.view;
     dependencies = { ...dependencies, ...result.dependencies };

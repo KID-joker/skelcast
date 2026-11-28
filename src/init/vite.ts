@@ -30,7 +30,21 @@ export async function integrateVite(root: string, manifest: { scripts?: Record<s
   let configRoot = root;
   let dynamicRoot = false;
   const aliases: Record<string, string> = {};
-  const staticPath = (value: Ast): string | undefined => {
+  const constants = new Map<string, Ast>();
+  const ambiguous = new Set<string>();
+  walk(ast, (node, ancestors) => {
+    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) {
+      if (constants.has(node.id.name) || ancestors.at(-1)?.type !== 'VariableDeclaration' || (ancestors.at(-1) as import('@babel/types').VariableDeclaration).kind !== 'const') ambiguous.add(node.id.name);
+      constants.set(node.id.name, node.init);
+    }
+    if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') ambiguous.add(node.left.name);
+    if (node.type === 'UpdateExpression' && node.argument.type === 'Identifier') ambiguous.add(node.argument.name);
+    if (['ImportSpecifier','ImportDefaultSpecifier','ImportNamespaceSpecifier'].includes(node.type) && 'local' in node) ambiguous.add((node.local as import('@babel/types').Identifier).name);
+    if (['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(node.type) && 'params' in node) for (const param of node.params as Ast[]) if (param.type === 'Identifier') ambiguous.add(param.name);
+  });
+  const staticPath = (value: Ast, seen = new Set<string>()): string | undefined => {
+    if (value.type === 'Identifier' && constants.has(value.name) && !ambiguous.has(value.name) && !seen.has(value.name)) return staticPath(constants.get(value.name)!, new Set([...seen, value.name]));
+    if (value.type === 'CallExpression' && value.arguments.length === 0 && value.callee.type === 'MemberExpression' && !value.callee.computed && nodeName(value.callee.object) === 'process' && nodeName(value.callee.property) === 'cwd' && !constants.has('process') && !ambiguous.has('process')) return root;
     if (value.type === 'StringLiteral') return path.resolve(root, value.value);
     if (value.type === 'CallExpression' && nodeName(value.callee) === 'fileURLToPath' && value.arguments[0]?.type === 'NewExpression' && nodeName(value.arguments[0].callee) === 'URL' && value.arguments[0].arguments[0]?.type === 'StringLiteral') return path.resolve(path.dirname(path.join(root, file!)), value.arguments[0].arguments[0].value);
   };
@@ -58,7 +72,7 @@ export async function integrateVite(root: string, manifest: { scripts?: Record<s
   const offset = importOffset(ast);
   const changed = applyEdits(code, [
     ...existingHelper ? [] : [{ start: offset, end: offset, text: `\nimport { withSkelCast as ${helper} } from 'skelcast/vite';\n` }],
-    { start: startOf(declaration), end: startOf(declaration), text: `${helper}(` },
+    { start: startOf(declaration), end: startOf(declaration), text: ` ${helper}(` },
     { start: endOf(declaration), end: endOf(declaration), text: declaration.type === 'FunctionDeclaration' ? ');' : ')' },
   ]);
   parseSource(changed);

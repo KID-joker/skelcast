@@ -116,7 +116,8 @@ export function card(children: string, title: unknown, text: string, padding = '
     children: (title != null ? text : '') + children,
   };
 }
-export function column(props: Record<string, unknown>, children: string, columns: TableColumns): Presentation {
+export function column(props: Record<string, unknown>, children: string, columns: TableColumns, geometry: Partial<import('./columns.js').TableColumn> = {}): Presentation {
+  const nested=columns.resolve(children);
   return {
     tag: 'template',
     children: columns.register({
@@ -124,7 +125,9 @@ export function column(props: Record<string, unknown>, children: string, columns
       field: scalar(props.prop ?? props.dataIndex),
       width: dimension(props.width, '120px'),
       fixed: true,
-      content: children,
+      content: nested.length?undefined:children,
+      children:nested.length?nested:undefined,
+      ...geometry,
     }),
   };
 }

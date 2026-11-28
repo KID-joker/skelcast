@@ -47,7 +47,7 @@ export function initialExpression(node:t.Node,ctx:InitialContext):Value{
   }
   if(value!==UNKNOWN){bindings[text]=value;found=true;}
  });
- return found?evaluate(node,{...ctx,bindings}):UNKNOWN;
+ return found?evaluate(node,{...ctx,bindings,layoutFrame:true}):UNKNOWN;
 }
 export function initialString(text:string,ctx:InitialContext):Value{
  try{const node=parseSourceExpression(text,ctx);return node?initialExpression(node,{...ctx,code:text}):UNKNOWN;}catch{return UNKNOWN;}

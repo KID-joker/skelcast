@@ -1,18 +1,19 @@
 import type { DirectiveNode, TemplateChildNode as VueNode } from '@vue/compiler-dom';
 import type { RenderContext } from './context.js';
-import { evaluateString, parseSourceExpression } from './expression.js';
+import { UNKNOWN, bindPattern, evaluateString, parseSourceExpression } from './expression.js';
 import type { RenderHost } from './render-host.js';
 
-const syntax = new WeakMap<VueNode[], { node: VueNode; slot?: DirectiveNode; nodes: VueNode[] }[]>();
+const syntax = new WeakMap<VueNode[], { node: VueNode; slot?: DirectiveNode; loop?:DirectiveNode; nodes: VueNode[] }[]>();
 
 /** Share template classification, while resolving dynamic names per instance. */
 export function templateSlots(nodes: VueNode[]) {
   let entries = syntax.get(nodes);
   if (!entries) {
     entries = nodes.map(node => {
-      const slot = node.type === 1 && node.tag === 'template'
-        ? node.props.find((prop): prop is DirectiveNode => prop.type === 7 && prop.name === 'slot') : undefined;
-      return { node, slot, nodes: slot?.arg?.type === 4 && node.type === 1 ? node.children : [node] };
+      const props=node.type===1&&node.tag==='template'?node.props:[];
+      const slot=props.find((prop):prop is DirectiveNode=>prop.type===7&&prop.name==='slot');
+      const loop=slot?props.find((prop):prop is DirectiveNode=>prop.type===7&&prop.name==='for'):undefined;
+      return { node, slot, loop, nodes: slot?.arg?.type === 4 && node.type === 1 ? node.children : [node] };
     });
     syntax.set(nodes, entries);
   }
@@ -32,4 +33,17 @@ export function slotParameter(host: RenderHost, slot: DirectiveNode | undefined,
   const fn = parseSourceExpression(`(${slot.exp.content})=>0`, ctx);
   if (fn?.type === 'ArrowFunctionExpression') return fn.params[0];
   host.diagnose('SLOT_UNKNOWN', 'Cannot parse scoped slot parameters', ctx, node);
+}
+
+/** Expand only named slot declarations over a finite source key list. */
+export function expandedTemplateSlots(host:RenderHost,nodes:VueNode[],ctx:RenderContext){
+ const result:(ReturnType<typeof templateSlots>[number]&{context:RenderContext})[]=[];
+ for(const entry of templateSlots(nodes)){
+  if(!entry.loop){result.push({...entry,context:ctx});continue}
+  const expression=entry.loop.exp?.type===4?entry.loop.exp.content:'',match=expression.match(/^\s*(.*?)\s+(?:in|of)\s+([\s\S]+)$/);
+  const list=match?evaluateString(match[2],ctx):UNKNOWN,fn=match?parseSourceExpression(`(${match[1].trim().replace(/^\(([\s\S]*)\)$/,'$1')})=>0`,ctx):undefined;
+  if(!Array.isArray(list)||list.length>256||fn?.type!=='ArrowFunctionExpression'){host.diagnose('SLOT_UNKNOWN','Named slot repetition needs a finite source key list',ctx,entry.node);continue}
+  for(let index=0;index<list.length;index++){const context={...ctx,env:{...ctx.env}};bindPattern(fn.params[0],list[index],context.env);if(fn.params[1])bindPattern(fn.params[1],index,context.env);result.push({...entry,context})}
+ }
+ return result;
 }

@@ -9,6 +9,7 @@ import { previewArtifact } from './compiler/artifact.js';
 import { digest } from './compiler/styles.js';
 import { parse, type ElementNode, type RootNode } from '@vue/compiler-dom';
 import { sharedStyleSeparator as separator } from './shared.js';
+import { BuildAssets } from './compiler/build-assets.js';
 
 const modulePrefix = 'virtual:skelcast/';
 const internalPrefix = '\0skelcast:';
@@ -61,6 +62,9 @@ export function selectPageTarget(targets: SkeletonTarget[], pathname: string): S
   }
   return selected;
 }
+export function withSkelCast<T>(config: (env: ConfigEnv) => T | Promise<T>): (env: ConfigEnv) => Promise<Awaited<T>>;
+export function withSkelCast<T>(config: Promise<T>): Promise<T>;
+export function withSkelCast<T extends object>(config: T): T;
 export function withSkelCast(config: UserConfigExport): UserConfigExport {
   const add = (value: UserConfig): UserConfig => ({ ...value, plugins: [...value.plugins ?? [], skelcastPlugin()] });
   if (typeof config === 'function') return async (env: ConfigEnv) => add(await config(env));
@@ -94,6 +98,10 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
   const requests = new Set<Promise<void>>();
   let closing = false;
   let optimizer = createArtifactOptimizer();
+  let assets = new BuildAssets();
+  let base = '/';
+  let emitAsset: (name: string, bytes: Uint8Array) => string;
+  const buildArtifact = (artifact: SkeletonArtifact) => dev ? artifact : assets.externalize(artifact, emitAsset);
   const sharedStyles = new Map<string, string>();
   const optimize = () => !dev && options.optimize !== false;
   let initial: { file: string; target: SkeletonTarget; baseCSS?: string } | undefined;
@@ -119,6 +127,7 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
       await Promise.allSettled([...requests]);
     },
     async configResolved(config) {
+      base = config.base;
       project = await loadProject(config.root);
       dev = config.command === 'serve';
       initial = undefined;
@@ -136,13 +145,15 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
       if (target) initial = { file, target };
     },
     async buildStart() {
+      assets = new BuildAssets();
+      emitAsset = (name, source) => this.emitFile({ type: 'asset', name, source });
       sharedStyles.clear();
       optimizer = createArtifactOptimizer(message => this.warn(message));
       const statuses = await checkProject(project);
       const invalid = statuses.filter(s => dev ? ['missing', 'corrupt'].includes(s.state) : s.state !== 'ready');
       if (invalid.length) this.error(`Skeleton artifacts need sync: ${invalid.map(s => `${s.id}: ${s.reason}`).join(', ')}. Run pnpm exec skelcast sync.`);
       if (initial) {
-        const artifact = optimizer.artifact(await readArtifact(project, initial.target.id));
+        const artifact = optimizer.artifact(buildArtifact(await readArtifact(project, initial.target.id)));
         const css = artifact.variants[artifact.defaultVariant].css;
         const index = css.indexOf(separator);
         initial.baseCSS = index < 0 ? undefined : css.slice(index + separator.length);
@@ -151,7 +162,7 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
     resolveId(id) {
       if (id === initialModule) return initialInternal;
       if (id.startsWith(sharedPrefix)) return id;
-      if (id.startsWith(modulePrefix)) return `${internalPrefix}${id.slice(modulePrefix.length)}`;
+      if (id.startsWith(modulePrefix)) return `${internalPrefix}${Buffer.from(id.slice(modulePrefix.length)).toString('base64url')}`;
     },
     async load(id) {
       if (id === initialInternal) {
@@ -165,7 +176,7 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
         return sharedStyleModule(css, initial?.baseCSS === css ? initialModule : undefined);
       }
       if (!id.startsWith(internalPrefix)) return;
-      const artifact = await readArtifact(project, id.slice(internalPrefix.length));
+      const artifact = buildArtifact(await readArtifact(project, Buffer.from(id.slice(internalPrefix.length),'base64url').toString('utf8')));
       if (optimize()) return optimizer.module(artifact, css => {
         const id = sharedPrefix + digest(css);
         sharedStyles.set(id, css);
@@ -173,6 +184,15 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
       }, initial?.target.id === artifact.id ? initialModule : undefined);
       return `export default ${JSON.stringify(previewArtifact(artifact))};`;
     },
+    renderChunk(code, chunk) {
+      const transformed = assets.chunk(code, chunk.fileName, reference => this.getFileName(reference));
+      return transformed === undefined ? null : { code: transformed, map: null };
+    },
+    generateBundle: { order: 'post', handler(_options, bundle) {
+      for (const entry of Object.values(bundle)) if (entry.type === 'asset' && entry.fileName.endsWith('.html')) {
+        entry.source = assets.html(String(entry.source), entry.fileName, base, reference => this.getFileName(reference));
+      }
+    } },
     transformIndexHtml: {
       order: 'pre',
       async handler(_html, context) {
@@ -181,7 +201,7 @@ export function skelcastPlugin(options: SkelcastPluginOptions = {}): Plugin {
         const target = selectPageTarget(project.config.targets, pathname);
         const tags: any[] = [];
         if (target) {
-          const artifact = await readArtifact(project, target.id);
+          const artifact = buildArtifact(await readArtifact(project, target.id));
           const reuse = !!initial && path.resolve(context.filename) === initial.file && target.id === initial.target.id;
           tags.push({ tag: 'div', attrs: { 'data-sk-initial-container': '' }, children: firstScreen(optimize() ? optimizer.artifact(artifact) : artifact, reuse), injectTo: 'body-prepend' });
           // Run before application entries, including when the page artifact itself is lazy.

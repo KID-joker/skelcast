@@ -1,6 +1,7 @@
 import type { SkeletonHints } from '../../types.js';
 import type { TableColumn } from './columns.js';
-import { dimension, scalar } from './shared.js';
+import { dimension, scalar, column } from './shared.js';
+import type { TableColumns } from './columns.js';
 import { table, type TableGeometry } from './table.js';
 
 /** Element Plus owns its selection columns, cell wrappers and flexible-width rules. */
@@ -22,6 +23,7 @@ const geometry: TableGeometry = {
       ? `calc(${column.width} + max(0px, 100cqw - ${width}px) * ${parseFloat(column.width) / flexWidth})` : '');
     return {
       className: 'el-table',
+      rowClass: 'el-table__row', headerClass: 'el-table__header',
       style: `font-size:14px;${flexible && fit ? 'container-type:inline-size;' : ''}`,
       width: fit ? '100%' : `${width}px`, columnWidths,
       headerPadding: '8px 0', cellPadding: '8px 0',
@@ -33,4 +35,7 @@ const geometry: TableGeometry = {
 
 export function elementTable(props: Record<string, unknown>, columns: readonly TableColumn[], text: string, hints: SkeletonHints = {}, masked = true) {
   return table(props, columns, text, hints, masked, geometry);
+}
+export function elementTableColumn(props: Record<string, unknown>, children: string, columns: TableColumns, header?:string) {
+  return column(props, children, columns, { ...geometry.column(props), header, align: scalar(props.align) || 'left', headerAlign: scalar(props.headerAlign) || undefined });
 }

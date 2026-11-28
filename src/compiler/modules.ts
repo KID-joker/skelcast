@@ -2,7 +2,7 @@ import { componentValue, declarationBindings, isRenderFunction, nodeName, unwrap
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import type { Diagnostic, SkeletonConfig, SkeletonHints } from '../types.js';
-import { UNKNOWN, CLASS_HELPER, bindPattern, evaluate, type Ast } from './expression.js';
+import { UNKNOWN, CLASS_HELPER, bindPattern, evaluate, parseSourceExpression, type Ast } from './expression.js';
 import { digest, loadStyle, bindStyleVariables } from './styles.js';
 import { componentName, declarationComponents } from './components.js';
 import type { ComponentReference } from './presets/types.js';
@@ -15,6 +15,8 @@ import { vueOptions } from './vue-render.js';
 import { resolutionCandidates } from './resolution.js';
 import { SourceFiles } from './source-files.js';
 import { resolveReexports } from './exports.js';
+import {viteConfigObjects} from './build-defines.js';
+import {directiveRegistrations} from './directives.js';
 import { appRegistrations, pluginRegistrations } from './registrations.js';
 import type * as t from '@babel/types';
 
@@ -24,6 +26,7 @@ export class SourceModules {
   dependencies: Record<string, string> = {};
   diagnostics: Diagnostic[] = [];
   protected modules = new Map<string, Promise<ModuleInfo>>();
+  protected defines:Record<string,unknown>={};
   protected css = new Map<string, string>();
   protected scanned = new Set<string>();
   protected registry?: Promise<Map<string, ComponentReference>>;
@@ -103,6 +106,25 @@ export class SourceModules {
       this.css.set(file, (await this.readStyle(file)).css);
     }
   }
+  protected async buildDefines(){
+    const candidates=['vite.config.ts','vite.config.mts','vite.config.js','vite.config.mjs'];
+    for(const name of candidates){const file=path.join(this.root,name);try{await this.read(file)}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'){this.dependencies[name]='!missing';continue}throw error}
+      const mod=await this.module(file),definitions: t.ObjectExpression[]=[];
+      const configs=viteConfigObjects(mod);if(configs.length!==1)return;
+      for(const property of configs[0].properties)if(property.type==='ObjectProperty'&&!property.computed&&nodeName(property.key)==='define'&&property.value.type==='ObjectExpression')definitions.push(property.value);
+      if(definitions.length!==1)return;
+      const consumers=await Promise.all([...this.scanned].filter(source=>source!==file&&/\.(?:vue|[cm]?[jt]sx?)$/.test(source)).map(source=>this.read(source)));
+      const needed=definitions[0].properties.filter(property=>property.type==='ObjectProperty'&&consumers.some(consumer=>consumer.includes(nodeName(property.key)??'__unknown_define__')));
+      if(!needed.length)return;
+      const env=await this.moduleValues(mod),ec={code:mod.code,env,bindings:{}};
+      for(const property of needed){if(property.type!=='ObjectProperty'||property.computed)continue;const key=nodeName(property.key);if(!key||!/^[A-Za-z_$][\w$]*$/.test(key))continue;
+        const expression=property.value;
+        if(!mod.imports.has('JSON')&&!mod.functions.has('JSON')&&expression.type==='CallExpression'&&expression.callee.type==='MemberExpression'&&nodeName(expression.callee.object)==='JSON'&&nodeName(expression.callee.property)==='stringify'&&expression.arguments.length===1){const argument=expression.arguments[0],syntax=argument?.type==='Identifier'?mod.functions.get(argument.name):undefined;this.defines[key]=evaluate(syntax?.type==='ObjectExpression'?syntax:argument,ec);}
+        else {const value=evaluate(expression,ec);if(typeof value==='string'){const parsed=parseSourceExpression(value);this.defines[key]=parsed?evaluate(parsed,{...ec,code:value}):UNKNOWN}else this.defines[key]=value}
+      }
+      return;
+    }
+  }
   async resolve(from: string, request: string): Promise<string | undefined> {
     const { file, missing } = await this.files.resolve(resolutionCandidates(this.root, from, request, this.aliases, true));
     // Earlier candidates also matter: creating one can change which file wins.
@@ -142,6 +164,13 @@ export class SourceModules {
       }
       return result;
     })();
+  }
+  private directives?:Promise<Map<string,ComponentReference>>;
+  async directiveSource(name:string,mod:ModuleInfo):Promise<ResolvedComponent|undefined>{
+    const local=[...mod.imports].find(([binding])=>binding.startsWith('v')&&componentName(binding.slice(1))===componentName(name))?.[1];
+    this.directives??=(async()=>{const result=new Map<string,ComponentReference>();for(const file of this.entryScripts){const entry=await this.module(file),registered=directiveRegistrations(entry);for(const item of registered.directives)result.set(componentName(item.name),item.reference);for(const plugin of registered.plugins){if(!plugin.file)continue;const resolved=await this.resolveExport(plugin.file,plugin.exported);if(!resolved||resolved===ambiguousExport||!resolved.fn)continue;for(const item of directiveRegistrations(resolved.module,resolved.fn).directives)result.set(componentName(item.name),item.reference)}}return result})();
+    const reference=local??(await this.directives).get(componentName(name));
+    if(!reference?.file)return;const resolved=await this.resolveExport(reference.file,reference.exported);return resolved&&resolved!==ambiguousExport?resolved:undefined;
   }
   private async pluginComponent(reference: ComponentReference): Promise<{ name: string; reference: ComponentReference } | undefined> {
     const plugin = await this.packageModule(reference.request);
@@ -215,7 +244,7 @@ export class SourceModules {
       for (const specifier of statement.specifiers) if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && ['clsx', 'default'].includes(nodeName(specifier.imported) ?? '')) classHelpers.add(specifier.local.name);
     }
     const mod: ModuleInfo = { file, code, ast, descriptor, functions: new Map(), imports: new Map(), exports: new Map(), reexports: new Map(), exportAll: [], env: Object.create(null), setupDeclarations: [], scopes: [], boundaries: new Set(['LoadingBoundary']), propDefaults: {}, propBindings: [], inheritAttrs: true, cssBindings: [] };
-    const ec = { code, env: mod.env, bindings: this.hints.bindings ?? {} };
+    const ec = { code, sourceFile: file, env: mod.env, bindings: this.hints.bindings ?? {} };
     for (const statement of ast.program.body) {
       const decl = statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportNamedDeclaration' ? statement.declaration ?? statement : statement;
       const bindings = [...declarationBindings(decl)];
@@ -283,10 +312,20 @@ export class SourceModules {
       for (const name of [...mod.boundaries]) mod.boundaries.add(name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase());
       // Missing declared props have Vue's absent value, rather than an opaque
       // business value. Read only local type members; imported types stay unknown.
-      const declaredProps = (type: Ast | undefined) => {
-        if (type?.type === 'TSIntersectionType') { type.types.forEach(declaredProps); return; }
-        if (type?.type !== 'TSTypeLiteral') return;
-        for (const member of type.members) {
+      const localTypes = new Map<string, Ast>();
+      for (const statement of ast.program.body) {
+        const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+        if (declaration?.type === 'TSInterfaceDeclaration') localTypes.set(declaration.id.name, declaration.body);
+        if (declaration?.type === 'TSTypeAliasDeclaration') localTypes.set(declaration.id.name, declaration.typeAnnotation);
+      }
+      const declaredProps = (type: Ast | undefined, seen = new Set<string>()) => {
+        if (type?.type === 'TSTypeReference' && type.typeName.type === 'Identifier' && !seen.has(type.typeName.name)) {
+          const name = type.typeName.name;
+          declaredProps(localTypes.get(name), new Set([...seen, name])); return;
+        }
+        if (type?.type === 'TSIntersectionType') { type.types.forEach(type => declaredProps(type, seen)); return; }
+        if (type?.type !== 'TSTypeLiteral' && type?.type !== 'TSInterfaceBody') return;
+        for (const member of type.type === 'TSInterfaceBody' ? type.body : type.members) {
           const key = member.type === 'TSPropertySignature' ? nodeName(member.key) : undefined;
           if (member.type === 'TSPropertySignature' && !member.computed && typeof key === 'string') mod.propDefaults[key] = member.typeAnnotation?.typeAnnotation?.type === 'TSBooleanKeyword' ? false : undefined;
         }
@@ -300,6 +339,14 @@ export class SourceModules {
           declaredProps(n.typeParameters?.params?.[0]);
           const runtime = n.arguments[0];
           if (runtime?.type === 'ArrayExpression') for (const item of runtime.elements) if (item?.type === 'StringLiteral') mod.propDefaults[item.value] = undefined;
+          if(runtime?.type==='ObjectExpression')for(const property of runtime.properties){
+            if(property.type!=='ObjectProperty'||property.computed)continue;const key=nodeName(property.key);if(!key)continue;
+            const definition=property.value,type=definition.type==='ObjectExpression'?definition.properties.find(p=>p.type==='ObjectProperty'&&nodeName(p.key)==='type'):undefined;
+            const ctor=type?.type==='ObjectProperty'?type.value:definition;mod.propDefaults[key]=ctor.type==='Identifier'&&ctor.name==='Boolean'&&!mod.imports.has('Boolean')?false:undefined;
+            const fallback=definition.type==='ObjectExpression'?definition.properties.find(p=>p.type==='ObjectProperty'&&nodeName(p.key)==='default'):undefined;
+            if(fallback?.type==='ObjectProperty'){const value=fallback.value;mod.propDefaults[key]=value.type==='ArrowFunctionExpression'&&!value.async&&!value.params.length&&value.body.type!=='BlockStatement'?evaluate(value.body,ec):evaluate(value,ec);}
+          }
+
         }
       }
       for (const n of propDeclarations) {

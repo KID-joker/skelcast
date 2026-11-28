@@ -13,6 +13,8 @@ export interface SkeletonTarget {
   export?: string;
   /** Import binding used by an init-generated boundary; selects its source subtree. */
   region?: string;
+  /** Finite source call sites, selected by their data-sk-context attribute. */
+  contexts?: Record<string, { source: string }>;
   kind?: 'page' | 'request';
   render?: RenderMode;
   styles?: string[];
@@ -32,7 +34,7 @@ export interface SkeletonConfig {
   /** Defaults to components.d.ts and src/components.d.ts. Never executes declaration imports. */
   componentDeclarations?: string[];
   /** Opt-in library layout adapters; require imports or component declarations identifying the package/export. */
-  componentPresets?: ('naive-ui' | 'element-plus' | 'ant-design-vue' | 'antd')[];
+  componentPresets?: ('naive-ui' | 'element-plus' | 'ant-design-vue' | 'antd' | 'vuedraggable')[];
   styles?: StyleOptions;
   outDir?: string;
   hintsFile?: string;
@@ -82,6 +84,8 @@ export interface SkeletonArtifact {
   render: RenderMode;
   defaultVariant: string;
   variants: Record<string, SkeletonView>;
+  /** Context + declared state -> precompiled view; runtime never infers markup. */
+  contexts?: Record<string, Record<string, string>>;
   diagnostics: Diagnostic[];
   evidence: Evidence[];
   sources: Record<string, SourceLocation>;

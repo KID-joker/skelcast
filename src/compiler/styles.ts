@@ -183,7 +183,7 @@ export const baseCSS = `
 [data-sk-artifact] [data-sk-control] [data-sk-image]:not([data-sk-leaf]) { outline:1px solid currentColor;outline-offset:-1px;border-radius:2px; }
 [data-sk-artifact] [data-sk-layout] { box-sizing: border-box; }
 [data-sk-artifact] [data-sk-leaf] { color: transparent !important; background-color: var(--skeleton-color, #e5e9ef) !important; border-color: transparent !important; border-radius: var(--skeleton-radius, 6px); }
-[data-sk-artifact] [data-sk-text] { display: inline-block; width: var(--skeleton-text-width, min(100%, 12ch)); min-width: 3ch; height: .85em; vertical-align: middle; }
+[data-sk-artifact] [data-sk-text] { display: inline-block; width: var(--skeleton-text-width, 12ch); max-width: 100%; min-width: 3ch; height: .85em; vertical-align: middle; }
 [data-sk-artifact] [data-sk-measured] { display: inline; width: auto; min-width: 0; height: auto; vertical-align: baseline; font: inherit; letter-spacing: inherit; text-transform: inherit; text-shadow: none !important; -webkit-text-fill-color: transparent !important; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 [data-sk-artifact] [data-sk-measured]::before { content: attr(data-sk-text-content); }
 [data-sk-artifact] :where([data-sk-image]) { aspect-ratio: var(--skeleton-image-ratio, auto); }

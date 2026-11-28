@@ -10,16 +10,22 @@ export const SOURCE_ACCESSOR = Symbol('source-accessor');
 export const SOURCE_PROJECTION = Symbol('source-projection');
 export const SOURCE_INITIAL = Symbol('source-initial-state');
 export const SOURCE_RENDER = Symbol('source-render-body');
+export const SOURCE_RENDER_FILE = Symbol('source-render-file');
 export const SOURCE_TYPE_TEST = Symbol('source-type-test');
 export const SOURCE_COLLECTION = Symbol('source-collection-capacity');
 export const SOURCE_CELL_GLYPHS = Symbol('source-declared-cell-glyphs');
 export const SOURCE_COPY = Symbol('source-copy-recipe');
 export const SOURCE_FUNCTION = Symbol('source-function-type');
 export const SOURCE_VUE = Symbol('source-vue-helper');
+export const SOURCE_ARRAY_LAYOUT = Symbol('source-array-layout');
+export const SOURCE_NORMALIZED = Symbol('source-normalized-layout');
+export const SOURCE_ICON = Symbol('source-library-icon');
+export const SOURCE_FIELDS = Symbol('source-field-projector');
 export function sourceCapacity(value:Value):number|undefined{return value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_COLLECTION)?(value as {[SOURCE_COLLECTION]:number})[SOURCE_COLLECTION]:undefined;}
 export function sourceCellGlyphs(value:Value):unknown[]|undefined{return value&&typeof value==='object'&&Object.hasOwn(value,SOURCE_CELL_GLYPHS)?(value as {[SOURCE_CELL_GLYPHS]:unknown[]})[SOURCE_CELL_GLYPHS]:undefined;}
 const SOURCE_CLOSED = Symbol('source-complete-object');
-const functionType=(value:Value)=>!!value&&typeof value==='object'&&[SOURCE_FUNCTION,SOURCE_COPY,SOURCE_PROJECTION,SOURCE_TYPE_TEST,SOURCE_RENDER,SOURCE_ACCESSOR,SOURCE_VUE].some(key=>Object.hasOwn(value,key));
+export const sourceObject = (values: Record<string, Value>): Record<string, Value> => Object.defineProperty({ ...values }, SOURCE_CLOSED, { value: true });
+const functionType=(value:Value)=>!!value&&typeof value==='object'&&[SOURCE_FUNCTION,SOURCE_COPY,SOURCE_PROJECTION,SOURCE_TYPE_TEST,SOURCE_RENDER,SOURCE_ACCESSOR,SOURCE_VUE,SOURCE_ARRAY_LAYOUT,SOURCE_FIELDS].some(key=>Object.hasOwn(value,key));
 function copyValue(value:Value,deep:boolean,budget:{remaining:number},depth=0):Value{
  if(--budget.remaining<0||depth>32||value===UNKNOWN)return UNKNOWN;
  if(functionType(value))return value;
@@ -45,6 +51,10 @@ export interface ExpressionContext {
   nodeValues?: Map<t.Node, Value>;
   defaultBranches?: boolean;
   unwrapRefs?: boolean;
+  provides?: Record<string, Value>;
+  initialValues?: Record<string, Value>;
+  layoutFrame?: boolean;
+  sourceFile?: string;
   /** Shared work limit for nested bounded collection operations. */
   budget?: { remaining: number };
 }
@@ -146,7 +156,11 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
     case 'TSAsExpression': case 'TSTypeAssertion': case 'TSSatisfiesExpression': case 'TSNonNullExpression': case 'ParenthesizedExpression': return ev(node.expression);
     case 'StringLiteral': case 'NumericLiteral': case 'BooleanLiteral': return node.value;
     case 'NullLiteral': return null;
-    case 'ArrowFunctionExpression': case 'FunctionExpression': return {[SOURCE_FUNCTION]:true};
+    case 'ArrowFunctionExpression': case 'FunctionExpression': case 'FunctionDeclaration': {
+      let visual = false;
+      walk(node.body, child => { if (child.type === 'JSXElement' || child.type === 'JSXFragment') visual = true; });
+      return visual && !node.async && !node.generator && ctx.sourceFile ? { [SOURCE_FUNCTION]: true, [SOURCE_RENDER]: node, [SOURCE_RENDER_FILE]: ctx.sourceFile } : { [SOURCE_FUNCTION]: true };
+    }
     case 'ThisExpression': return ctx.env.this ?? UNKNOWN;
     case 'Identifier': {
       if (node.name === 'undefined' && !Object.hasOwn(ctx.env, node.name)) return undefined;
@@ -198,9 +212,11 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
       if (key === UNKNOWN || !safeKey(String(key))) return UNKNOWN;
       if (nodeName(node.property) === 'value' && obj !== UNKNOWN && (obj === null || typeof obj !== 'object')) return obj;
       if (ctx.unwrapRefs && nodeName(node.property) === 'value' && obj !== UNKNOWN && obj != null && !Object.hasOwn(Object(obj), 'value')) return obj;
+      if (obj !== UNKNOWN && obj == null && node.type === 'OptionalMemberExpression' && node.optional) return undefined;
       if (obj === UNKNOWN || obj == null) return UNKNOWN;
       const name = String(key);
       const object = Object(obj) as Record<string, unknown>;
+      if(['string','number','boolean'].includes(typeof obj)&&!Object.hasOwn(object,name))return undefined;
       if (node.object.type === 'Identifier' && node.object.name === '$slots' || node.object.type === 'MemberExpression' && node.object.object.type === 'ThisExpression' && nodeName(node.object.property) === '$slots') return Object.hasOwn(object, name) ? object[name] : undefined;
       return Object.hasOwn(object, name) ? object[name] : Object.hasOwn(object,SOURCE_CLOSED)?undefined:UNKNOWN;
     }
@@ -250,6 +266,7 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
         }
         case '-': return typeof a === 'number' && typeof b === 'number' ? a - b : UNKNOWN;
         case '*': return typeof a === 'number' && typeof b === 'number' ? a * b : UNKNOWN;
+        case '%': return typeof a === 'number' && typeof b === 'number' && b !== 0 ? a % b : UNKNOWN;
         case '/': return typeof a === 'number' && typeof b === 'number' && b !== 0 ? a / b : UNKNOWN;
         case '>': case '<': case '>=': case '<=': {
           // Relational comparisons must not invoke business coercion hooks either.
@@ -265,6 +282,18 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
       }
       return UNKNOWN;
     }
+    case 'OptionalCallExpression': {
+      const callee = node.callee;
+      if (callee.type === 'OptionalMemberExpression') {
+        const receiver = ev(callee.object);
+        if (receiver === UNKNOWN) return UNKNOWN;
+        if (receiver == null) return callee.optional || node.optional ? undefined : UNKNOWN;
+        return evaluate({ ...node, type: 'CallExpression', callee: { ...callee, type: 'MemberExpression' } } as t.CallExpression, ctx, depth + 1);
+      }
+      const value = ev(callee);
+      if (value !== UNKNOWN && value == null && node.optional) return undefined;
+      return evaluate({ ...node, type: 'CallExpression' } as t.CallExpression, ctx, depth + 1);
+    }
     case 'CallExpression': {
       // A method lookup and its finite implementation read the same receiver.
       // Share only this call's receiver, retaining the caller's bindings and depth.
@@ -274,6 +303,39 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
       const accessor=evaluateNode(node.callee,ctx,depth+1,readReceiver);
       const object = () => node.callee.type === 'MemberExpression' ? readReceiver(node.callee.object, depth + 1) : UNKNOWN;
       const name=accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_VUE)?(accessor as{[SOURCE_VUE]:string})[SOURCE_VUE]:nodeName(node.callee);
+      if (ctx.layoutFrame && accessor && typeof accessor === 'object' && Object.hasOwn(accessor, SOURCE_ARRAY_LAYOUT)) {
+        const recipe = (accessor as { [SOURCE_ARRAY_LAYOUT]: import('./array-layout.js').ArrayLayout })[SOURCE_ARRAY_LAYOUT];
+        const rows = node.arguments[0] ? ev(node.arguments[0]) : UNKNOWN;
+        if (!Array.isArray(rows)) return UNKNOWN;
+        const result: Value[] = [];
+        const normalize = (items: Value[], level: number): Value[] | undefined => {
+          if (level > 16 || items.length > 256) return;
+          const tree:Value[]=[];
+          for (const item of items) {
+            if (!item || typeof item !== 'object' || --ctx.budget!.remaining < 0) return;
+            const row = item as Record<string, Value>, children = row[recipe.children];
+            const copy:Record<string,Value>=Object.create(null,Object.getOwnPropertyDescriptors(row));
+            for(const[key,value]of Object.entries(recipe.defaults))copy[key]??=value;
+            if(Array.isArray(children)&&children.length){const nested=normalize(children,level+1);if(!nested)return;copy[recipe.children]=nested;}
+            else result.push(copy);
+            tree.push(copy);
+          }
+          Object.defineProperty(tree,SOURCE_NORMALIZED,{value:true});
+          return tree;
+        };
+        const tree=normalize(rows,0);if(!tree)return UNKNOWN;Object.defineProperty(result,SOURCE_NORMALIZED,{value:true});
+        const input=node.arguments[0]?expressionText(node.arguments[0],ctx):'';
+        if(ctx.initialValues&&Object.hasOwn(ctx.initialValues,input))ctx.initialValues[input]=tree;
+        return result;
+      }
+      if (name === 'inject' && accessor && typeof accessor === 'object' && Object.hasOwn(accessor, SOURCE_VUE)) {
+        const key = node.arguments[0] ? ev(node.arguments[0]) : UNKNOWN;
+        return typeof key === 'string' && Object.hasOwn(ctx.provides ?? {}, key) ? ctx.provides![key] : node.arguments[1] ? ev(node.arguments[1]) : UNKNOWN;
+      }
+      if (accessor && typeof accessor === 'object' && Object.hasOwn(accessor, SOURCE_FIELDS)) {
+        const projector = (accessor as { [SOURCE_FIELDS]: { fn: t.ArrowFunctionExpression | t.FunctionExpression | t.FunctionDeclaration; code: string } })[SOURCE_FIELDS];
+        return arrowValue(projector.fn, node.arguments.map(argument => argument.type === 'SpreadElement' ? UNKNOWN : ev(argument)), { ...ctx, code: projector.code, env: {}, bindings: {} }, depth + 1);
+      }
       if(accessor&&typeof accessor==='object'&&Object.hasOwn(accessor,SOURCE_COPY)){
         const recipe=(accessor as {[SOURCE_COPY]:CopyRecipe})[SOURCE_COPY];
         const deep=typeof recipe.deep==='boolean'?recipe.deep:node.arguments[recipe.deep.argument]?ev(node.arguments[recipe.deep.argument]):false;
@@ -306,6 +368,7 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
       }
       const member = node.callee.type === 'MemberExpression' && !node.callee.computed ? nodeName(node.callee.property) : undefined;
       if(node.callee.type==='MemberExpression'&&!node.callee.computed&&nodeName(node.callee.object)==='Array'&&!Object.hasOwn(ctx.env,'Array')&&!Object.hasOwn(ctx.bindings,'Array')){
+        if(member==='isArray'&&node.arguments.length===1){const value=ev(node.arguments[0]);return value===UNKNOWN?UNKNOWN:Array.isArray(value);}
         if(member==='of'&&node.arguments.length<=256&&!node.arguments.some(a=>a.type==='SpreadElement'))return node.arguments.map(ev);
         if(member==='from'&&node.arguments.length>=1&&node.arguments.length<=2){
           const source=ev(node.arguments[0]);
@@ -317,6 +380,18 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
           for(let i=0;i<length;i++){const item=source&&typeof source==='object'&&Object.hasOwn(source,i)?(source as Record<number,Value>)[i]:undefined;values.push(mapper?.type==='ArrowFunctionExpression'?arrowValue(mapper,[item,i],ctx,depth+1):item);if(ctx.budget!.remaining<0)return UNKNOWN;}
           return values;
         }
+      }
+      if(node.callee.type==='MemberExpression'&&!node.callee.computed&&member==='includes'){
+        const list=object(),value=node.arguments[0]?ev(node.arguments[0]):undefined;
+        if(Array.isArray(list)&&list.length<=256&&node.arguments.length===1&&value!==UNKNOWN&&!list.includes(UNKNOWN))return list.includes(value);
+      }
+      if(node.callee.type==='MemberExpression'&&!node.callee.computed&&member==='filter'&&node.arguments.length===1&&node.arguments[0]?.type==='ArrowFunctionExpression'&&!node.arguments[0].async){
+        const list=object();if(!Array.isArray(list)||list.length>256)return UNKNOWN;
+        const result:Value[]=[];for(let i=0;i<list.length;i++){const keep=arrowValue(node.arguments[0],[list[i],i],ctx,depth+1);if(keep===UNKNOWN)return UNKNOWN;if(keep)result.push(list[i]);}if(ctx.layoutFrame&&Object.hasOwn(list,SOURCE_NORMALIZED))Object.defineProperty(result,SOURCE_NORMALIZED,{value:true});return result;
+      }
+      if(ctx.layoutFrame&&node.callee.type==='MemberExpression'&&!node.callee.computed&&member==='sort'&&node.arguments[0]?.type==='ArrowFunctionExpression'&&!node.arguments[0].async){
+        const list=object();if(!Array.isArray(list)||list.length>256)return UNKNOWN;
+        const result=[...list];for(let i=1;i<result.length;i++)for(let j=i;j>0;j--){const order=arrowValue(node.arguments[0],[result[j-1],result[j]],ctx,depth+1);if(typeof order!=='number'||!Number.isFinite(order)||order<=0)break;[result[j-1],result[j]]=[result[j],result[j-1]];}if(Object.hasOwn(list,SOURCE_NORMALIZED))Object.defineProperty(result,SOURCE_NORMALIZED,{value:true});return result;
       }
       if(node.callee.type==='MemberExpression'&&!node.callee.computed&&['slice','concat','toReversed','reverse'].includes(member??'')){
         const list=object();
@@ -354,6 +429,11 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
         }
         return nodeName(node.callee.property) === 'find' ? undefined : result;
       }
+      if (node.callee.type === 'MemberExpression' && !node.callee.computed) {
+        const receiver = object(), args = node.arguments.map(argument => ev(argument));
+        if (member === 'split' && typeof receiver === 'string' && args.length === 1 && typeof args[0] === 'string' && receiver.length <= 10000) { const parts = receiver.split(args[0]); return parts.length <= 256 ? parts : UNKNOWN; }
+        if (member === 'join' && Array.isArray(receiver) && receiver.length <= 256 && receiver.every(value => typeof value === 'string' || typeof value === 'number') && args.length <= 1 && (args[0] === undefined || typeof args[0] === 'string')) return receiver.join(args[0] as string | undefined);
+      }
       // Recognize source-level wrappers; never invoke the actual implementation.
       const wrapper = evaluateSourceWrapper(node, name, ev, fn =>
         fn?.type === 'ArrowFunctionExpression' && !fn.async ? { value: arrowValue(fn, [], ctx, depth + 1) } : undefined);
@@ -368,7 +448,7 @@ function evaluateNode(node: t.Node | null | undefined, ctx: ExpressionContext, d
   return UNKNOWN;
 }
 
-function arrowValue(fn: t.ArrowFunctionExpression, args: Value[], ctx: ExpressionContext, depth: number): Value {
+function arrowValue(fn: t.ArrowFunctionExpression | t.FunctionExpression | t.FunctionDeclaration, args: Value[], ctx: ExpressionContext, depth: number): Value {
   if (depth > 40) return UNKNOWN;
   const local = { ...ctx, env: { ...ctx.env } };
   fn.params.forEach((param, index) => bindPattern(param, args[index], local.env));
@@ -392,6 +472,13 @@ function arrowValue(fn: t.ArrowFunctionExpression, args: Value[], ctx: Expressio
     }
   };
   return statements(fn.body.body)?.value;
+}
+
+/** Evaluate only an already-proved read-only presentation recipe. */
+export function sourceCall(value:Value,args:Value[]):Value{
+  if(!value||typeof value!=='object'||!Object.hasOwn(value,SOURCE_FIELDS))return UNKNOWN;
+  const recipe=(value as {[SOURCE_FIELDS]:{fn:t.ArrowFunctionExpression|t.FunctionExpression|t.FunctionDeclaration;code:string}})[SOURCE_FIELDS];
+  return arrowValue(recipe.fn,args,{code:recipe.code,env:{},bindings:{},budget:{remaining:10000}},0);
 }
 
 export function parseSourceExpression(text: string, ctx?: ExpressionContext): t.Expression | undefined {

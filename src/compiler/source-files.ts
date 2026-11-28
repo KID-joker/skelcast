@@ -63,7 +63,7 @@ export class SourceFiles {
     let result = this.scripts.get(file);
     if (!result) {
       const sfc = file.endsWith('.vue') ? parseSFC(raw, { filename: file }) : undefined;
-      let code = raw;
+      let code = file.endsWith('.json') ? `export default ${JSON.stringify(JSON.parse(raw))};` : raw;
       if (sfc) {
         // Retain original SFC offsets for diagnostics and source-node identities.
         code = raw.replace(/[^\r\n]/g, ' ');

@@ -1,6 +1,7 @@
 import type * as t from '@babel/types';
 import {isRenderFunction,nodeName,patternNames as names,unwrapExpression,walk} from './ast.js';
-import {UNKNOWN,SOURCE_PROJECTION,SOURCE_INITIAL,SOURCE_TYPE_TEST,SOURCE_COLLECTION,SOURCE_CELL_GLYPHS,SOURCE_COPY,SOURCE_FUNCTION,SOURCE_VUE,sourceCapacity,bindPattern,evaluate,safeKey,type Value} from './expression.js';
+import {UNKNOWN,SOURCE_ICON,SOURCE_FIELDS,SOURCE_ARRAY_LAYOUT,SOURCE_PROJECTION,SOURCE_INITIAL,SOURCE_TYPE_TEST,SOURCE_COLLECTION,SOURCE_CELL_GLYPHS,SOURCE_COPY,SOURCE_VUE,sourceCapacity,bindPattern,evaluate,safeKey,type Value} from './expression.js';
+import { arrayLayout } from './array-layout.js';
 import {ambiguousExport,type ModuleInfo} from './context.js';
 import {sourceCopyRecipe,type CopyRecipe} from './copy-recipe.js';
 import {resolveReexports} from './exports.js';
@@ -9,7 +10,7 @@ import { mutationTarget, propagateAliases, rootName } from './mutations.js';
 interface Declaration {pattern:t.VariableDeclarator['id'];expression:t.Node|null|undefined;constant:boolean}
 interface Binding {module:ModuleInfo;name:string}
 const identity=(b:Binding)=>JSON.stringify([b.module.file,b.name]);
-const script=(file:string)=>/\.[cm]?[jt]sx?$/.test(file);
+const script=(file:string)=>/\.(?:[cm]?[jt]sx?|json)$/.test(file);
 function references(expression:t.Node,escape=false):Set<string>{
  const result=new Set<string>();
  walk(expression,(node,ancestors)=>{
@@ -69,7 +70,20 @@ export class StaticValues {
   let recipes=this.copies.get(mod);if(!recipes)this.copies.set(mod,recipes=new Map());
   if(!recipes.has(fn))recipes.set(fn,sourceCopyRecipe(mod,fn));
   const recipe=recipes.get(fn);if(recipe)return {[SOURCE_COPY]:recipe};
+  const layout = arrayLayout(fn, [...mod.functions].find(([, value]) => value === fn)?.[0]); if (layout) return { [SOURCE_ARRAY_LAYOUT]: layout };
   if(fn.async||fn.generator)return UNKNOWN;
+  if (fn.params.every(p => p.type === 'Identifier' || p.type === 'ObjectPattern')) {
+    const locals = new Set(fn.params.flatMap(p => names(p))); let finite = true;
+    walk(fn.body, node => { if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') locals.add(node.id.name); });
+    walk(fn.body, (node, ancestors) => {
+      const parent = ancestors.at(-1);
+      if (node.type === 'Identifier' && !((parent?.type === 'MemberExpression' || parent?.type === 'OptionalMemberExpression') && parent.property === node && !parent.computed) && !(parent?.type === 'ObjectProperty' && parent.key === node && !parent.computed) && !locals.has(node.name) && node.name !== 'undefined') finite = false;
+      if (node.type === 'CallExpression' && !(node.callee.type === 'MemberExpression' && !node.callee.computed && ['split','slice','includes','join'].includes(nodeName(node.callee.property) ?? ''))) finite = false;
+      if (['OptionalCallExpression','AssignmentExpression','UpdateExpression','ObjectMethod','SpreadElement','ThrowStatement','NewExpression','AwaitExpression'].includes(node.type) || isRenderFunction(node)) finite = false;
+      if (node.type.endsWith('Statement') && !['BlockStatement','ReturnStatement','IfStatement'].includes(node.type)) finite = false;
+    });
+    if (finite) return { [SOURCE_FIELDS]: { fn, code: mod.code } };
+  }
   const scalar=fn.body.type==='BlockStatement'&&fn.body.body.length===1&&fn.body.body[0].type==='ReturnStatement'?fn.body.body[0].argument:fn.body;
   if(scalar?.type==='BinaryExpression'&&['==','===','!=','!=='].includes(scalar.operator)){
    const left=scalar.left.type==='UnaryExpression'?scalar.left:scalar.right.type==='UnaryExpression'?scalar.right:undefined;
@@ -194,8 +208,9 @@ export class StaticValues {
   if(name==='*')return this.namespace(mod,next,budget);
   const ref=mod.imports.get(name);
   if(ref){
+   if(ref.request==='@element-plus/icons-vue'&&ref.exported!=='*')return {[SOURCE_ICON]:true};
    if(ref.request==='vue'){
-    const helpers=['ref','shallowRef','reactive','readonly','unref','toRefs','computed'];
+    const helpers=['ref','shallowRef','reactive','readonly','unref','toRefs','computed','inject'];
     if(helpers.includes(ref.exported))return{[SOURCE_VUE]:ref.exported};
     if(ref.exported==='*')return Object.fromEntries(helpers.map(name=>[name,{[SOURCE_VUE]:name}]));
    }
@@ -206,14 +221,14 @@ export class StaticValues {
   const declaration=index.declarations.get(name);
   let expression=declaration?.expression;
   const fn=mod.functions.get(name);
-  if(!expression&&isRenderFunction(fn)){const value=await this.projection(mod,fn,next,budget);return value===UNKNOWN?{[SOURCE_FUNCTION]:true}:value;}
+  if(!expression&&isRenderFunction(fn)){const value=await this.projection(mod,fn,next,budget);return value===UNKNOWN?evaluate(fn,{code:mod.code,sourceFile:mod.file,env:mod.env,bindings:{},budget}):value;}
   if(name==='default'){
    const statement=mod.ast.program.body.find(n=>n.type==='ExportDefaultDeclaration');
    if(statement?.type==='ExportDefaultDeclaration'&&statement.declaration.type!=='FunctionDeclaration'&&statement.declaration.type!=='ClassDeclaration')expression=statement.declaration;
   }
   if(declaration&&!declaration.constant)return UNKNOWN;
   if(!expression)return UNKNOWN;
-  if(isRenderFunction(expression)){const value=await this.projection(mod,expression,next,budget);return value===UNKNOWN?{[SOURCE_FUNCTION]:true}:value;}
+  if(isRenderFunction(expression)){const value=await this.projection(mod,expression,next,budget);return value===UNKNOWN?evaluate(expression,{code:mod.code,sourceFile:mod.file,env:mod.env,bindings:{},budget}):value;}
   const env={...mod.env};
   const dependencies=references(expression);
   for(const dependency of dependencies){
@@ -221,7 +236,7 @@ export class StaticValues {
    if(other&&other.expression!==expression&&(other.expression?.start??0)>=(expression.start??Infinity)){env[dependency]=UNKNOWN;continue;}
    if(index.declarations.has(dependency)||mod.imports.has(dependency))env[dependency]=await this.local(mod,dependency,next,budget);
   }
-  const context={code:mod.code,env,bindings:{},budget};
+  const context={code:mod.code,sourceFile:mod.file,env,bindings:{},budget};
   const remaining=budget.remaining;
   let value=evaluate(expression,context);
   const cost=remaining-budget.remaining;

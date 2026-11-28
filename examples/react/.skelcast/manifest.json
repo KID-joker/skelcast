@@ -1,9 +1,9 @@
 {
-  "version": "0.1.0-9bfbbf6ed448",
+  "version": "0.1.0-6c7a363e0e5a",
   "targets": {
     "products.page": {
       "hash": "8454a92db4eb90929bc133dc88b3e264e131b3f497bba96e5c7047bbd41b9600",
-      "outputHash": "b0b4aca0539fd87500bbc298c185429db956be4bc5c3f90bd622974b646b8ebc",
+      "outputHash": "a6eafdb96066ba493171bf4eabe83e06036741a35df967c32cbd4e9942f76cd9",
       "dependencies": {
         "index.html": "0ff700ea459fe165374b2cff96da5cb01eb589c364d32b9aedd6d65ca6bff99c",
         "src/main.tsx": "3fe52174c5038afb560965c607c1f6c26376f1a4f0da53f4f1241914e095a6c8",
@@ -11,18 +11,20 @@
         "src/CatalogPage.tsx": "176eb7ffcc5086f3b2c02484e7c75a84e4792e669fa7cda8036208f397f062c0",
         "src/ProductGrid": "!missing",
         "src/ProductGrid.tsx": "f53b62109ed84572d53197e5a1e6b482db3190559ee0816e07125235c259209c",
-        "src/catalog.module.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f"
+        "src/catalog.module.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f",
+        "vite.config.ts": "d7337be45cde5abf1e0770de35504abba09e9fe7593c9d7f724d106807a16004"
       }
     },
     "products.list": {
       "hash": "242b4cfc79a40e1c9211dad86b75429f7636878cef6a0c5b0669f8dc730b00fe",
-      "outputHash": "897242a61c7556f1733be51f80bd08d77613a0827a8a477525cfbfda7e8174b2",
+      "outputHash": "9ba7ce7bbdc4500f3b2e54552cdd79eb383e644a4c42996aca64f68ebbceb2e5",
       "dependencies": {
         "index.html": "0ff700ea459fe165374b2cff96da5cb01eb589c364d32b9aedd6d65ca6bff99c",
         "src/main.tsx": "3fe52174c5038afb560965c607c1f6c26376f1a4f0da53f4f1241914e095a6c8",
         "src/global.css": "6a058f4a2a2913a69b8da6f4ce4910480e906db03305f6042cf0256c03dbcf27",
         "src/ProductGrid.tsx": "f53b62109ed84572d53197e5a1e6b482db3190559ee0816e07125235c259209c",
-        "src/catalog.module.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f"
+        "src/catalog.module.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f",
+        "vite.config.ts": "d7337be45cde5abf1e0770de35504abba09e9fe7593c9d7f724d106807a16004"
       }
     }
   }

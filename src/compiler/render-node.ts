@@ -1,4 +1,4 @@
-import { nodeName, unwrapExpression } from './ast.js';
+import { nodeName, unwrapExpression, isRenderFunction } from './ast.js';
 import { renderComponent } from './component-render.js';
 import { UNKNOWN, bindPattern, evaluate, expressionText, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry } from './html.js';
@@ -9,6 +9,7 @@ import { renderCall } from './render-call.js';
 import { planCollection } from './collections.js';
 import { renderBranch } from './render-branches.js';
 import { renderGraphic } from './output.js';
+import { supportedBody } from './vue-syntax.js';
 
 /** Shared node rendering; each frontend accounts for its own expansion cost. */
 export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderContext): Promise<string> {
@@ -78,15 +79,34 @@ export async function renderJSXNode(this: RenderHost, node: Ast, ctx: RenderCont
   }
   if (unknownGeometry(props.style)) unknownLayout = true;
   if (unknownLayout) return this.fallback(ctx, node, 'Unknown layout expression; add bindings or an adapter', props);
-  if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression') {
-    if (node.children.length) props.children = { [slotValue]: { nodes: node.children, context: ctx, framework: 'jsx' } satisfies SourceSlot };
+  const reference = tag.includes('-') ? await this.componentReference(tag, ctx) : undefined;
+  if (/^[A-Z]/.test(tag) || opening.name.type === 'JSXMemberExpression' || reference) {
+    let source: SourceSlot = { nodes: node.children, context: ctx, framework: 'jsx' };
+    const vue = !!ctx.module.descriptor || [...ctx.module.imports.values()].some(ref => ref.request === 'vue');
+    const content = node.children.filter(child => child.type !== 'JSXText' || child.value.trim());
+    const object = content.length === 1 && content[0].type === 'JSXExpressionContainer' ? content[0].expression : undefined;
+    if (vue && object?.type === 'ObjectExpression') {
+      const slots: Record<string, SourceSlot> = {};
+      for (const property of object.properties) {
+        if (property.type !== 'ObjectProperty' || property.computed || !isRenderFunction(property.value) || property.value.async || property.value.generator || property.value.params.length > 1 || !supportedBody(property.value.body)) {
+          this.diagnose('SLOT_UNKNOWN','JSX slot needs a finite source render function',ctx,property); continue;
+        }
+        const name = nodeName(property.key);
+        if (name) slots[name] = { framework:'render',nodes:[],context:ctx,parameter:property.value.params[0],renderFunction:property.value };
+      }
+      source = { framework:'render',nodes:[],context:ctx,slots };
+      props.__skSlots = slots;
+    } else if (node.children.length) {
+      props.children = { [slotValue]: source };
+      if (vue) props.__skSlots = { default: source };
+    }
     this.record('component', tag, 'Expand source component', ctx, node);
-    const preset = await renderComponent(this, tag, props, { nodes: node.children, context: ctx, framework: 'jsx' }, node);
+    const preset = await renderComponent(this, tag, props, source, node, reference);
     if (preset !== undefined) return preset;
     return this.fallback(ctx, node, `No source adapter for ${tag}`, props);
   }
   if (!tag || tag.includes('-')) return this.fallback(ctx, node, `Unsupported element ${tag || 'dynamic component'}`, props);
-  if (nonVisual.has(tag)) return '';
+  if (nonVisual.has(tag)&&tag!=='iframe') return '';
   if (tag === 'img') return this.image(props, ctx, node);
   const graphic = renderGraphic(this, tag, props, ctx, node);
   if (graphic !== undefined) return graphic;

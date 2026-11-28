@@ -24,6 +24,9 @@ export interface ComponentPreset {
   resolve?: (reference: ComponentReference) => string | undefined;
   role: (name: string, props: Record<string, unknown>) => ComponentRole | undefined;
   slots: (name: string) => readonly string[];
+  /** Bounded source data supplies scoped slot arguments, never callbacks. */
+  frames?: (name:string, props:Record<string,unknown>, hints:SkeletonHints) => {key:string;slot:string;argument:unknown;mask?:boolean}[];
+  skipSlots?: (name: string, props: Record<string, unknown>) => boolean;
   /** Simplify cell-slot controls while retaining their source layout. */
   maskSlots?: (name: string) => boolean;
   present: (
@@ -31,6 +34,6 @@ export interface ComponentPreset {
     props: Record<string, unknown>,
     text: () => string,
     hints: SkeletonHints,
-    policy: { mask: boolean; readonly children: string; slots: Record<string, string>; columns: TableColumns },
+    policy: { mask: boolean; readonly children: string; slots: Record<string, string>; columns: TableColumns; frames?: {key:string;html:string}[] },
   ) => Presentation | undefined;
 }

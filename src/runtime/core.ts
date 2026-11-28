@@ -7,6 +7,7 @@ export interface BoundaryInfo {
   kind: 'page' | 'request';
   pending: boolean;
   variant?: string;
+  context?: string;
   artifact: SkeletonArtifact;
   element?: HTMLElement;
 }
@@ -140,15 +141,17 @@ export function replaceArtifacts(artifacts: SkeletonArtifact[], versions?: Reado
 }
 export function releasePageSkeleton(options: { preview?: boolean } = {}) { initialReleased = true; initialPreviewAllowed = options.preview !== false; updateInitial(); }
 
-export function selectedVariant(artifact: SkeletonArtifact, variant?: string, held = forced(artifact.id, artifact.kind)): string {
+export function selectedVariant(artifact: SkeletonArtifact, variant?: string, held = forced(artifact.id, artifact.kind), context?: string): string {
   const chosen = (held ? preview.variant : undefined) ?? variant ?? artifact.defaultVariant;
+  const mapping = context && artifact.contexts?.[context];
+  if(mapping){const state=Object.values(artifact.contexts??{}).flatMap(mapping=>Object.entries(mapping)).find(([,view])=>view===chosen)?.[0];const contextual=mapping[chosen]??(state?mapping[state]:undefined)??mapping[artifact.defaultVariant]??Object.values(mapping)[0];if(artifact.variants[contextual])return contextual;}
   return artifact.variants[chosen] ? chosen : artifact.defaultVariant;
 }
-export function selectedView(artifact: SkeletonArtifact, variant?: string) {
-  return artifact.variants[selectedVariant(artifact, variant)] ?? Object.values(artifact.variants)[0];
+export function selectedView(artifact: SkeletonArtifact, variant?: string, context?: string) {
+  return artifact.variants[selectedVariant(artifact, variant, undefined, context)] ?? Object.values(artifact.variants)[0];
 }
-export function mountSkeleton(host: HTMLElement, artifact: SkeletonArtifact, variant?: string): () => void {
-  const view = selectedView(artifact, variant);
+export function mountSkeleton(host: HTMLElement, artifact: SkeletonArtifact, variant?: string, context?: string): () => void {
+  const view = selectedView(artifact, variant, context);
   if (!view) return () => {};
   // Keep the shadow root on an owned child so switching render modes can remove it.
   const container = artifact.render === 'shadow' ? host.ownerDocument.createElement('div') : host;
@@ -170,11 +173,11 @@ export function createSkeletonMount() {
   let previousMode: SkeletonArtifact['render'] | undefined;
   let previousHost: HTMLElement | undefined;
   return {
-    update(host: HTMLElement, visible: boolean, artifact: SkeletonArtifact, variant?: string) {
+    update(host: HTMLElement, visible: boolean, artifact: SkeletonArtifact, variant?: string, context?: string) {
       if (!visible) return;
-      const view = selectedView(artifact, variant);
+      const view = selectedView(artifact, variant, context);
       if (host !== previousHost || previousMode !== artifact.render || view?.html !== previous?.html || view?.css !== previous?.css) {
-        cleanup?.(); cleanup = mountSkeleton(host, artifact, variant);
+        cleanup?.(); cleanup = mountSkeleton(host, artifact, variant, context);
         previous = view; previousMode = artifact.render; previousHost = host;
       }
       const root = host.firstElementChild?.shadowRoot ?? host;

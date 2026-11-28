@@ -13,6 +13,10 @@ import { analyzeReact } from './react.js';
 import { inferredRoute, isPageFile, relativePath, resolveSource, scanProject } from './scan.js';
 import { analyzeVue } from './vue.js';
 import { integrateVite } from './vite.js';
+import { integrateTypeResolution } from './tsconfig.js';
+import { requestContexts } from './contexts.js';
+import { requestStateChanges } from './requests.js';
+import { parse as parseSFC } from '@vue/compiler-sfc';
 import type { InitChange, InitOptions, InitReport } from './types.js';
 export type { InitChange, InitDiagnostic, InitOptions, InitReport } from './types.js';
 
@@ -62,12 +66,13 @@ export async function initProject(directory = process.cwd(), options: InitOption
     catch (error) { report.diagnostics.push({ code: 'CONFIG_DYNAMIC', file: configFile, message: String(error) }); return report; }
   }
   const scan = await scanProject(root, vite.aliases);
+  const requestChanges = await requestStateChanges(root, scan.files, scan.aliases);
   report.scanned = scan.files.length;
   report.diagnostics.push(...scan.diagnostics);
   const usedIds = new Set(existing.targets.map(t => t.id));
   const globalStyles = new Set<string>();
   for (const source of scan.files) if (/^(?:src\/)?(?:main|index|App)\.(?:tsx?|jsx?)$/.test(source.file)) {
-    for (const request of stylesheetImports(source.ast).filter(request => request.endsWith('.css'))) {
+    for (const request of stylesheetImports(source.ast)) {
       const file = await resolveSource(root, source.file, request, scan.aliases);
       if (file) globalStyles.add(relativePath(configRoot, path.resolve(root, file)));
     }
@@ -75,7 +80,14 @@ export async function initProject(directory = process.cwd(), options: InitOption
   const hasPageDirectories = scan.files.some(f => /(?:^|\/)(?:pages|views)\//.test(f.file) && !/(?:^|\/)components\//.test(f.file));
   const aliases = Object.fromEntries(Object.entries(scan.aliases).map(([key, value]) => [key, relativePath(configRoot, path.resolve(root, value)) || '.']));
   Object.assign(aliases, existing.aliases);
-  for (const source of scan.files) {
+  for (const original of scan.files) {
+    let source = original;
+    const updated = requestChanges.get(source.file);
+    if (updated) {
+      const sfc = source.vue ? parseSFC(updated, { filename: source.file }) : undefined;
+      const script = sfc ? sfc.descriptor.scriptSetup!.content : updated;
+      source = { ...source, code: updated, sfc, ast: parseSource(script, source.file, sfc?.descriptor.scriptSetup?.lang === 'tsx') };
+    }
     const routes = [...scan.routes.get(source.file) ?? []].sort();
     const page = routes.length > 0 || isPageFile(source, scan.routes.size > 0 || hasPageDirectories);
     if (page && !routes.length) {
@@ -87,12 +99,14 @@ export async function initProject(directory = process.cwd(), options: InitOption
       const ctx = { file: source.file, source: source.code, ast: source.ast, sfc: source.sfc, page, routes, existing, usedIds };
       const analysis = source.vue ? analyzeVue(ctx) : analyzeReact(ctx);
       report.diagnostics.push(...analysis.diagnostics);
-      if (!analysis.targets.length) continue;
+      if (!analysis.targets.length && !updated) continue;
       const changed = applyEdits(source.code, analysis.edits);
-      report.changes.push({ file: source.file, before: source.code, after: changed, reason: `Integrate ${analysis.targets.length} loading boundaries` });
+      report.changes.push({ file: source.file, before: original.code, after: changed, reason: updated ? 'Connect source-proven request ownership and pending state' : `Integrate ${analysis.targets.length} loading boundaries` });
       report.targets.push(...analysis.targets.map(t => ({ ...t, source: relativePath(configRoot, path.resolve(root, t.source)), ...(globalStyles.size ? { styles: [...globalStyles].sort() } : {}) })));
     } catch (error) { report.diagnostics.push({ code: 'CODEMOD_SKIPPED', file: source.file, message: String(error) }); }
   }
+  const contexts = await requestContexts(root, configRoot, scan.files, report.changes, [...existing.targets,...report.targets], scan.aliases, report.diagnostics);
+  for (const target of report.targets) if (contexts.has(target.id)) target.contexts = contexts.get(target.id);
   if (!report.targets.length && !existing.targets.length) {
     report.diagnostics.push({ code: 'NO_TARGETS', file: '.', message: 'No supported page or loading region found; declare a target manually' }); return report;
   }
@@ -107,6 +121,17 @@ export async function initProject(directory = process.cwd(), options: InitOption
       const targets = property.value;
       edits.push(insertItems(existingText, targets, report.targets.map(t => JSON.stringify(t, null, 2)), targets.elements));
     }
+    for (const target of existing.targets) {
+      const mapping=contexts.get(target.id);
+      if(!mapping||JSON.stringify(mapping)===JSON.stringify(target.contexts))continue;
+      const targetsProperty=configObject!.properties.find(p=>p.type==='ObjectProperty'&&nodeName(p.key)==='targets');
+      if(targetsProperty?.type!=='ObjectProperty'||targetsProperty.value.type!=='ArrayExpression')continue;
+      const object=targetsProperty.value.elements.find(p=>p?.type==='ObjectExpression'&&p.properties.some(property=>property.type==='ObjectProperty'&&nodeName(property.key)==='id'&&property.value.type==='StringLiteral'&&property.value.value===target.id));
+      if(object?.type!=='ObjectExpression')continue;
+      const property=object.properties.find(p=>p.type==='ObjectProperty'&&nodeName(p.key)==='contexts');
+      if(property?.type==='ObjectProperty')edits.push({start:startOf(property.value),end:endOf(property.value),text:JSON.stringify(mapping)});
+      else edits.push({start:startOf(object)+1,end:startOf(object)+1,text:`\ncontexts: ${JSON.stringify(mapping)},\n`});
+    }
     const missingAliases = Object.entries(aliases).filter(([key]) => !Object.hasOwn(existing.aliases ?? {}, key));
     if (missingAliases.length) {
       const prop = configObject!.properties.find(p => p.type === 'ObjectProperty' && nodeName(p.key) === 'aliases');
@@ -116,6 +141,7 @@ export async function initProject(directory = process.cwd(), options: InitOption
     if (edits.length) report.changes.push({ file: configFile, before: existingText, after: applyEdits(existingText, edits), reason: 'Append discovered targets without replacing existing configuration' });
   }
   report.changes.push(...vite.changes);
+  report.changes.push(...await integrateTypeResolution(root));
   const configRelativeSources = scan.files.map(f => relativePath(configRoot, path.join(root, f.file)));
   const envFile = relativePath(root, path.join(configRoot, configRelativeSources.some(f => f.startsWith('src/')) ? 'src/skelcast-env.d.ts' : 'skelcast-env.d.ts'));
   const env = await optionalRead(path.join(root, envFile));

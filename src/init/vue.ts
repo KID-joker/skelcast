@@ -116,6 +116,7 @@ export function analyzeVue(ctx: AnalysisContext): FileAnalysis {
   };
   scan(ast.children);
   if (ctx.page && !hasPage && !result.targets.some(t => t.kind === 'page')) {
+    result.diagnostics.push({ code: 'PAGE_PREVIEW_ONLY', file: ctx.file, message: 'Page preview has no source-proven pending state. Existing request boundaries remain independent; connect an explicit pending state for real page loading.' });
     const artifact = addTarget({ suffix: 'page', kind: 'page', bindings: allBindings });
     edits.push({ start: 0, end: 0, text: `<${boundary} :artifact="${artifact}" :pending="false"><!-- skelcast:init -->` }, { start: text.length, end: text.length, text: `</${boundary}>` });
   }

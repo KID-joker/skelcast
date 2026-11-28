@@ -23,8 +23,9 @@ export function planCollection(
   if (count == null) {
     if (projected) count = repeatCapacity(text, ctx);
     else if (bound != null) count = Math.min(24, bound);
-    else count = length == null ? 4 : Math.min(24, length);
+    else count = length == null ? 4 : Math.min(256, length);
   }
+  if(host.hints.repeat==null&&bound==null&&length!=null&&length>256)host.diagnose('COLLECTION_LIMIT','Finite source collection exceeds the 256-item expansion budget; remaining items are omitted',ctx,node);
   if (bound != null) host.diagnose('LOADING_PROJECTION', 'Use a representative source collection bound; later mutations, result count and item values remain unknown', ctx, node);
   if (projected) host.diagnose('LOADING_PROJECTION', `Render ${count} masked source items; this is loading capacity, not a ${response}`, ctx, node);
   if (host.target.kind === 'request' && host.hints.state !== 'source' && count === 0 && !boundState) {

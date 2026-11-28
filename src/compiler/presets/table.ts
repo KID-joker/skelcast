@@ -1,11 +1,13 @@
 import type { SkeletonHints } from '../../types.js';
-import { SOURCE_INITIAL, UNKNOWN, sourceCapacity, sourceCellGlyphs } from '../expression.js';
+import { SOURCE_INITIAL, UNKNOWN, sourceCall, sourceObject, sourceCapacity, sourceCellGlyphs } from '../expression.js';
 import type { TableColumn } from './columns.js';
 import type { Presentation } from './types.js';
 import { dimension, escape, scalar } from './shared.js';
 
 interface TableLayout {
   className?: string;
+  rowClass?: string;
+  headerClass?: string;
   style: string;
   width: string;
   columnWidths: string[];
@@ -85,31 +87,44 @@ export function table(
   masked = true,
   geometry: TableGeometry = plainGeometry,
 ): Presentation {
-  const { columns, data, glyphs, rows, notes } = tableData(props, slotColumns, hints, masked, geometry);
+  const { columns: roots, data, glyphs, rows, notes } = tableData(props, slotColumns, hints, masked, geometry);
+  const columns:TableColumn[]=[];
+  const leaves=(column:TableColumn,depth=0)=>{if(depth>16||columns.length>=256)return;if(column.children?.length)column.children.forEach(child=>leaves(child,depth+1));else columns.push(column)};roots.forEach(column=>leaves(column));
   const width = columns.reduce((sum, column) => sum + (/^\d+px$/.test(column.width) ? parseFloat(column.width) : 120), 0);
   const layout = geometry.layout(columns, width, props);
-  const header = columns.map(column => {
-    const content = column.type === 'selection' ? selection : column.type === 'expand' ? '' : escape(column.label) || text;
-    return `<th data-sk-layout data-sk-control style="padding:${layout.headerPadding};text-align:${column.headerAlign ?? column.align ?? 'left'};font-weight:500;border-bottom:1px solid #e4e7ed;color:var(--skeleton-control-color,#606266)">${layout.cellOpen}${content}${layout.cellClose}</th>`;
-  }).join('');
+  const depth=(column:TableColumn,level=0):number=>level>16?1:column.children?.length?1+Math.max(...column.children.map(child=>depth(child,level+1))):1;
+  const levels=Math.max(1,...roots.map(column=>depth(column))),headers:string[][]=Array.from({length:levels},()=>[]);
+  const leafCount=(column:TableColumn,level=0):number=>level>16?1:column.children?.length?column.children.reduce((sum,child)=>sum+leafCount(child,level+1),0):1;
+  const headerCell=(column:TableColumn,level:number)=>{
+    const content=column.type==='selection'?selection:column.type==='expand'?'':column.header||escape(column.label)||text;
+    headers[level].push(`<th data-sk-layout data-sk-control colspan="${leafCount(column)}" rowspan="${column.children?.length?1:levels-level}" style="padding:${layout.headerPadding};text-align:${column.headerAlign??column.align??'left'};font-weight:500;border-bottom:1px solid #e4e7ed;color:var(--skeleton-control-color,#606266)">${layout.cellOpen}${content}${layout.cellClose}</th>`);
+    for(const child of column.children??[])if(level+1<levels)headerCell(child,level+1);
+  };roots.forEach(column=>headerCell(column,0));
+  const header=headers.map(row=>`<tr data-sk-layout>${row.join('')}</tr>`).join('');
   const body = Array.from({ length: rows }, (_, index) => {
     const row = Array.isArray(data) ? data[index] : glyphs?.[index];
-    const cells = columns.map(column => {
+    const cells = columns.map((column,columnIndex) => {
+      const span=props.spanMethod?sourceCall(props.spanMethod,[sourceObject({row:row??UNKNOWN,column:UNKNOWN,rowIndex:index,columnIndex})]):undefined;
+      if(span===UNKNOWN&&!notes.some(note=>note.startsWith('Cell span callback')))notes.push('Cell span callback depends on opaque or response values; only source-proven index recipes can preserve merged cells.');
+      const rowSpan=Array.isArray(span)?span[0]:span&&typeof span==='object'?(span as Record<string,unknown>).rowspan:undefined;
+      const colSpan=Array.isArray(span)?span[1]:span&&typeof span==='object'?(span as Record<string,unknown>).colspan:undefined;
+      if(rowSpan===0||colSpan===0)return'';
+      const spans=`${typeof rowSpan==='number'&&Number.isInteger(rowSpan)&&rowSpan>0?` rowspan="${Math.min(24,rowSpan)}"`:''}${typeof colSpan==='number'&&Number.isInteger(colSpan)&&colSpan>0?` colspan="${Math.min(256,colSpan)}"`:''}`;
       const value = row && typeof row === 'object' && Object.hasOwn(row, column.field) ? (row as Record<string, unknown>)[column.field] : undefined;
       const content = column.type === 'selection' ? masked ? selectionPlaceholder : selection
         : column.type === 'expand' ? masked ? expandPlaceholder : '<span data-sk-layout data-sk-control>›</span>'
         : column.content || (typeof value === 'string' || typeof value === 'number'
           ? `<span data-sk-layout data-sk-text data-sk-measured data-sk-leaf data-sk-text-content="${escape(value)}"></span>` : text);
-      return `<td data-sk-layout style="padding:${layout.cellPadding};text-align:${column.align ?? 'left'};border-bottom:1px solid #eee">${layout.cellOpen}${content}${layout.cellClose}</td>`;
+      return `<td data-sk-layout${spans} style="padding:${layout.cellPadding};text-align:${column.align ?? 'left'};border-bottom:1px solid #eee">${layout.cellOpen}${content}${layout.cellClose}</td>`;
     }).join('');
-    return `<tr data-sk-layout>${cells}</tr>`;
+    return `<tr data-sk-layout${layout.rowClass ? ` class="${escape(layout.rowClass)}"` : ''}>${cells}</tr>`;
   }).join('');
   const colgroup = layout.columnWidths.map(width => `<col data-sk-layout${width ? ` style="width:${width}"` : ''}>`).join('');
   const empty = `<tr data-sk-layout><td data-sk-layout data-sk-control colspan="${columns.length}" style="padding:24px;text-align:center;color:var(--skeleton-control-color,#909399)">No data</td></tr>`;
   return {
     tag: 'div', className: layout.className,
     style: `min-width:0;max-width:100%;overflow-x:auto;${layout.style}${props.height != null ? 'height:' + dimension(props.height, 'auto') + ';' : ''}${props.maxHeight != null ? 'max-height:' + dimension(props.maxHeight, 'none') + ';' : ''}`,
-    children: `<table data-sk-layout data-sk-data-table style="width:${layout.width};min-width:${width}px;border-collapse:collapse;table-layout:fixed"><colgroup data-sk-layout>${colgroup}</colgroup>${props.showHeader === false ? '' : `<thead data-sk-layout><tr data-sk-layout>${header}</tr></thead>`}<tbody data-sk-layout>${body || empty}</tbody></table>`,
+    children: `<table data-sk-layout data-sk-data-table style="width:${layout.width};min-width:${width}px;border-collapse:collapse;table-layout:fixed"><colgroup data-sk-layout>${colgroup}</colgroup>${props.showHeader === false ? '' : `<thead data-sk-layout${layout.headerClass ? ` class="${escape(layout.headerClass)}"` : ''}>${header}</thead>`}<tbody data-sk-layout>${body || empty}</tbody>${props.showSummary===true?`<tfoot data-sk-layout><tr data-sk-layout>${columns.map(()=>`<td data-sk-layout style="padding:${layout.cellPadding}">${layout.cellOpen}${text}${layout.cellClose}</td>`).join('')}</tr></tfoot>`:''}</table>`,
     notes,
   };
 }

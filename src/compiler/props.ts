@@ -16,6 +16,7 @@ export function componentInputs(props: Record<string, Value>, defaults: Record<s
   if (mode === 'setup') props = { ...defaults, ...props, ...camelProps(props) };
   const values: Record<string, Value> = {}, initial: Record<string, Value> = {};
   for (const [key, value] of Object.entries(props)) {
+    if (value === undefined && Object.hasOwn(defaults, key)) { values[key] = defaults[key]; initial[key] = defaults[key]; continue; }
     if (value && typeof value === 'object' && Object.hasOwn(value, SOURCE_INITIAL)) {
       initial[key] = (value as { [SOURCE_INITIAL]: Value })[SOURCE_INITIAL];
       values[key] = Object.keys(value).length ? Object.fromEntries(Object.entries(value)) : UNKNOWN;

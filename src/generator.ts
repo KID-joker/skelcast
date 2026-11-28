@@ -62,6 +62,7 @@ export async function projectFromConfig(root: string, input: SkeletonConfig): Pr
     ids.add(target.id);
     if (!target.source || typeof target.source !== 'string') throw new Error(`Missing source: ${target.id}`);
     if (target.region && !/^[A-Za-z_$][\w$]*$/.test(target.region)) throw new Error(`Invalid source region: ${target.region}`);
+    if (target.contexts && (!target.source.endsWith('.vue') || !target.region || Object.keys(target.contexts).length > 64 || Object.entries(target.contexts).some(([key, value]) => !/^[a-zA-Z0-9_-]+$/.test(key) || !value || typeof value.source !== 'string' || !value.source.endsWith('.vue')))) throw new Error(`Invalid finite source contexts: ${target.id}`);
     if (target.route && !(typeof target.route === 'string' || Array.isArray(target.route) && target.route.every(r => typeof r === 'string'))) throw new Error(`Invalid route: ${target.id}`);
     if (target.kind && !['page', 'request'].includes(target.kind)) throw new Error(`Invalid kind: ${target.id}`);
     if (target.render && !['light', 'shadow'].includes(target.render)) throw new Error(`Invalid render mode: ${target.id}`);

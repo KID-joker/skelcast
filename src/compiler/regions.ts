@@ -16,10 +16,10 @@ export class VueRegion {
  private suspended=0;
  // Template syntax is immutable; dynamic tag copies can reuse cached children.
  private containment=new WeakMap<TemplateChildNode,boolean>();
- constructor(readonly file:string,readonly node:ElementNode){}
+ constructor(readonly file:string,readonly node:ElementNode,readonly entry?:{file:string;node:ElementNode}){}
  private contains(node:TemplateChildNode):boolean{
   const cached=this.containment.get(node);if(cached!==undefined)return cached;
-  const contains=node===this.node||node.type===1&&node.children.some(child=>this.contains(child));
+  const contains=node===this.node||node===this.entry?.node||node.type===1&&node.children.some(child=>this.contains(child));
   this.containment.set(node,contains);return contains;
  }
  carries(slot:SourceSlot,seen=new Set<SourceSlot>()):boolean{
@@ -31,6 +31,7 @@ export class VueRegion {
   if(this.suspended)return;
   if(this.result!==undefined)return'skip';
   if(ctx.module.file===this.file)return node===this.node?'target':this.contains(node)?'ancestor':'skip';
+  if(ctx.module.file===this.entry?.file)return this.contains(node)?'ancestor':'skip';
   return Object.values(ctx.slots??{}).some(slot=>this.carries(slot))?'ancestor':'skip';
  }
  async capture(render:()=>Promise<string>){

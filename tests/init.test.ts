@@ -403,7 +403,7 @@ test('source discovery parses plain TypeScript assertions separately from TSX an
   });
 });
 
-test('init keeps its CSS inclusion policy while compilation retains entry import cascade order', async () => {
+test('init includes preprocessed entry styles while compilation retains entry import cascade order', async () => {
   await fixture({
     'index.html': '<script type="module" src="/src/main.tsx"></script>',
     'src/main.tsx': `import './z.css';import './a.css';import './query.css?theme';import './base.scss';import App from './App';`,
@@ -416,7 +416,7 @@ test('init keeps its CSS inclusion policy while compilation retains entry import
   }, async root => {
     const report = await initProject(root);
     assert.equal(report.targets.length, 1);
-    assert.deepEqual(report.targets[0].styles, ['src/a.css', 'src/page.css', 'src/z.css']);
+    assert.deepEqual(report.targets[0].styles, ['src/a.css', 'src/base.scss', 'src/page.css', 'src/query.css', 'src/z.css']);
     const artifact = await readArtifact(await loadProject(root), report.targets[0].id);
     const positions = [10, 20, 30, 40, 50].map(height => artifact.variants.default.css.search(new RegExp(`height:\\s*${height}px`)));
     assert.ok(positions.every(position => position >= 0), 'all entry styles and page styles remain included');
@@ -424,4 +424,8 @@ test('init keeps its CSS inclusion policy while compilation retains entry import
     assert.deepEqual(artifact.diagnostics, []);
     assert.equal((await initProject(root)).changes.length, 0);
   });
+});
+
+test('compact default object exports retain a token boundary when init wraps Vite',async()=>{
+ await fixture({'package.json':'{"dependencies":{"vue":"^3","vite":"^6","skelcast":"*"}}','vite.config.ts':"import vue from'@vitejs/plugin-vue';export default{plugins:[vue()]}",'src/App.vue':'<template><main>Data</main></template>'},async root=>{const result=await initProject(root,{dryRun:true});assert.match(result.changes.find(c=>c.file==='vite.config.ts')!.after,/export default\s+__withSkelCast\(/)});
 });

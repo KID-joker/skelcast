@@ -68,9 +68,23 @@ The dry-run JSON includes targets, diagnostics, and the before/after content of 
 | Data and pending from the same query declaration, followed by a data list | Connect that list to the existing pending state |
 | JSX `loading={flag}`, Vue `v-loading` and `:loading` | Connect explicit loading regions, excluding small controls such as buttons |
 | Vue `v-if/v-else` loading branches | Preserve content guards; support script setup and regular Options API registration |
-| Simple tsconfig/jsconfig paths, static Vite aliases, entry-point CSS | Include layout dependencies in generation |
+| Returned Vue composable operation awaits its API input and assigns an exposed reactive array | Add scoped pending state with concurrency-safe `try/finally`, then connect source-proved data consumers |
+| Simple tsconfig/jsconfig paths, static Vite aliases, entry-point stylesheets | Include CSS, Sass and other supported layout dependencies in generation |
 
 `withSkelCast()` wraps an existing Vite default export while preserving its plugins, server settings, and synchronous or asynchronous configuration factory. A generated target's `region` refers to the artifact import binding in the original source file; no duplicate page component is required.
+
+New page boundaries without a proven pending relationship start in preview-only mode (`pending=false`) and report `PAGE_PREVIEW_ONLY`. Request instrumentation requires one unambiguous returned async operation and an exposed collection; explicit return types and ambiguous ownership are left for manual integration. No global request interceptor is added.
+
+Init resolves immutable Vite root aliases, including `process.cwd()`, from syntax. For explicit ESM TypeScript configurations with legacy Node/Classic resolution, it updates resolution to `Bundler`, retaining comments. `withSkelCast` preserves the caller's Vite configuration types across supported Vite versions.
+
+Reusable Vue request components receive finite `data-sk-context` identifiers at
+source call sites. Init records each caller under the request target's `contexts`
+and connects the inner boundary's `context` prop. The compiler traverses the caller
+and extracts only the selected request region, retaining props and scoped slots.
+Runtime selects a precompiled context/state view; it never reads response data to
+invent markup. Repeated calls inside loops and dynamic component identities remain
+explicit diagnostics. Manual contexts use `{ contexts: { key: { source: 'Page.vue' } } }`
+and a matching `data-sk-context="key"` on that source call.
 
 Repeated runs preserve existing boundaries and scan their components for newly added loading regions. Already managed guards and loading attributes are not wrapped again; new regions receive separate targets while existing IDs, hints and manual boundaries remain intact. Adapter import aliases and Vue Options API boundary registrations are reused. New targets are appended to existing static configuration while retaining manual targets and comments. Originals are saved under `.skelcast/init-backups/`; the change list and diagnostics are written to `.skelcast/init-report.json`. A generation failure rolls back this run's source, configuration, and artifact changes.
 
@@ -209,18 +223,21 @@ fields receive placeholders. Table headers remain readable and wide tables scrol
 inside their container. A control-only target can legitimately have zero data
 placeholders; `quality` reports `preservedNodes` separately.
 Known arrays determine table row count (up to 24); unknown arrays default to four
-rows. Use `hints.repeat` to request a finite loading capacity, including for an initially empty
+rows. A source-proved adjacent Element Plus pagination component can supply its
+initial page size when its state belongs to the same composable as the table data. Use `hints.repeat` to request a finite loading capacity, including for an initially empty
 array. Table bodies simplify action buttons, selection and expand controls into
 placeholder shapes while retaining cell layout, column proportions and row capacity.
-Source-visible cell text still reserves its wrapping space. SVG and Canvas retain
+Source-visible cell text still reserves its wrapping space. Finite local JSX components, Vue JSX slot objects and source-origin render props retain their presentation structure. Read-only field/key helpers use bounded syntax interpretation; unresolved table data-slot calls use text geometry and retain `PRESET_LIMIT`. No application helper is invoked. SVG and Canvas retain
 their native viewport, CSS dimensions and aspect ratio as a single placeholder;
 paths, chart labels and canvas fallback details are not expanded. Use
 `data-sk-preserve` to retain a specific region's existing presentation policy.
 React `map` and Vue `v-for` use the same rule: known arrays keep their length up to
-24, known empty arrays stay empty, and unknown collections default to four items.
+256 for finite source presentation lists, known empty arrays stay empty, and unknown collections default to four items. Larger finite lists report `COLLECTION_LIMIT` instead of silently claiming complete output. Unknown loading capacity and table bodies remain bounded separately at 24.
 An explicit `hints.repeat` overrides those counts.
 Set `--skeleton-control-color` and `--skeleton-control-background` to match preserved
 controls to the application's light/dark theme.
+
+Vue layouts can project finite initial collection recipes and slot bookkeeping, including source-declared defaults, `provide`/`inject`, immediate watchers and collapsed visibility. Source-proven resize comparisons become CSS media rules. Interpretation is bounded and cannot mutate input collections, access the DOM, or execute event handlers; unsupported effects retain layout diagnostics.
 
 Request loading views can project a source collection template when static writes
 prove that the collection and its count come from the same response scope. Simple
@@ -529,6 +546,12 @@ pnpm exec skelcast audit --url http://localhost:5173/products \
   --id products.list --viewports 1440x900,390x844 --out .skelcast-audit
 ```
 
+Reusable request instances are audited against their own context variants; the
+toolbar lists state names instead of another caller's layouts. To validate empty,
+error or permission states, drive the real application into each declared state
+and call `auditBoundaryLayout` there. A CLI audit enumerates declared variants but
+does not change application business state or simulate permissions.
+
 The command reloads the URL at each viewport, waits for mounted boundaries, loading state, fonts and non-lazy images, and checks every variant of the selected region. Omit `--id` to check all regions mounted on that route. It writes `report.json`, real/skeleton PNGs and an `index.html` report with opacity sliders for screenshot overlays; a geometry mismatch or measurement error exits nonzero. It does not calculate a pixel-similarity score. Inspect screenshots when anchors do not cover the important layout. The browser-only API accepts an optional asynchronous `capture(phase)` callback (`content` or `skeleton`) for custom screenshot workflows and restores preview even if capture fails.
 
 For an authenticated project, supply an existing Playwright state file with `--storage-state path/to/state.json`. The audit does not perform login. Storage state includes cookies/local storage, not session storage; applications using session-only sign-in need their own authenticated acceptance fixture. Keep reports and authentication state in your project's intended local/test output directories.
@@ -555,10 +578,30 @@ Add the virtual module declaration to your project's `env.d.ts`:
 
 The development plugin injects the preview toolbar and consumes existing artifacts. Source edits mark artifacts out of date. The CLI, your coding agent, or **Update skeletons** performs deterministic regeneration. Production builds require current artifacts and exclude the toolbar, development endpoints, and URL preview controls.
 
+Portable inspection artifacts embed local image/font bytes. Production builds emit shared image/font assets once and reference them from artifact JavaScript and initial HTML, including relative-base deployments. This avoids repeating large base64 literals across page chunks.
+
 Transient generation locks and staging journals are excluded from Vite's watcher,
 including under custom output directories. Reading development state does not
 invalidate artifacts or reload the application. Existing user watcher exclusions
 are preserved.
+
+Element Plus presets also retain finite tree hierarchy/expansion, upload triggers
+and declared file slots, alerts, watermark containers, active tab bodies, grouped
+table headers, finite index-based cell spans, and native description-table sizing.
+The `vuedraggable` preset preserves initial source list order and scoped item slots;
+it does not run Sortable callbacks. All presets require confirmed package identity.
+
+Source-proven custom directives are classified from imports and local plugin
+registrations. Event callbacks are not run. Finite initial style writes are kept;
+opaque DOM effects remain diagnostics. Visibility-changing directives can use
+explicit presentation variants with bindings such as
+`{ 'Component.vue::v-permission.visible': false }`. This describes the declared
+view, not the current user's permissions. Do not infer roles or credentials.
+
+Static Vite `define` data can project local JSON inputs and exported config object
+syntax, including `JSON.stringify` data definitions. Config factories, serializer
+hooks, clocks, environment loaders and application modules are never executed;
+unknown parts remain opaque. Imported JSON is parsed as data and fingerprinted.
 
 ### Connect real loading state
 

@@ -161,5 +161,6 @@ export async function renderVueExpression(this: RenderHost, node: Ast | null | u
     return renderJSXNode.call(this, node, ctx);
   }
   if (node.type === 'ConditionalExpression' || node.type === 'LogicalExpression' || node.type === 'ArrayExpression') return renderBranch.call(this, node, ctx, 'render');
+  if(node.type==='CallExpression'&&node.callee.type==='MemberExpression'&&nodeName(node.callee.property)==='map')return renderJSXNode.call(this,node,ctx);
   return renderCall.call(this, node, ctx, 'render');
 }

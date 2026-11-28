@@ -1,6 +1,8 @@
 import type { Diagnostic } from '../types.js';
+import {sourceCondition} from './conditions.js';
+import {directiveEffects} from './directives.js';
 import { renderComponent } from './component-render.js';
-import { UNKNOWN,SOURCE_INITIAL, bindPattern, evaluateString, parseSourceExpression, sourceCapacity, type Ast, type Value } from './expression.js';
+import { UNKNOWN,SOURCE_NORMALIZED,SOURCE_INITIAL, bindPattern, evaluateString, parseSourceExpression, sourceCapacity, type Ast, type Value } from './expression.js';
 import { nonVisual, unknownGeometry, styleString } from './html.js';
 import { type RenderContext, type SourceSlot } from './context.js';
 import type { RenderHost } from './render-host.js';
@@ -11,7 +13,7 @@ import{initialString}from'./initial-state.js';
 import { planCollection } from './collections.js';
 import { renderBudget } from './render-budget.js';
 import { renderGraphic } from './output.js';
-import { templateSlots, slotName, slotParameter } from './vue-slots.js';
+import { expandedTemplateSlots, slotName, slotParameter } from './vue-slots.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -84,7 +86,9 @@ export async function renderVueNodes(this: RenderHost, nodes: VueNode[], ctx: Re
         if (condition.name === 'if') { inChain = true; selected = false; }
         if (selected && inChain) continue;
         const expr = expression(condition.exp) ?? 'true';
-        let result = evaluateString(expr, ctx);
+        const conditionValue=sourceCondition(parseSourceExpression(expr,ctx),{...ctx,code:expr});
+        let result=conditionValue.value;
+        if(conditionValue.projected)this.diagnose('LOADING_PROJECTION','Use a normalized initial layout collection guard; live mutations remain unknown',ctx,node);
         const exclusive=ctx.loading&&!ctx.control?exclusiveChoice(expr,ctx):undefined;
         if(exclusive){
           if(result===true||result===UNKNOWN&&!choices.has(exclusive.key))choices.set(exclusive.key,exclusive.value);
@@ -124,7 +128,7 @@ export async function renderVueNode(this: RenderHost, source: VueNode, ctx: Rend
     const binding=node.props.find((p):p is DirectiveNode=>p.type===7&&p.name==='bind'&&p.arg?.type===4&&p.arg.content==='pending');
     const value=expression(binding?.exp);
     const content=boundaryContentContext(ctx,value,this.hints.state,!!ctx.loading);
-    return this.captureVueRegion(()=>this.vueNodes(node.children,content));
+    return this.captureVueRegion(()=>this.vueNodes(node.children,content),ctx);
   }
   if(selection==='ancestor'&&node.tagType!==1&&node.tag!=='slot'){
     const policy=Object.fromEntries(node.props.flatMap(p=>p.type===6&&['data-sk-preserve','data-sk-mask'].includes(p.name)?[[p.name,p.value?.content??true]]:[]));
@@ -145,7 +149,11 @@ async function renderVueLoop(this: RenderHost, node: ElementNode, loop: Directiv
     patterns = callback.params;
     if (!patterns.length || patterns.length > 3) throw new Error('Unsupported aliases');
   } catch { return this.fallback(ctx, node, 'Unsupported v-for aliases'); }
-  const list = evaluateString(match[2], ctx);
+  let list = evaluateString(match[2], ctx);
+  if (list === UNKNOWN || ctx.loading) {
+    const initial = initialString(match[2], ctx);
+    if (Array.isArray(initial) && (list===UNKNOWN || Object.hasOwn(initial,SOURCE_NORMALIZED))) { list = initial; this.diagnose('LOADING_PROJECTION', 'Use source-proven initial collection layout; later mutations and callback effects remain unknown', ctx, node); }
+  }
   const bound=sourceCapacity(list);
   const array = Array.isArray(list) ? list : undefined;
   const object = !array && bound == null && list && list !== UNKNOWN && typeof list === 'object' ? list as Record<string, Value> : undefined;
@@ -205,10 +213,14 @@ function evaluateVueProps(this: RenderHost, node: ElementNode, ctx: RenderContex
     else if (p.name === 'bind' && p.arg?.type === 4 && p.arg.isStatic) {
       const key = p.arg.content;
       let value = evaluateString(expression(p.exp) ?? key, ctx);
+      if (key === 'style') {
+        const responsive = this.viewportStyle(expression(p.exp) ?? key, ctx, node);
+        if (responsive) { assign(p, 'class', responsive.className); value = {}; }
+      }
       let projected = false;
-      if(value===UNKNOWN&&ctx.loading&&node.tagType===1&&!['class','style'].includes(key)){
+      if(value===UNKNOWN&&node.tagType===1&&!['class','style'].includes(key)){
         const initial=initialString(expression(p.exp)??key,ctx);
-        if(initial!==UNKNOWN){projected=true;value={[SOURCE_INITIAL]:initial};diagnose('LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
+        if(initial!==UNKNOWN&&(ctx.loading||Array.isArray(initial))){projected=true;value={[SOURCE_INITIAL]:initial};diagnose('LOADING_PROJECTION','Use a source-declared initial component layout; runtime changes remain unknown');}
       }
       if (value === UNKNOWN && ['class', 'style', 'width', 'height'].includes(key)) {
         value = evaluateString(expression(p.exp) ?? key, { ...ctx, defaultBranches: true });
@@ -219,7 +231,9 @@ function evaluateVueProps(this: RenderHost, node: ElementNode, ctx: RenderContex
     } else if (p.name === 'model') {
       if (!p.arg || p.arg.type === 4 && p.arg.isStatic) assign(p, p.arg?.content ?? 'modelValue', evaluateString(expression(p.exp) ?? '', ctx));
     } else if (p.name === 'show') {
-      const show = evaluateString(expression(p.exp) ?? '', ctx);
+      const responsive = this.viewportStyle(`({display:(${expression(p.exp) ?? 'true'})?'':'none'})`, ctx, node);
+      if (responsive) { assign(p,'class',responsive.className); continue; }
+      const condition=expression(p.exp)??'';const show = sourceCondition(parseSourceExpression(condition,ctx),{...ctx,code:condition}).value;
       const { projected } = loadingBranch(expression(p.exp) ?? '', ctx, (_root, present) => !present);
       if (projected) return '';
       if (show !== UNKNOWN && !show) return '';
@@ -229,7 +243,7 @@ function evaluateVueProps(this: RenderHost, node: ElementNode, ctx: RenderContex
       if (typeof value !== 'string' || value.length > 32768) return this.fallback(ctx, node, 'Dynamic v-html content needs an adapter', props);
       htmlContent = value;
     }
-    else if (!['if', 'else', 'else-if', 'for', 'on', 'slot', 'model', 'once', 'memo', 'bind'].includes(p.name)) diagnose('DIRECTIVE_UNKNOWN', `Custom directive v-${p.name} may affect layout`);
+
   }
   return { props, values, notes, unknownLayout, htmlContent, textContent, textValue };
 }
@@ -245,6 +259,14 @@ async function renderVueElement(
   let node = source;
   let { props, values, unknownLayout } = attributes;
   const { notes, htmlContent, textContent, textValue } = attributes;
+  for(const directive of source.props) if(directive.type===7&&!['if','else','else-if','for','on','slot','model','once','memo','bind','show','text','html','pre','cloak'].includes(directive.name)) {
+    const definition=await this.directiveSource(directive.name,ctx.module);
+    const effects=definition?.fn?directiveEffects(definition.module,definition.fn,ctx,evaluateString(expression(directive.exp)??'',ctx)):undefined;
+    const key=`v-${directive.name}.visible`,visibility=ctx.bindings[key];
+    if(effects?.visibility&&typeof visibility==='boolean'){this.record('branch',key,'Use an explicitly declared directive visibility state; no permission store runs',ctx,source);if(!visibility)return'';continue;}
+    if(!effects||effects.unknown||effects.visibility){const note=this.diagnose(effects?.visibility?'DIRECTIVE_VISIBILITY_UNKNOWN':'DIRECTIVE_UNKNOWN',`Custom directive v-${directive.name} ${effects?.visibility?'changes visibility; declare finite v-'+directive.name+'.visible variants':'has unresolved initial layout effects'}`,ctx,source);if(source.tag==='component'&&typeof props.is==='string')note.component=props.is;}
+    else {if(Object.keys(effects.style).length)props.style=`${styleString(props.style)};${styleString(effects.style)}`;this.record('style',`v-${directive.name}`,effects.eventOnly?'Source-proven event-only directive does not alter initial layout':'Apply source-proven initial directive styles without running hooks or event handlers',ctx,source);}
+  }
   const fallthrough = ctx.fallthrough;
   let tag = node.tag;
   for (;;) {
@@ -274,6 +296,8 @@ async function renderVueElement(
       return ctx.slots?.[name] ? this.renderSlot(ctx.slots[name], ctx,argument,projected?initial:UNKNOWN) : node.children.length ? this.vueNodes(node.children, ctx) : '';
     }
     if (tag === 'component') {
+      const sourceRender = await this.sourceFunction(props.is, props, ctx, node);
+      if (sourceRender !== undefined) return sourceRender;
       if (typeof props.is !== 'string' || !/^[a-zA-Z][\w-]*$/.test(props.is)) return this.fallback(ctx, node, 'Dynamic component requires a finite adapter', props);
       this.record('component', expression(node.props.find((p): p is DirectiveNode => p.type === 7 && p.arg?.type === 4 && p.arg.content === 'is')?.exp) ?? 'is', `Select static component ${props.is}`, ctx, node);
       tag = props.is;
@@ -298,9 +322,9 @@ async function renderVueElement(
   if (imported?.file || this.target.adapters?.[tag]) {
     const slots: Record<string, SourceSlot> = {};
     const defaults: VueNode[] = [];
-    for (const { node: child, slot } of templateSlots(node.children)) {
+    for (const { node: child, slot, context } of expandedTemplateSlots(this,node.children,ctx)) {
       if (slot && child.type === 1){
-        const name=slotName(this,slot,ctx,child);if(name!==undefined)slots[name] = { nodes: child.children, context: ctx, framework: 'vue',parameter:slotParameter(this,slot,ctx,child) };
+        const name=slotName(this,slot,context,child);if(name!==undefined)slots[name] = { nodes: child.children, context, framework: 'vue',parameter:slotParameter(this,slot,context,child) };
       }
       else defaults.push(child);
     }
@@ -314,7 +338,7 @@ async function renderVueElement(
     if (presentation !== undefined) return presentation;
   }
   if (node.tagType === 1) return this.fallback(ctx, node, `No source adapter for ${tag}`, props);
-  if (nonVisual.has(tag)) return '';
+  if (nonVisual.has(tag)&&tag!=='iframe') return '';
   if (tag === 'img') return this.image(props, ctx, node);
   const graphic = renderGraphic(this, tag, props, ctx, node);
   if (graphic !== undefined) return graphic;

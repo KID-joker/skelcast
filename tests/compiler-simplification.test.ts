@@ -127,7 +127,7 @@ test('Vue collection limits avoid reading unused array/object values and retain 
       const ctx = { code: '', env: { items }, bindings: {}, expressions: new Map(),
         module: { imports: new Map(), ast: parseSource('') }, scopes: [], depth: 1 } as unknown as RenderContext;
       await renderVueNode.call(host, node, ctx);
-      assert.equal(rendered.length, repeat ?? 24);
+      assert.equal(rendered.length, repeat ?? 256);
       assert.equal(reads, rendered.length);
       for (let i = 0; i < rendered.length; i++) {
         assert.equal(rendered[i].item, i === 0 ? null : i === 1 ? undefined : i);

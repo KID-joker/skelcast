@@ -308,7 +308,7 @@ test('saved bindings replace and clear the effective shared bindings while omitt
 });
 
 test('React and Vue agree on empty, known, unknown and explicitly predicted list lengths', async () => {
-  for (const [list, expected] of [['[]', 0], ['[1,2]', 2], [`[${Array.from({ length: 30 }, (_, i) => i).join(',')}]`, 24], ['fetchItems()', 4]] as const) {
+  for (const [list, expected] of [['[]', 0], ['[1,2]', 2], [`[${Array.from({ length: 30 }, (_, i) => i).join(',')}]`, 30], ['fetchItems()', 4]] as const) {
     await fixture({
       'View.tsx': `const items=${list};export default function View(){return <ul>{items.map(item=><li>{item}</li>)}</ul>}`,
       'View.vue': `<script setup>const items=${list}</script><template><ul><li v-for="item in items">{{item}}</li></ul></template>`,

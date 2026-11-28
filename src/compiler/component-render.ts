@@ -4,6 +4,8 @@ import type { SourceNode, SourceSlot } from './context.js';
 import type { Value } from './expression.js';
 import type { ComponentReference } from './presets/types.js';
 import type { RenderHost } from './render-host.js';
+import { isRenderFunction } from './ast.js';
+import { supportedBody, visualSyntax } from './vue-syntax.js';
 
 /** Keep frontend policies together: JSX/templates accept explicit adapters;
  * h() retains its source/preset path. Vue callers resolve references for slots. */
@@ -15,15 +17,19 @@ export async function renderComponent(host: RenderHost, tag: string, props: Reco
     await host.scan(file);
     return host.component(file, 'default', props, ctx, node);
   }
-  if (slot.framework === 'jsx') reference = await host.componentReference(tag, ctx);
+  reference ??= await host.componentReference(tag, ctx);
   if (reference?.file && (slot.framework === 'render' || /\.(vue|tsx|jsx|ts|js)$/.test(reference.file))) {
     return host.component(reference.file, reference.exported, props, ctx, node);
   }
-  if (slot.framework === 'jsx' && ctx.module.functions.has(tag)) {
+  if (ctx.module.functions.has(tag)) {
+    const fn = ctx.module.functions.get(tag);
+    if (!isRenderFunction(fn) || fn.async || fn.generator || !supportedBody(fn.body)) return;
+    const visual = visualSyntax(ctx.module, fn.body);
+    if (!visual.jsx && !visual.h) return;
     const local = { ...ctx, env: { ...ctx.env }, depth: ctx.depth + 1 };
     if (local.depth > 16) return host.fallback(ctx, node, 'Component recursion limit reached');
-    const body = host.prepareFunction(ctx.module.functions.get(tag), local, props);
-    return body ? host.jsx(body, local) : host.fallback(ctx, node, `Cannot expand ${tag}`);
+    const body = host.prepareFunction(fn, local, props);
+    return body ? host.vueExpression(body, local) : host.fallback(ctx, node, `Cannot expand ${tag}`);
   }
   if (slot.framework === 'vue' && componentName(tag) === 'routerlink') {
     return host.element('a', props, await host.vueNodes(slot.nodes, ctx), ctx, node);

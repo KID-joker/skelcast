@@ -4,9 +4,11 @@ export interface TableColumn {
   width: string;
   fixed?: boolean;
   content?: string;
+  header?: string;
   type?: string;
   align?: string;
   headerAlign?: string;
+  children?: TableColumn[];
 }
 
 /** Keep column data structured. References follow the rendered children, so

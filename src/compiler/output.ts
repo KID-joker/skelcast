@@ -15,6 +15,7 @@ const layoutAttribute = (name: string) => name === 'id' || name === 'data-sk-anc
 /** Keep the native viewport, CSS sizing and SVG aspect ratio without expanding
  * chart paths, ticks, labels or canvas fallback content. */
 export function renderGraphic(host: RenderHost, tag: string, props: Record<string, Value>, ctx: RenderContext, node: SourceNode | undefined): string | undefined {
+  if(tag==='iframe'){host.diagnose('FALLBACK','Embedded document contents remain opaque; preserve the native frame geometry without loading its URL',ctx,node);return host.element('iframe',{...props,src:undefined,srcdoc:undefined,srcDoc:undefined},'',ctx,node,{leaf:host.masked(ctx),opaque:true});}
   if (!['svg', 'canvas'].includes(tag) || !host.masked(ctx)) return;
   host.record('component', tag, 'Keep graphic viewport and proportions; simplify internal detail to one placeholder', ctx, node);
   return host.element(tag, props, '', ctx, node, { leaf: true });

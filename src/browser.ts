@@ -218,8 +218,10 @@ export async function auditBoundaryLayout(element: HTMLElement, options: LayoutT
   if (boundary.pending) throw new Error('Wait for real loading to finish before checking layout');
   const artifact = currentArtifact(boundary.artifact);
   const original = getPreview();
-  const variant = options.variant ?? (original.target === boundary.id || original.target === 'page' && boundary.kind === 'page' ? original.variant : undefined) ?? boundary.variant ?? artifact.defaultVariant;
+  let variant = options.variant ?? (original.target === boundary.id || original.target === 'page' && boundary.kind === 'page' ? original.variant : undefined) ?? boundary.variant ?? artifact.defaultVariant;
   if (!Object.hasOwn(artifact.variants, variant)) throw new Error(`Unknown variant: ${variant}`);
+  const selected = boundary.context && artifact.contexts?.[boundary.context]?.[variant];
+  if (selected) variant = selected;
   const ids=artifact.variants[variant].sourceIds,sourceIds=ids?new Set(ids):undefined;
   const window = element.ownerDocument.defaultView!;
   const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -232,7 +234,7 @@ export async function auditBoundaryLayout(element: HTMLElement, options: LayoutT
   };
   const ensureStable = () => {
     const current = listBoundaries().find(item => item.element === element);
-    if (!element.isConnected || !current || current.pending || current.id !== boundary.id || current.variant !== boundary.variant) throw new Error('Loading region changed during layout check; retry when ready');
+    if (!element.isConnected || !current || current.pending || current.id !== boundary.id || current.variant !== boundary.variant || current.context !== boundary.context) throw new Error('Loading region changed during layout check; retry when ready');
     const latest = currentArtifact(current.artifact), view = latest.variants[variant], previous = artifact.variants[variant];
     // Metadata-only dev refreshes can replace the object without changing the
     // rendered layout. Abort only when presentation or region state changes.

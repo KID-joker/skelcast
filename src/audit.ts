@@ -86,7 +86,10 @@ export async function auditProject(options: AuditOptions): Promise<AuditReport> 
       for (const artifact of artifacts) {
         const boundaries = page.locator(`[data-sk-boundary=${JSON.stringify(artifact.id)}]`);
         const count = await boundaries.count();
-        for (let instance = 0; instance < count; instance++) for (const variant of Object.keys(artifact.variants)) {
+        for (let instance = 0; instance < count; instance++) {
+        const context=await boundaries.nth(instance).getAttribute('data-sk-source-context');
+        const variants=context&&artifact.contexts?.[context]?Object.values(artifact.contexts[context]):Object.keys(artifact.variants);
+        for (const variant of variants) {
           const entry: AuditCase = { id: artifact.id, variant, instance, viewport };
           result.cases.push(entry);
           const prefix = `case-${result.cases.length}`;
@@ -106,6 +109,7 @@ export async function auditProject(options: AuditOptions): Promise<AuditReport> 
             entry.screenshots = screenshots;
           } catch (error) { entry.error = error instanceof Error ? error.message : String(error); }
           finally { capture = undefined; }
+        }
         }
       }
     }

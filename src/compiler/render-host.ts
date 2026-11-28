@@ -1,7 +1,7 @@
 import type { TemplateChildNode as VueNode } from '@vue/compiler-dom';
 import type { Diagnostic, Evidence, SkeletonHints, SkeletonTarget } from '../types.js';
 import type { Ast, Value } from './expression.js';
-import type { RenderContext, SourceSlot, SourceNode } from './context.js';
+import type { RenderContext, SourceSlot, SourceNode, ModuleInfo, ResolvedComponent } from './context.js';
 import type { CompilerOptions } from './modules.js';
 import type { ComponentReference } from './presets/types.js';
 
@@ -21,8 +21,11 @@ export interface RenderHost {
   text(ctx: RenderContext, node: SourceNode | undefined, multiline?: boolean): string;
   masked(ctx: RenderContext): boolean;
   contentText(value: unknown, ctx: RenderContext, node: SourceNode | undefined): string;
+  directiveSource(name:string,mod:ModuleInfo):Promise<ResolvedComponent|undefined>;
   contentContext(ctx: RenderContext, props: Record<string, Value>, tag?: string): RenderContext;
   attributes(props: Record<string, Value>): string;
+  viewportStyle(expression: string, ctx: RenderContext, node: SourceNode): { className: string; style: string } | undefined;
+  sourceFunction(value: Value, props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string | undefined>;
   element(tag: string, props: Record<string, Value>, children: string, ctx: RenderContext, node: SourceNode | undefined, markers?: ElementMarkers): string;
   staticHTML(source: string, ctx: RenderContext, origin: SourceNode): string;
   image(props: Record<string, Value>, ctx: RenderContext, node: SourceNode): Promise<string>;
@@ -33,7 +36,7 @@ export interface RenderHost {
   vueNodes(nodes: VueNode[], ctx: RenderContext): Promise<string>;
   renderSlot(slot: SourceSlot, ctx: RenderContext, argument?:Value,initial?:Value): Promise<string>;
   selectVueNode(node:VueNode,ctx:RenderContext):'skip'|'ancestor'|'target'|undefined;
-  captureVueRegion(render:()=>Promise<string>):Promise<string>;
+  captureVueRegion(render:()=>Promise<string>,ctx?:RenderContext):Promise<string>;
   hasSelectedSlot(slot:SourceSlot):boolean;
   scan(file: string): Promise<void>;
   component(file: string, exported: string, props?: Record<string, Value>, parent?: RenderContext, node?: SourceNode): Promise<string>;

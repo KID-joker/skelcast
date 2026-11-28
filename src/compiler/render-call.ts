@@ -1,6 +1,6 @@
 import type * as t from '@babel/types';
 import { isRenderFunction, nodeName } from './ast.js';
-import { UNKNOWN, evaluate, expressionText, type Ast } from './expression.js';
+import { UNKNOWN, SOURCE_RENDER_FILE, evaluate, expressionText, type Ast } from './expression.js';
 import { slotValue, type RenderContext, type SourceSlot } from './context.js';
 import { nonVisual, unknownGeometry } from './html.js';
 import type { RenderHost } from './render-host.js';
@@ -14,6 +14,7 @@ import { renderGraphic } from './output.js';
 async function renderLocalCall(this:RenderHost,node:t.CallExpression,ctx:RenderContext,value:unknown):Promise<string|undefined>{
   const fn = localRenderFunction(value);
   if(!fn)return;
+  if (value && typeof value === 'object' && Object.hasOwn(value,SOURCE_RENDER_FILE) && (value as {[SOURCE_RENDER_FILE]:string})[SOURCE_RENDER_FILE]!==ctx.module.file) return this.sourceFunction(value, node.arguments[0] ? evaluate(node.arguments[0],ctx) as Record<string,unknown> : {}, ctx, node);
   if(ctx.depth>16||node.arguments.some(a=>a.type==='SpreadElement'))return this.fallback(ctx,node,'Local source render recursion or arguments exceed the finite limit');
   const { local, body } = prepareLocalRenderCall(this, fn, node, ctx);
   return body?.type==='CallExpression'&&vueHelper(ctx.module,body.callee,'h')?this.vueExpression(body,local):this.jsx(body,local);
@@ -28,6 +29,10 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
   }
   const slot = await renderSlotCall(this, node, ctx, calleeValue);
   if (slot !== undefined) return slot;
+  if (ctx.dataSlot && !vueHelper(ctx.module, node.callee, 'h')) {
+    this.diagnose('PRESET_LIMIT', 'Unresolved table data-slot call uses a text placeholder; custom return geometry remains unknown', ctx, node);
+    return this.contentText(evaluate(node, ctx), ctx, node);
+  }
   if (node.type === 'OptionalCallExpression') return framework === 'render'
     ? calleeValue == null && node.optional ? '' : this.fallback(ctx, node, 'Unresolved optional render call needs a finite binding')
     : this.fallback(ctx, node, `Unknown render call: ${expressionText(node.callee, ctx)}`);
@@ -83,7 +88,7 @@ export async function renderCall(this: RenderHost, node: t.CallExpression | t.Op
     if (presentation !== undefined) return presentation;
     return this.fallback(local, node, `No source adapter for ${tag}`, props);
   }
-  if (nonVisual.has(tag)) return '';
+  if (nonVisual.has(tag)&&tag!=='iframe') return '';
   if (tag === 'img') return this.image(props, local, node);
   const graphic = renderGraphic(this, tag, props, local, node);
   if (graphic !== undefined) return graphic;

@@ -1,15 +1,16 @@
 {
-  "version": "0.1.0-9bfbbf6ed448",
+  "version": "0.1.0-6c7a363e0e5a",
   "targets": {
     "products.page": {
       "hash": "2871b470ea7c892c5270377067a4c12e12714b5256a656b0ccd1c857818e4cbf",
-      "outputHash": "27cadcbabd029f12750db97c633c5bbf921243e9229a6fb3ba6ed5c9ed5736f7",
+      "outputHash": "9a437f1c5dfdcb195c8677d0e4dc241e92b0363bd211b01f3b258c2ab7761e66",
       "dependencies": {
         "index.html": "bbca4c1c1e02f014dced019157eae5f910752f3578a2ea342964bbe4d9fd0ad7",
         "src/main.ts": "34677b0cc1f89e0d85276be649eefc21c416c4442dd2c329dc980ded24bc0998",
         "../react/src/global.css": "6a058f4a2a2913a69b8da6f4ce4910480e906db03305f6042cf0256c03dbcf27",
         "src/CatalogPage.vue": "89384c912cd36e9093cc0e0acc28fa145eb17c7fc7aa67960d7cb8c2ccfcbab1",
         "src/ProductGrid.vue": "adecf2e444a74e58b85d3db148e2ab347140e0640c1bc68899a461bfe6c2007e",
+        "vite.config.ts": "3cea53b9eeff607d23ebb1b43a33d83d0c9cdeb0dcba9fe300f0c5ecac0c14d9",
         "src/catalog.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f",
         "components.d.ts": "!missing",
         "src/components.d.ts": "!missing"
@@ -17,12 +18,13 @@
     },
     "products.list": {
       "hash": "ddc627bfa20344ed090a6df321d96a67ef014472d7201f898932c3149ac72db0",
-      "outputHash": "5852f96c0394e45ada8a574bf6a6a81903da75e55f054ce1d00e91c4b3cca159",
+      "outputHash": "9fd2dd273ee94be859bcd67f606b1fe56fda2744afbecadf6e9241839505c8e4",
       "dependencies": {
         "index.html": "bbca4c1c1e02f014dced019157eae5f910752f3578a2ea342964bbe4d9fd0ad7",
         "src/main.ts": "34677b0cc1f89e0d85276be649eefc21c416c4442dd2c329dc980ded24bc0998",
         "../react/src/global.css": "6a058f4a2a2913a69b8da6f4ce4910480e906db03305f6042cf0256c03dbcf27",
         "src/ProductGrid.vue": "adecf2e444a74e58b85d3db148e2ab347140e0640c1bc68899a461bfe6c2007e",
+        "vite.config.ts": "3cea53b9eeff607d23ebb1b43a33d83d0c9cdeb0dcba9fe300f0c5ecac0c14d9",
         "src/catalog.css": "3f253349a758f6623a33a02b218fa2fc776e1a6fa7793aaddf4471bcf015029f",
         "components.d.ts": "!missing",
         "src/components.d.ts": "!missing"

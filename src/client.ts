@@ -86,7 +86,9 @@ function render() {
   const comparing = preview.comparison !== 'off' && held;
   const stateNames = { ready: 'Up to date', stale: 'Out of date', missing: 'Missing', corrupt: 'Modified' };
   const needsUpdate = data.statuses.some(item => item.state !== 'ready');
-  const variant = artifact ? selectedVariant(artifact, mounted[0]?.variant, held) : '';
+  const variant = artifact ? selectedVariant(artifact, mounted[0]?.variant, held, mounted[0]?.context) : '';
+  const mapping=mounted[0]?.context?artifact?.contexts?.[mounted[0].context]:undefined;
+  const variants=artifact?Object.keys(mapping??artifact.variants):[];
   const template = document.createElement('template');
   template.innerHTML = `<style>${devtoolsCSS}</style>
     <div class="bar" data-ui-key="bar" role="group" aria-label="SkelCast preview controls"><span class="title"><span class="brand-mark">${icon('layers')}</span>SkelCast</span>
@@ -94,7 +96,7 @@ function render() {
     <div class="select-control region-control" title="Loading region">${icon('region')}<select id="target" aria-label="Loading region">${picking ? '<option value="" selected>Click a region…</option>' : ''}${data.artifacts.map(a => `<option value="${esc(a.id)}" ${!picking && a.id === selected ? 'selected' : ''}>${esc(a.id)}</option>`).join('')}<option value="__sk_pick__">${picking ? 'Cancel picking' : 'Pick region…'}</option></select></div>
     <label class="preview-toggle">Show skeleton<input id="preview" type="checkbox" role="switch" ${held ? 'checked' : ''} ${!artifact ? 'disabled' : ''}></label>
     <button id="compare" class="compare-button" aria-pressed="${comparing}" ${!artifact ? 'disabled' : ''}>${icon('compare')}Compare</button>
-    ${artifact && Object.keys(artifact.variants).length > 1 ? `<div class="select-control variant-control" title="Layout variant"><select id="variant" aria-label="Layout variant">${Object.keys(artifact.variants).map(v => `<option value="${esc(v)}" ${v === variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}</div>
+    ${artifact && variants.length > 1 ? `<div class="select-control variant-control" title="Layout variant"><select id="variant" aria-label="Layout variant">${variants.map(v => `<option value="${esc(v)}" ${(mapping?.[v]??v) === variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}</div>
     <div class="bar-actions" data-ui-key="bar-actions"><span class="generation-status${needsUpdate ? ' warning' : ''}" role="status" aria-label="Skeleton status">${status ? status.state === 'ready' && needsUpdate ? 'Updates available' : stateNames[status.state] : 'Reading…'}</span>${needsUpdate ? `<button id="sync" class="update-button" ${busy ? 'disabled' : ''}>${busy ? 'Updating…' : 'Update skeletons'}</button>` : ''}</div></div>
     ${note ? `<p class="notice" role="alert">${esc(note)}</p>` : ''}
     ${comparing ? `<div class="comparison-bar" data-ui-key="comparison-bar" role="group" aria-label="Comparison controls">
