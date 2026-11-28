@@ -29,7 +29,7 @@ export interface ComponentPreset {
   present: (
     name: string,
     props: Record<string, unknown>,
-    text: string,
+    text: () => string,
     hints: SkeletonHints,
     policy: { mask: boolean; readonly children: string; slots: Record<string, string>; columns: TableColumns },
   ) => Presentation | undefined;

@@ -1,25 +1,6 @@
-import type { DirectiveNode, TemplateChildNode } from '@vue/compiler-dom';
 import type { RenderContext, SourceSlot } from '../context.js';
 import type { RenderHost } from '../render-host.js';
-
-const templateSlots = new WeakMap<TemplateChildNode[], Map<string, TemplateChildNode[]>>();
-const emptySlot: TemplateChildNode[] = [];
-function templateSlotNodes(nodes: TemplateChildNode[], name: string): TemplateChildNode[] {
-  let index = templateSlots.get(nodes);
-  if (index) return index.get(name) ?? emptySlot;
-  index = new Map();
-  for (const node of nodes) {
-    const slot = node.type === 1 && node.tag === 'template'
-      ? node.props.find((prop): prop is DirectiveNode => prop.type === 7 && prop.name === 'slot')
-      : undefined;
-    const key = slot?.arg?.type === 4 && node.type === 1 ? slot.arg.content : 'default';
-    const children = slot?.arg?.type === 4 && node.type === 1 ? node.children : [node];
-    const group = index.get(key);
-    if (group) group.push(...children); else index.set(key, [...children]);
-  }
-  templateSlots.set(nodes, index);
-  return index.get(name) ?? emptySlot;
-}
+import { templateSlots, slotName } from '../vue-slots.js';
 
 /** Render in preset-declared order: nested table columns and evidence depend on
  * that order. Each frontend retains its existing slot/default rules. */
@@ -30,6 +11,13 @@ export async function renderPresetSlots(
   ctx: RenderContext,
 ): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
+  const templates = new Map<string, import('@vue/compiler-dom').TemplateChildNode[]>();
+  if (source.framework === 'vue') for (const entry of templateSlots(source.nodes)) {
+    const name = slotName(host, entry.slot, source.context, entry.node);
+    if (name === undefined) continue;
+    const group = templates.get(name);
+    if (group) group.push(...entry.nodes); else templates.set(name, [...entry.nodes]);
+  }
   for (const name of names) {
     switch (source.framework) {
       case 'render': {
@@ -42,7 +30,7 @@ export async function renderPresetSlots(
         result[name] = name === 'default' ? await host.jsxNodes(source.nodes, ctx) : '';
         break;
       case 'vue':
-        result[name] = await host.vueNodes(templateSlotNodes(source.nodes, name), ctx);
+        result[name] = await host.vueNodes(templates.get(name) ?? [], ctx);
         break;
     }
   }

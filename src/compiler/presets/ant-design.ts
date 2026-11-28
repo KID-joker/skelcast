@@ -146,13 +146,13 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
             name === 'switch' ? '40px' : '120px'
           };border:1px solid #d9d9d9;border-radius:4px`, children: policy.children,
         };
-      if (name === 'table') return table(props, policy.columns.resolve(policy.children), text, hints,policy.mask);
+      if (name === 'table') return table(props, policy.columns.resolve(policy.children), text(), hints,policy.mask);
       if (name === 'table.column' || name === 'tablecolumn') return column(props, policy.children, policy.columns);
-      if (name === 'card') return card(policy.children, props.title, text, '24px');
+      if (name === 'card') return card(policy.children, props.title, props.title ? text() : '', '24px');
       if (name === 'card.meta' || name === 'cardmeta')
         return {
           tag: 'div',
-          children: (props.title ? text : '') + (props.description ? text : '') + policy.children,
+          children: (props.title ? text() : '') + (props.description ? text() : '') + policy.children,
         };
       if (name === 'avatar' || name === 'image') return imagePlaceholder(props.size, name === 'avatar' ? '32px' : '160px', name === 'avatar' ? '32px' : '120px');
       if (name === 'statistic')
@@ -164,10 +164,10 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
               ? `<div data-sk-layout style="color:var(--skeleton-control-color,#606266)">${escape(
                   scalar(props.title),
                 )}</div>`
-              : '') + text,
+              : '') + text(),
         };
       if (name === 'tag')
-        return { tag: 'span', style: 'display:inline-block;padding:2px 8px', children: policy.children || text };
+        return { tag: 'span', style: 'display:inline-block;padding:2px 8px', children: policy.children || text() };
       if (name === 'progress')
         return { tag: 'div', leaf: true, style: 'height:16px;width:100%', children: '' };
       if (name === 'list') {
@@ -177,7 +177,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
           style: 'margin:0;padding:0;list-style:none',
           children:
             policy.children ||
-            (count ? Array.from({length:count}, () => `<li data-sk-layout style="padding:12px 0;border-bottom:1px solid #eee">${text}</li>`).join('') : '<li data-sk-layout data-sk-control style="padding:24px;text-align:center">No data</li>'),
+            (count ? Array.from({length:count}, () => `<li data-sk-layout style="padding:12px 0;border-bottom:1px solid #eee">${text()}</li>`).join('') : '<li data-sk-layout data-sk-control style="padding:24px;text-align:center">No data</li>'),
           notes:
             props.renderItem != null
               ? ['List renderItem is not invoked; use a source adapter for a custom row layout.']
@@ -189,7 +189,7 @@ export function antDesignPreset(id: 'antd' | 'ant-design-vue'): ComponentPreset 
       if (name.startsWith('typography'))
         return {
           tag: name.includes('title') ? 'h3' : name.includes('paragraph') ? 'p' : 'span',
-          children: policy.children || text,
+          children: policy.children || text(),
         };
       if (['row', 'space', 'flex'].includes(name))
         return { tag: 'div', style: 'display:flex;flex-wrap:wrap;min-width:0;gap:12px', children: policy.children };

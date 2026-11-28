@@ -301,7 +301,8 @@ export class SourceCompiler extends SourceModules {
     const renderedSlots = await renderPresetSlots(this, slot, slots, slotContext);
     let children: string | undefined;
     const mask = this.masked(local);
-    const text = mask ? this.text(local, node) : this.contentText(props.value ?? props.title ?? UNKNOWN, local, node);
+    let placeholder: string | undefined;
+    const text = () => placeholder ??= mask ? this.text(local, node) : this.contentText(props.value ?? props.title ?? UNKNOWN, local, node);
     const hints: SkeletonHints = { ...this.hints, state: this.hints.state ?? (local.loading ? 'loading' : 'source') };
     // Keep slot traversal (diagnostics, dependencies and expansion costs) in its
     // existing order, but join markup only when the presentation consumes it.

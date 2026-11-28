@@ -4,22 +4,30 @@ import type {ModuleInfo} from './context.js';
 import type {ComponentReference} from './presets/types.js';
 import {evaluate,SOURCE_INITIAL,UNKNOWN,type ExpressionContext,type Value} from './expression.js';
 import {resolvePreset} from './presets/index.js';
-import {vueHelper} from './vue-syntax.js';
+import {vueHelper,setupSyntax} from './vue-syntax.js';
 import{tableViewportOffset}from'./viewport-constraint.js';
 import { camelizeProp } from './props.js';
 type Fn=t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression;
+interface TableProjection {
+ reference: ComponentReference;
+ columns?: Value[];
+ viewportOffset?: number;
+ pagination?: { reference: ComponentReference; props: Record<string, Value> };
+}
 
 /** Find a reachable, confirmed library table forwarded by an opaque wrapper.
  * This is a partial source presentation, never execution of setup or callbacks. */
-export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression,enabled:readonly string[]|undefined,props:Record<string,Value>={},loading=false):{reference:ComponentReference;columns?:Value[];viewportOffset?:number;pagination?:{reference:ComponentReference;props:Record<string,Value>}}|undefined{
+export function tableWrapper(mod:ModuleInfo,setup:Fn,enabled:readonly string[]|undefined,props:Record<string,Value>={},loading=false):TableProjection|undefined{
  const parameter=setup.params[0];if(parameter?.type!=='Identifier'||setup.body.type!=='BlockStatement')return;
+ const { declarations } = setupSyntax(setup.body);
+ // Index source forwarding before evaluating any instance props.
  const locals=new Set<string>();
  const bound=(node:t.Node)=>walk(node,n=>{if(n.type==='Identifier')locals.add(n.name);});setup.params.forEach(bound);
- for(const s of setup.body.body)if(s.type==='VariableDeclaration')for(const d of s.declarations)bound(d.id);
+ for(const declaration of declarations)bound(declaration.id);
  const helper=(callee:t.Node,name:string)=>{const root=callee.type==='Identifier'?callee.name:callee.type==='MemberExpression'&&callee.object.type==='Identifier'?callee.object.name:undefined;return !root||!locals.has(root)?vueHelper(mod,callee,name):false;};
  const functions=new Map<string,t.FunctionExpression|t.FunctionDeclaration|t.ArrowFunctionExpression>();
  const columns=new Set<string>(),aliases=new Map<string,string>();
- for(const statement of setup.body.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations){
+ for(const d of declarations){
   if(d.id.type==='Identifier'&&isRenderFunction(d.init))functions.set(d.id.name,d.init);
   if(d.id.type==='ObjectPattern'&&d.init?.type==='CallExpression'&&helper(d.init.callee,'toRefs')&&d.init.arguments[0]?.type==='Identifier'&&d.init.arguments[0].name===parameter.name){
    for(const property of d.id.properties){
@@ -48,7 +56,7 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
    if(source&&fn&&columnRef(fn))found=true;
   });return found;
  };
- const candidates=new Map<t.Node,ComponentReference>(),pagers=new Map<t.CallExpression,{reference:ComponentReference;guards:{test:t.Node;truthy:boolean;nullish?:boolean}[]}>(),seen=new Set<string>();
+ const candidates=new Map<t.CallExpression,{reference:ComponentReference;name:string}>(),pagers=new Map<t.CallExpression,{reference:ComponentReference;guards:{test:t.Node;truthy:boolean;nullish?:boolean}[]}>(),seen=new Set<string>();
  const inspect=(node:t.Node)=>walk(node,(n,ancestors)=>{
   if(n.type!=='CallExpression')return;
   if(n.callee.type==='Identifier'&&functions.has(n.callee.name)&&!seen.has(n.callee.name)){seen.add(n.callee.name);inspect(functions.get(n.callee.name)!.body);}
@@ -62,11 +70,12 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
   if(!forwarded(n.arguments[1]))return;
   if(!ref||!preset||!['eltable','ndatatable','table','atable'].includes(preset.name))return;
   if(preset.name==='eltable'&&!hasColumns(n.arguments[2]))return;
-  candidates.set(n,ref);
+  candidates.set(n,{reference:ref,name:preset.name});
  });
  for(const statement of setup.body.body)if(statement.type==='ReturnStatement'&&statement.argument)inspect(statement.argument);
  if(candidates.size!==1)return;
- const result:{reference:ComponentReference;columns?:Value[];viewportOffset?:number;pagination?:{reference:ComponentReference;props:Record<string,Value>}}={reference:[...candidates.values()][0]};
+ const [table, candidate] = [...candidates][0];
+ const result: TableProjection = { reference: candidate.reference };
  // Read a reachable pagination sibling only when its source props forwarding is
  // proved. Literal base styles survive unknown runtime style overrides, with
  // the wrapper's partial-presentation diagnostic retained by the caller.
@@ -77,9 +86,8 @@ export function tableWrapper(mod:ModuleInfo,setup:t.FunctionExpression|t.Functio
  const context:ExpressionContext={code:mod.code,env,bindings,unwrapRefs:true};
  const layout = { helper, objectAssign: !Object.hasOwn(mod.env, 'Object') };
  const value = (node: t.Node | undefined | null, scope = context): Value => evaluate(node, scope, 0, layout);
- for(const statement of setup.body.body)if(statement.type==='VariableDeclaration')for(const d of statement.declarations)if(d.id.type==='Identifier')env[d.id.name]=value(d.init);
- const table=[...candidates.keys()][0];
- if(table.type==='CallExpression'&&resolvePreset(enabled,result.reference)?.name==='eltable')result.viewportOffset=tableViewportOffset(mod,setup,table,value);
+ for(const d of declarations)if(d.id.type==='Identifier')env[d.id.name]=value(d.init);
+ if(candidate.name==='eltable')result.viewportOffset=tableViewportOffset(mod,setup,table,value);
  if(Array.isArray(sourceProps.columns)&&columnCalls.size===1){
   const[fn,call]=[...columnCalls][0],input=fn.params[0],argument=call.arguments[1];
   const objects=argument?.type==='ObjectExpression'?[argument]:argument?.type==='CallExpression'&&helper(argument.callee,'mergeProps')?argument.arguments.filter((node):node is t.ObjectExpression=>node.type==='ObjectExpression'):[];

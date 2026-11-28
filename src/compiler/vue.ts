@@ -11,6 +11,7 @@ import{initialString}from'./initial-state.js';
 import { planCollection } from './collections.js';
 import { renderBudget } from './render-budget.js';
 import { renderGraphic } from './output.js';
+import { templateSlots, slotName, slotParameter } from './vue-slots.js';
 
 const expression = (node: ExpressionNode | undefined): string | undefined => node?.type === 4 ? node.content : undefined;
 const directive = (node: Extract<VueNode, { type: 1 }>, names: string[]): DirectiveNode | undefined =>
@@ -30,18 +31,6 @@ function collectionRoots(nodes: VueNode[], ctx: RenderContext): Set<string> {
   }
   rootCache.set(nodes, roots);
   return roots;
-}
-function slotParameter(host:RenderHost,slot:DirectiveNode|undefined,ctx:RenderContext,node:VueNode):Ast|undefined{
- if(!expression(slot?.exp))return;
- const fn=parseSourceExpression(`(${expression(slot?.exp)})=>0`,ctx);
- if(fn?.type==='ArrowFunctionExpression')return fn.params[0];
- host.diagnose('SLOT_UNKNOWN','Cannot parse scoped slot parameters',ctx,node);
-}
-function slotName(host:RenderHost,slot:DirectiveNode|undefined,ctx:RenderContext,node:VueNode):string|undefined{
- if(!slot?.arg)return'default';
- const name=slot.arg.type===4&&slot.arg.isStatic?slot.arg.content:evaluateString(expression(slot.arg)??'',ctx);
- if(typeof name==='string')return name;
- host.diagnose('SLOT_UNKNOWN','Dynamic slot name needs a finite source value',ctx,node);
 }
 
 type VueProp = ElementNode['props'][number];
@@ -158,14 +147,19 @@ async function renderVueLoop(this: RenderHost, node: ElementNode, loop: Directiv
   } catch { return this.fallback(ctx, node, 'Unsupported v-for aliases'); }
   const list = evaluateString(match[2], ctx);
   const bound=sourceCapacity(list);
-  const entries = Array.isArray(list) ? list.map((value, index) => [value, index]) : bound==null&&list && list !== UNKNOWN && typeof list === 'object' ? Object.entries(list).map(([key, value]) => [value, key]) : undefined;
-  const length = entries?.length ?? (typeof list === 'number' && Number.isFinite(list) ? Math.max(0, Math.floor(list)) : undefined);
+  const array = Array.isArray(list) ? list : undefined;
+  const object = !array && bound == null && list && list !== UNKNOWN && typeof list === 'object' ? list as Record<string, Value> : undefined;
+  const keys = object ? Object.keys(object) : undefined;
+  const length = array?.length ?? keys?.length ?? (typeof list === 'number' && Number.isFinite(list) ? Math.max(0, Math.floor(list)) : undefined);
   const { count, projected } = planCollection(this, match[2], list, ctx, node, length, 'predicted response');
   let html = '';
   for (let i = 0; i < count; i++) {
     const local: RenderContext = { ...ctx, env: { ...ctx.env } };
-    bindPattern(patterns[0], !projected&&entries ? entries[i] ? entries[i][0] : UNKNOWN : typeof list === 'number' ? i + 1 : UNKNOWN, local.env);
-    if (patterns[1]) bindPattern(patterns[1], entries ? entries[i]?.[1] ?? i : i, local.env);
+    const key = keys?.[i];
+    const item = projected ? UNKNOWN : array ? i in array ? array[i] : UNKNOWN
+      : object ? key !== undefined ? object[key] : UNKNOWN : typeof list === 'number' ? i + 1 : UNKNOWN;
+    bindPattern(patterns[0], item, local.env);
+    if (patterns[1]) bindPattern(patterns[1], key ?? i, local.env);
     if (patterns[2]) bindPattern(patterns[2], i, local.env);
     html += await this.vueNode(node, local, true);
   }
@@ -304,8 +298,7 @@ async function renderVueElement(
   if (imported?.file || this.target.adapters?.[tag]) {
     const slots: Record<string, SourceSlot> = {};
     const defaults: VueNode[] = [];
-    for (const child of node.children) {
-      const slot = child.type === 1 && child.tag === 'template' ? directive(child, ['slot']) : undefined;
+    for (const { node: child, slot } of templateSlots(node.children)) {
       if (slot && child.type === 1){
         const name=slotName(this,slot,ctx,child);if(name!==undefined)slots[name] = { nodes: child.children, context: ctx, framework: 'vue',parameter:slotParameter(this,slot,ctx,child) };
       }

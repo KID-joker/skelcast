@@ -1,5 +1,5 @@
 import type * as t from '@babel/types';
-import { nodeName, patternNames, walk } from './ast.js';
+import { isRenderFunction, nodeName, patternNames, walk, type RenderFunction } from './ast.js';
 import type { Ast } from './expression.js';
 import type { ModuleInfo } from './context.js';
 import { mutationTarget, rootName } from './mutations.js';
@@ -53,6 +53,8 @@ function indexSetup(body: Ast) {
   const localNames = new Set<string>();
   const renderBindings: { name?: string; fn: Ast | null | undefined }[] = [];
   const aliases: [string, string][] = [];
+  const definitions = new Map<string, Ast | null>();
+  const functions = new Map<string, RenderFunction>();
   if (body.type === 'BlockStatement') for (const statement of body.body) {
     if (statement.type === 'VariableDeclaration') for (const declaration of statement.declarations) {
       declarations.push(declaration);
@@ -60,13 +62,19 @@ function indexSetup(body: Ast) {
       const name = nodeName(declaration.id);
       renderBindings.push({ name, fn: declaration.init });
       if (declaration.id.type === 'Identifier') {
+        definitions.set(declaration.id.name, declaration.init ?? null);
+        if (isRenderFunction(declaration.init)) functions.set(declaration.id.name, declaration.init);
         if (!declarationByName.has(declaration.id.name)) declarationByName.set(declaration.id.name, declaration);
         if (declaration.init?.type === 'Identifier') aliases.push([declaration.id.name, declaration.init.name]);
       }
     }
     if (statement.type === 'FunctionDeclaration') {
       const name = statement.id?.name;
-      if (name) localNames.add(name);
+      if (name) {
+        localNames.add(name);
+        definitions.set(name, statement);
+        functions.set(name, statement);
+      }
       renderBindings.push({ name, fn: statement });
     }
   }
@@ -75,7 +83,7 @@ function indexSetup(body: Ast) {
     const written = rootName(mutationTarget(node));
     if (written || node.type === 'CallExpression') effects.push({ written, call: node.type === 'CallExpression' ? node : undefined });
   });
-  return { declarations, declarationByName, localNames, renderBindings, aliases, effects };
+  return { declarations, declarationByName, localNames, renderBindings, aliases, effects, definitions, functions };
 }
 const setupIndexes = new WeakMap<Ast, ReturnType<typeof indexSetup>>();
 /** Object-method wrappers may be recreated; their source body stays immutable. */

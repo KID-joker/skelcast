@@ -2,7 +2,7 @@ import type * as t from '@babel/types';
 import{VISITOR_KEYS}from'@babel/types';
 import{isRenderFunction,nodeName,unwrapExpression,walk}from'./ast.js';
 import type{ModuleInfo}from'./context.js';
-import{vueHelper}from'./vue-syntax.js';
+import{vueHelper,setupSyntax}from'./vue-syntax.js';
 import{type Value}from'./expression.js';
 
 type Fn=t.FunctionDeclaration|t.FunctionExpression|t.ArrowFunctionExpression;
@@ -25,11 +25,7 @@ function result(fn:Fn):t.Node|undefined{
  * and lifecycle activation. No DOM, lifecycle or business function is executed. */
 export function tableViewportOffset(mod:ModuleInfo,setup:Fn,table:t.CallExpression,evaluate:(node:t.Node)=>Value):number|undefined{
  if(setup.body.type!=='BlockStatement'||Object.hasOwn(mod.env,'window'))return;
- const definitions=new Map<string,t.Node|null>(),functions=new Map<string,Fn>();
- for(const statement of setup.body.body){
-  if(statement.type==='VariableDeclaration')for(const d of statement.declarations)if(d.id.type==='Identifier'){definitions.set(d.id.name,d.init??null);if(isRenderFunction(d.init))functions.set(d.id.name,d.init);}
-  if(statement.type==='FunctionDeclaration'&&statement.id){definitions.set(statement.id.name,statement);functions.set(statement.id.name,statement);}
- }
+ const { definitions, functions } = setupSyntax(setup.body);
  if(definitions.has('window'))return;
  const helper=(node:t.Node,name:string)=>{
   const root=node.type==='Identifier'?node.name:node.type==='MemberExpression'&&node.object.type==='Identifier'?node.object.name:undefined;

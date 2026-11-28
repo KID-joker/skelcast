@@ -4,9 +4,9 @@ import { classString, styleString } from '../html.js';
 
 /** Public Element Plus DOM/CSS contracts. Low-specificity defaults let source
  * theme variables and component body/header overrides retain their geometry. */
-export function elementCard(props: Record<string, unknown>, slots: Record<string,string>, text: string): Presentation {
-  const header = slots.header || (scalar(props.header) ? text : '');
-  const footer = slots.footer || (scalar(props.footer) ? text : '');
+export function elementCard(props: Record<string, unknown>, slots: Record<string,string>, text: () => string): Presentation {
+  const header = slots.header || (scalar(props.header) ? text() : '');
+  const footer = slots.footer || (scalar(props.footer) ? text() : '');
   return {
     tag: 'div', className: 'el-card',
     children: (header ? `<div data-sk-layout class="el-card__header ${escape(classString(props.headerClass))}">${header}</div>` : '')
@@ -44,9 +44,9 @@ export function elementScrollbar(props:Record<string,unknown>, children:string):
     children:`<div data-sk-layout class="el-scrollbar__wrap" style="overflow:auto;height:100%;${maxHeight ? `max-height:${maxHeight};` : ''}"><div data-sk-layout class="el-scrollbar__view">${children}</div></div>`};
 }
 
-export function elementTimeline(name:string,props:Record<string,unknown>,children:string,text:string):Presentation {
+export function elementTimeline(name:string,props:Record<string,unknown>,children:string,text:()=>string):Presentation {
   if(name==='timeline')return{tag:'ul',className:'el-timeline is-start',children,css:':where(.el-timeline){font-size:var(--el-font-size-base,14px);margin:0;padding:0 0 0 40px;list-style:none}',notes:props.direction&&props.direction!=='start'?['Alternate/end timeline placement uses a representative start-aligned frame.']:undefined};
-  const timestamp=props.hideTimestamp===true||props.timestamp===undefined?'':`<div data-sk-layout class="el-timeline-item__timestamp ${props.placement==='top'?'is-top':'is-bottom'}">${text}</div>`;
+  const timestamp=props.hideTimestamp===true||props.timestamp===undefined?'':`<div data-sk-layout class="el-timeline-item__timestamp ${props.placement==='top'?'is-top':'is-bottom'}">${text()}</div>`;
   return{tag:'li',className:'el-timeline-item is-start',style:'position:relative;padding-bottom:20px;list-style:none',children:
     `<div data-sk-layout class="el-timeline-item__tail" style="position:absolute;height:100%;left:4px;border-left:2px solid var(--el-border-color-light,#e4e7ed)"></div><span data-sk-layout class="el-timeline-item__node" data-sk-leaf style="position:absolute;left:-1px;top:4px;width:12px;height:12px;border-radius:50%"></span><div data-sk-layout class="el-timeline-item__wrapper" style="position:relative;top:-3px;padding-left:28px">${props.placement==='top'?timestamp:''}<div data-sk-layout class="el-timeline-item__content">${children}</div>${props.placement==='top'?'':timestamp}</div>`,
     css:':where(.el-timeline-item__timestamp){font-size:var(--el-font-size-small,12px);line-height:1}:where(.el-timeline-item__timestamp.is-top){margin-bottom:8px;padding-top:4px}:where(.el-timeline-item__timestamp.is-bottom){margin-top:8px}'};

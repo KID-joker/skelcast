@@ -4,7 +4,7 @@ import { UNKNOWN } from '../expression.js';
 import type { ComponentPreset, Presentation } from './types.js';
 
 /** Finite presentation primitives; never imports or invokes Naive UI. */
-function naivePresentation(name: string, props: Record<string, unknown>, text: string, policy: { readonly children: string; mask: boolean }): Presentation | undefined {
+function naivePresentation(name: string, props: Record<string, unknown>, text: () => string, policy: { readonly children: string; mask: boolean }): Presentation | undefined {
   if (name === 'nicon') {
     const size = typeof props.size === 'number' || typeof props.size === 'string' && /^\d+(?:px)?$/.test(props.size) ? `${parseFloat(String(props.size))}px` : '1em';
     return {tag:'span',style:`display:inline-block;width:${size};height:${size};flex-shrink:0;border:1px solid currentColor;border-radius:2px`,children:''};
@@ -22,7 +22,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, text: s
   if (['nswitch', 'ncheckbox', 'nradio', 'nslider', 'nprogress'].includes(name)) return { tag: 'span', style: `display:inline-block;width:${name === 'nswitch' ? '40px' : name === 'ncheckbox' || name === 'nradio' ? '16px' : '100%'};height:18px;${name==='nprogress'?'':'border:1px solid #d9d9d9;border-radius:4px'}`, leaf: name === 'nprogress', children: '' };
   if (name === 'nbutton') return button(policy.children,props,'34px');
   if (name === 'ncalendar') return calendar(policy.children);
-  if (name === 'ncard') return { tag: 'section', style: 'display:block;padding:20px 24px;border:1px solid #dce1e7;border-radius:4px', children: (props.title ? text : '') + policy.children };
+  if (name === 'ncard') return { tag: 'section', style: 'display:block;padding:20px 24px;border:1px solid #dce1e7;border-radius:4px', children: (props.title ? text() : '') + policy.children };
   if (name === 'ninputgroup') return { tag: 'div', style: 'display:flex;align-items:stretch;width:100%', children: policy.children };
   if (name === 'ninputgrouplabel') return { tag: 'div', style: 'display:flex;align-items:center;padding:0 12px;min-height:34px', children: policy.children };
   if (name === 'nformitem') return formItem(policy.children, props.label);
@@ -50,7 +50,7 @@ function naivePresentation(name: string, props: Record<string, unknown>, text: s
   if (['ntooltip', 'npopover', 'nellipsis'].includes(name)) return { tag: 'span', children: policy.children };
   if (name === 'nh2' || name === 'nh3') return { tag: name.slice(1), children: policy.children };
   if (name === 'ntag') return { tag: 'span', style: 'display:inline-block;padding:2px 8px', children: policy.children };
-  if (name === 'nstatistic') return { tag: 'div', style: 'display:block;min-height:60px', children: text + text };
+  if (name === 'nstatistic') return { tag: 'div', style: 'display:block;min-height:60px', children: text() + text() };
   if (name === 'nscrollbar') {
     const horizontal = props['x-scrollable'] === true || props.xScrollable === true;
     return { tag: 'div', style: `display:block;min-width:0;max-width:100%;overflow-x:${horizontal ? 'auto' : 'hidden'};overflow-y:auto`, children: horizontal ? `<div data-sk-layout style="min-width:max-content">${policy.children}</div>` : policy.children };
@@ -65,5 +65,5 @@ export const naiveUIPreset: ComponentPreset = {
   package: 'naive-ui',
   role: (name,props) => ['nbutton','ninput','ninputnumber','nselect','ndatepicker','ncolorpicker','nswitch','ncheckbox','nradio','nslider','ncalendar','ninputgrouplabel','nicon'].includes(name) ? readonly(props)&&['ninput','ninputnumber'].includes(name)?'data':'control' : ['nimage','ncode','nstatistic','ntag','nprogress','nh2','nh3','ndatatable'].includes(name) ? 'data' : ['nconfigprovider','ndivider','ncard','ninputgroup','ngrid','ngi','ngriditem','nspace','ntooltip','npopover','nellipsis','nscrollbar','nform','nformitem','nalert','ntable'].includes(name) ? 'layout' : undefined,
   slots: name => name==='ncalendar'?['header']: ['ntooltip', 'npopover'].includes(name) ? ['trigger'] : ['default', 'header', 'footer', 'label'],
-  present: (name,props,text,hints,policy) => name==='ndatatable'?table(props,policy.columns.resolve(policy.children),text,hints,policy.mask):naivePresentation(name,props,text,policy),
+  present: (name,props,text,hints,policy) => name==='ndatatable'?table(props,policy.columns.resolve(policy.children),text(),hints,policy.mask):naivePresentation(name,props,text,policy),
 };

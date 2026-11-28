@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { parse } from '@vue/compiler-dom';
 import { parseExpression } from '@babel/parser';
-import { compileTarget, compileTargetWithFiles } from '../src/compiler/index.js';
+import { compileTarget, compileTargetWithFiles, SourceCompiler } from '../src/compiler/index.js';
 import { SourceFiles } from '../src/compiler/source-files.js';
 import { SourceModules } from '../src/compiler/modules.js';
 import { StaticValues } from '../src/compiler/static-values.js';
@@ -22,6 +22,7 @@ import type { ModuleInfo, RenderContext, SourceSlot } from '../src/compiler/cont
 import type { RenderHost } from '../src/compiler/render-host.js';
 import type { ComponentPreset } from '../src/compiler/presets/types.js';
 import { parseSource } from '../src/compiler/ast.js';
+import { renderVueNode } from '../src/compiler/vue.js';
 
 async function fixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'skelcast-simplification-'));
@@ -43,8 +44,8 @@ test('presets consume joined markup only when their presentation uses it', () =>
   for (const [preset, names] of cases) {
     const policy = { mask: true, slots: { default: '<p>Body</p>', header: '<h2>Header</h2>' }, columns: new TableColumns(),
       get children(): string { throw new Error('Unused slot markup must not be joined'); } };
-    for (const name of names) assert.ok(preset.present(name, {}, 'Text', {}, policy), `${preset.id}:${name}`);
-    const button = preset.present(preset.id === 'naive-ui' ? 'nbutton' : preset.id === 'element-plus' ? 'elbutton' : 'button', {}, 'Text', {}, { mask: true, slots: policy.slots, columns: policy.columns, children: 'Caption' });
+    for (const name of names) assert.ok(preset.present(name, {}, () => 'Text', {}, policy), `${preset.id}:${name}`);
+    const button = preset.present(preset.id === 'naive-ui' ? 'nbutton' : preset.id === 'element-plus' ? 'elbutton' : 'button', {}, () => 'Text', {}, { mask: true, slots: policy.slots, columns: policy.columns, children: 'Caption' });
     assert.equal(button?.children, 'Caption');
   }
 });
@@ -89,6 +90,77 @@ test('preset slot lookup reuses syntax while retaining duplicate slots, order an
   }
   assert.equal(reads, 4, 'named templates are classified once across slots and renders');
   assert.deepEqual(calls, names.map(() => '0').concat(names.map(() => '1'), names.map(() => '2')));
+});
+
+test('preset dynamic slot names follow instance bindings and report unresolved names', async () => {
+  await fixture({
+    'View.vue': `<script setup>import {ElCard} from 'element-plus';const section = readName();</script><template><ElCard><template #[section]><h2>Header marker</h2></template><p>Body</p></ElCard></template>`,
+  }, async root => {
+    const { artifact } = await compileTarget(root, { id: 'dynamic-slots', source: 'View.vue', variants: {
+      header: { bindings: { section: 'header' } }, footer: { bindings: { section: 'footer' } }, unknown: {},
+    } }, {}, { componentPresets: ['element-plus'] });
+    assert.match(artifact.variants.header.html, /class="el-card__header [^"]*"><h2/);
+    assert.doesNotMatch(artifact.variants.header.html, /class="el-card__footer/);
+    assert.match(artifact.variants.footer.html, /class="el-card__footer [^"]*"><h2/);
+    assert.doesNotMatch(artifact.variants.footer.html, /class="el-card__header/);
+    assert.doesNotMatch(artifact.variants.unknown.html, /Header marker/);
+    assert.deepEqual(artifact.diagnostics.map(d => [d.code, d.variants]), [['SLOT_UNKNOWN', ['unknown']]]);
+    assert.ok(Object.values(artifact.variants).every(view => view.html.includes('Body')));
+  });
+});
+
+test('Vue collection limits avoid reading unused array/object values and retain aliases', async () => {
+  const node = parse('<div v-for="(item,key,index) in items"/>').children[0];
+  for (const object of [false, true]) {
+    let reads = 0;
+    const items = object ? {} as Record<string, unknown> : new Array(1000);
+    for (let i = 0; i < 1000; i++) Object.defineProperty(items, object ? `key${i}` : i, {
+      enumerable: true, get() { reads++; return i === 0 ? null : i === 1 ? undefined : i; },
+    });
+    for (const repeat of [undefined, 2]) {
+      reads = 0;
+      const rendered: Record<string, unknown>[] = [];
+      const host = {
+        hints: { repeat }, target: { kind: 'page' }, selectVueNode() {}, budget() {}, diagnose() {}, record() {},
+        async vueNode(_node: unknown, ctx: RenderContext) { rendered.push(ctx.env); return ''; },
+      } as unknown as RenderHost;
+      const ctx = { code: '', env: { items }, bindings: {}, expressions: new Map(),
+        module: { imports: new Map(), ast: parseSource('') }, scopes: [], depth: 1 } as unknown as RenderContext;
+      await renderVueNode.call(host, node, ctx);
+      assert.equal(rendered.length, repeat ?? 24);
+      assert.equal(reads, rendered.length);
+      for (let i = 0; i < rendered.length; i++) {
+        assert.equal(rendered[i].item, i === 0 ? null : i === 1 ? undefined : i);
+        assert.equal(rendered[i].key, object ? `key${i}` : i);
+        assert.equal(rendered[i].index, i);
+      }
+    }
+  }
+});
+
+test('layout presets skip unused text while repeated text consumers share one placeholder', async () => {
+  class CountingCompiler extends SourceCompiler {
+    textCalls = 0;
+    override text(...args: Parameters<SourceCompiler['text']>) {
+      this.textCalls++;
+      return super.text(...args);
+    }
+  }
+  await fixture({
+    'View.vue': `<script setup>import {ElRow,ElCol,ElCard} from 'element-plus';import {NImage,NCard} from 'naive-ui';import {Row,Col,Card} from 'ant-design-vue';</script><template><ElRow><ElCol/></ElRow><ElCard/><NImage/><NCard/><Row><Col/></Row><Card/></template>`,
+    'Statistic.vue': `<script setup>import {NStatistic} from 'naive-ui';</script><template><NStatistic/></template>`,
+  }, async root => {
+    const options = { componentPresets: ['element-plus', 'naive-ui', 'ant-design-vue'] as const };
+    const layout = new CountingCompiler(root, { id: 'layout', source: 'View.vue' }, {}, {}, { componentPresets: [...options.componentPresets] });
+    await layout.compile();
+    assert.equal(layout.textCalls, 0);
+    assert.deepEqual(layout.diagnostics, []);
+    const statistic = new CountingCompiler(root, { id: 'statistic', source: 'Statistic.vue' }, {}, {}, { componentPresets: ['naive-ui'] });
+    const { view } = await statistic.compile();
+    assert.equal(statistic.textCalls, 1);
+    assert.equal((view.html.match(/data-sk-text data-sk-leaf/g) ?? []).length, 2);
+    assert.deepEqual(statistic.diagnostics, []);
+  });
 });
 
 test('Vue loop and slot parameter syntax is shared across instances and variants with isolated values', async () => {
